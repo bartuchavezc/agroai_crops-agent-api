@@ -1,0 +1,17 @@
+---
+description: This rules are used to identified the correct workspace based on the current projects
+globs: 
+alwaysApply: false
+---
+When i am talking about API, or some endpoint or something like python you have to go to ./genai-crops-analyzer project there is all the python api backend 
+    - The API was a flask python API but where changes to fastapi, it orchestrates the image loading, the dabase and services communication like unet, blip and mistral. This api provides clearer endpoints to upload an image, analyze an uploaded image with a pipeline of unet, blip and mistral, list those analysis as reports and chat with the llm service
+
+If i talk about ui or web, something about react or style, user view you have to work over the web-monitoring project
+    - The web monitoring project provides all the ui for the api but ignoring the image upload feature. It has a chat interface, a report list and detail view.
+
+If i talk about services like unet, blip, mistral, there are in the iac folder beside the docker-compose file
+    - All the infrastructure is local right now it consist of a UNET, Blip light and Mistral with Ollama, also has the composition to set up the dockerfiles from the api and the web app.
+
+When i need to create test images whe have to use the temp_test_images folder
+
+If talk about docs, documentation or diagrams, visual references or rfc you have to go to the docs folder

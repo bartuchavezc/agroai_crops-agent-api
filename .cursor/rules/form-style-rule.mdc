@@ -1,0 +1,35 @@
+---
+description: Formularios, Tablas y componentes visuales
+globs: 
+alwaysApply: false
+---
+# form-style-rule
+
+**Regla de Estilo para Formularios (Next.js + Tailwind CSS)**
+
+- **Inputs y Textareas:**
+  - Padding interno: `py-6 px-5`
+  - Margen inferior: `mb-4`
+  - Tamaño de texto: `text-base`
+  - Color de texto: `text-gray-800`
+  - Borde redondeado: `rounded-md`
+  - Focus: `focus:outline-none focus:ring-2 focus:ring-primaryBlue`
+- **Labels:**
+  - Tamaño de texto: `text-base`
+  - Peso: `font-medium`
+- **Botón principal (submit):**
+  - Padding: `py-3 px-6`
+  - Fondo: `bg-primaryBlue`
+  - Texto: `text-white font-bold`
+  - Hover: `hover:bg-primaryBlueDark`
+- **Botón secundario (cancel):**
+  - Padding: `py-3 px-6`
+  - Fondo: `bg-gray-200`
+  - Texto: `text-gray-700 font-medium`
+  - Hover: `hover:bg-gray-300`
+- **Espaciado entre campos:**
+  - Usa `mb-4` para separar inputs/textarea.
+- **Estructura:**
+  - Usa `space-y-6` en el `<form>` para separar bloques de campos.
+
+**Aplicar esta regla en todos los formularios nuevos y refactors para mantener coherencia visual y UX.** 

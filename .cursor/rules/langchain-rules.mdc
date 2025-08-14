@@ -1,0 +1,25 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+## ✨ Nueva funcionalidad: agente con invocación de herramientas vía Langchain
+
+### 🎯 Objetivo
+Habilitar al asistente GenAI a interpretar intenciones del usuario y ejecutar funciones externas (herramientas) cuando lo considere necesario, de forma autónoma.
+
+### 🧱 Stack base
+- Backend: FastAPI
+- LLM: Mistral local via Ollama (`/api/generate`)
+- DB: PostgreSQL (almacena reportes)
+- Agente: `langchain.agents.initialize_agent`
+- Tipo: `zero-shot-react-description`
+
+### 🧰 Herramientas iniciales a registrar
+
+```python
+Tool(
+  name="get_report_history",
+  func=call_report_api,  # wrapper HTTP a FastAPI o función directa
+  description="Consulta los reportes de análisis de cultivos del usuario"
+)

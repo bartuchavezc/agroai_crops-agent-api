@@ -1,0 +1,6 @@
+---
+description: Architecture definitions
+globs: 
+alwaysApply: false
+---
+For architechture definitions take in mind always the docs/ and the docs/assets/architecthture.png

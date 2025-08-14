@@ -1,0 +1,99 @@
+---
+description: Ui, Web mentioned, when i working on the ui or the we project
+globs: 
+alwaysApply: false
+---
+# Design Rules - AgriAI Platform (Web & Mobile)
+
+## ✨ Visual Language
+
+* Use soft neutral backgrounds (e.g. #F8F9FA or #EDF1F5).
+* Rounded corners: 12px for cards, 8px for buttons/inputs.
+* Shadows should be subtle (e.g. Tailwind `shadow-sm`).
+* Icons should be outlined and consistent across platforms (e.g. Heroicons, Lucide).
+* Emphasize simplicity and clarity over density.
+* **Primary color:** Use blue (`#2D9CDB`) across all components for consistency (replaces original green accent).
+
+---
+
+## 📱 Mobile-First Adjustments
+
+* Prioritize full-width layout for readability.
+* Hide secondary text blocks or group them under toggles when needed.
+* The tab bar should always be visible at the bottom (Home, Analysis, Chat, Profile).
+* Video/image previews must be tappable and scrollable.
+* Ensure touch targets are ≥ 48x48px.
+
+---
+
+## 💬 Chat Interface
+
+* Always visible or easily accessible (dock right on desktop, full screen on mobile).
+* Avatars: Assistant left-aligned, User right-aligned.
+* Consistent color scheme:
+
+  * Assistant: light gray background (`#F1F3F5`)
+  * User: brand-accented (e.g. `#2D9CDB`)
+* Maintain message spacing: 8px between messages, 16px between user/assistant blocks.
+* Use typing indicator or “Analyzing...” message for async states.
+
+---
+
+## 🌱 Crop Analysis Card
+
+* Title: `Diagnóstico` (web and mobile), bold, 18px.
+* Image or video always first; full width with play icon if video.
+* Summary in paragraph format with 1-line preview on mobile.
+* Include “Ask in chat” button on both views, styled with icon and label.
+
+---
+
+## 🌤️ Weather & Location Components
+
+* Always show:
+
+  * Location: coordinates or field label
+  * Weather: temperature, humidity, icon
+  * Alert badge if available: ⚠️ Heatwave / Storm, etc.
+* Use icons inline on mobile, as cards in web.
+* Alert message formatting: icon + short description, bolded key words.
+
+---
+
+## 📈 Graphs and Data (Web Only)
+
+* Line charts must have smoothed curves (SPLINE) and labels by week.
+* Cards must include:
+
+  * Metric title (`Estimated Yield`)
+  * Value with unit (`1200 tons`)
+  * Change indicator (e.g. +10% in green, -5% in red).
+
+---
+
+## 🔤 Typography
+
+* Font: `Inter` or `Public Sans`, 400/500/700 weights.
+* Headings:
+
+  * Mobile: 18–20px
+  * Desktop: 24–32px
+* Body: 14–16px, with 1.4–1.6 line height.
+
+---
+
+## 🧠 UX Consistency
+
+* Every image must include a “summary + action” pair.
+* Every analysis must link back to the chat (via question or suggested button).
+* Error and alert states must be communicated visually and textually.
+
+---
+
+## 🧪 Accessibility
+
+* Ensure minimum color contrast of 4.5:1.
+* Use alt text on all crop images.
+* All icons must include accessible labels (`aria-label`).
+
+---

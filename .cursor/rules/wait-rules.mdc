@@ -1,0 +1,17 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Siempre seguir estos pasos 
+
+PARAR antes de hacer cualquier cambio
+RAZONAR completamente el problema primero
+ENTENDER qué está pasando realmente antes de tocar código
+PLANIFICAR la solución completa antes de implementar
+
+No sobre dimensionar ni comlejizar
+Mantener cambios pequeños y acoplados a la arquitectura actual
+
+No aplicar cambios que no ses hayan pedido 
+No aplicar cambios que no tengan que ver con lo que se intenta resolver directamente 
