@@ -106,5 +106,9 @@ DEFAULT_CONFIG = {
     "database": {
         "url": "postgresql+asyncpg://user:password@localhost:5432/genai_reports_db",
         "echo": False
+    },
+    "timescale": {
+        "url": "postgresql+asyncpg://user:password@localhost:5432/timescale_db",
+        "echo": False
     }
 } 

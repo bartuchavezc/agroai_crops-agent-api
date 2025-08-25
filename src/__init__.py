@@ -69,8 +69,8 @@ ts_url = ts_config.get("url") # Changed from ts_config.url()
 ts_echo = ts_config.get("echo", False) # Changed from ts_config.echo(), added default
 
 if not ts_url:
-    sys.stderr.write("CRITICAL: TIMESCALEDB_URL not found in configuration. Application cannot start.\n")
-    raise ValueError("TIMESCALEDB_URL is not configured.")
+    sys.stderr.write("CRITICAL: TIMESCALE_URL not found in configuration. Application cannot start.\n")
+    raise ValueError("TIMESCALE_URL is not configured.")
 init_timescale_connections(timescale_url=ts_url, echo_sql=ts_echo)
 
 # --- Logger Initialization (can use container config) ---
