@@ -1,0 +1,1 @@
+# This file is deprecated. Models have been moved to the src/app/farm_management/domain directory. 
