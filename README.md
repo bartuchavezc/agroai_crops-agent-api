@@ -1,228 +1,331 @@
-# GenAI Crops Analyzer API
+# AgroAI Crops Agent API
 
-A Flask-based API for analyzing crops using GenAI. This application provides:
+AI-powered precision agronomic technical assistant. A decision support system integrating real-time data (climate, sensors, vision) with a proprietary and localized technical knowledge base.
 
-- Image preprocessing capabilities for crop analysis
-- Video processing with automatic plant segmentation
-- GenAI-powered detection of nutrient deficiencies, diseases, and key conditions
-- RESTful API for integrating with other applications
+## Architecture Overview
+
+The application follows a **3-layer architecture** + Auth:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        External Sources                              │
+│  (APIs, Sensors, Users, Weather Services)                           │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│                      AUTH LAYER (Separate)                          │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐    │
+│  │   Auth Service  │  │  User Service   │  │  JWT Middleware  │    │
+│  └─────────────────┘  └─────────────────┘  └──────────────────┘    │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│                    CAPA 1: INGESTA                                   │
+│  ┌──────────────────────────┐    ┌─────────────────────────────┐    │
+│  │       RECEPTION          │    │         QUEUES              │    │
+│  │  - REST Endpoints        │───▶│  - IMessageQueue            │    │
+│  │  - Adapters (SMN, etc)   │    │  - Redis/Memory impl        │    │
+│  │  - Webhooks              │    └───────────┬─────────────────┘    │
+│  └──────────────────────────┘                │                      │
+│                                              ▼                      │
+│                               ┌─────────────────────────────────┐   │
+│                               │         MANAGERS                │   │
+│                               │  - Event Router                 │   │
+│                               │  - Weather Manager              │   │
+│                               │  - Image Manager                │   │
+│                               └───────────┬─────────────────────┘   │
+└───────────────────────────────────────────┼─────────────────────────┘
+                                            │
+┌───────────────────────────────────────────▼─────────────────────────┐
+│                    CAPA 2: AGENTE                                    │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │                    SEARCH (2 Stages)                         │    │
+│  │  ┌─────────────────────┐    ┌─────────────────────────┐     │    │
+│  │  │  Index Lookup       │───▶│  Document Search        │     │    │
+│  │  │  (Summaries)        │    │  (Full content)         │     │    │
+│  │  └─────────────────────┘    └─────────────────────────┘     │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│  ┌───────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
+│  │   LLM Service     │  │  Rules Engine    │  │  Conversation    │  │
+│  │   (Ollama)        │  │  (Deterministic) │  │  Manager         │  │
+│  └───────────────────┘  └──────────────────┘  └──────────────────┘  │
+└───────────────────────────────────────────┬─────────────────────────┘
+                                            │
+┌───────────────────────────────────────────▼─────────────────────────┐
+│                    CAPA 3: ACCION                                    │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐    │
+│  │     Alerts      │  │    Reports      │  │    Storage       │    │
+│  │  Notifications  │  │    CRUD         │  │    Files/S3      │    │
+│  └─────────────────┘  └─────────────────┘  └──────────────────┘    │
+│                                                                      │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │              Commands (Future: IoT Integration)              │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ## Project Structure
 
 ```
-genai-crops-analyzer/
-├── app/                      # Main application package
-│   ├── __init__.py           # Flask application initialization
-│   ├── api/                  # API endpoints
-│   ├── analysis/             # GenAI analysis modules
-│   │   ├── config/           # Configuration settings
-│   │   ├── container.py      # Dependency injection container
-│   │   ├── dto/              # Data Transfer Objects
-│   │   ├── infrastructure/   # Repository implementations
-│   │   └── service/          # Service layer
-│   └── utils/                # Utility functions
-├── data/                     # Data storage (uploads, etc.)
-├── tests/                    # Unit and integration tests
-├── .env                      # Environment variables (not in version control)
-├── .gitignore                # Git ignore file
-├── pyproject.toml            # Poetry project configuration
-├── README.md                 # Project documentation
-└── run.py                    # Entry point for running the application
+src/
+├── __init__.py                    # Legacy entry point (redirects to main.py)
+├── main.py                        # FastAPI app factory (NEW)
+├── config/                        # Centralized configuration
+│   ├── settings.py                # Configuration loading
+│   └── container.py               # Root DI container
+│
+├── auth/                          # AUTH LAYER
+│   ├── api/
+│   │   ├── routes.py              # Auth endpoints
+│   │   └── dependencies.py        # JWT middleware
+│   ├── services/
+│   │   ├── auth_service.py
+│   │   └── user_service.py
+│   ├── adapters/
+│   │   ├── jwt_adapter.py
+│   │   └── user_repository.py
+│   ├── domain/
+│   │   ├── models.py
+│   │   └── schemas.py
+│   └── container.py
+│
+├── ingestion/                     # LAYER 1: INGESTION
+│   ├── reception/                 # Data arrival
+│   │   ├── api/
+│   │   │   ├── weather_router.py
+│   │   │   └── upload_router.py
+│   │   └── adapters/
+│   │       ├── smn_adapter.py
+│   │       └── openweather_adapter.py
+│   ├── queues/                    # Queue abstraction
+│   │   ├── interfaces.py          # IMessageQueue
+│   │   ├── redis_queue.py
+│   │   └── memory_queue.py
+│   ├── managers/                  # Event processors
+│   │   ├── weather_manager.py
+│   │   ├── image_manager.py
+│   │   └── event_router.py
+│   └── container.py
+│
+├── agent/                         # LAYER 2: AGENT
+│   ├── api/
+│   │   └── chat_router.py
+│   ├── conversation/
+│   │   ├── agent_service.py
+│   │   └── memory_manager.py
+│   ├── search/                    # Two-stage search
+│   │   ├── interfaces.py
+│   │   ├── index_lookup.py        # Stage 1: summaries
+│   │   ├── doc_search.py          # Stage 2: documents
+│   │   ├── search_service.py      # Orchestrator
+│   │   └── elastic_adapter.py
+│   ├── reasoning/
+│   │   ├── llm_service.py
+│   │   ├── rules_engine.py        # Deterministic rules
+│   │   └── diagnosis_service.py
+│   └── container.py
+│
+├── action/                        # LAYER 3: ACTION
+│   ├── api/
+│   │   ├── reports_router.py
+│   │   ├── alerts_router.py
+│   │   └── analyze_router.py
+│   ├── alerts/
+│   │   └── alert_service.py
+│   ├── reports/
+│   │   ├── report_service.py
+│   │   └── report_repository.py
+│   ├── storage/
+│   │   ├── storage_service.py
+│   │   └── local_adapter.py
+│   ├── commands/                  # Future: IoT
+│   │   └── interfaces.py
+│   └── container.py
+│
+├── shared/                        # Shared between layers
+│   ├── domain/
+│   │   ├── region.py              # Multi-country support
+│   │   └── base.py
+│   ├── database/
+│   │   ├── postgres.py
+│   │   └── timescale.py
+│   └── utils/
+│       ├── errors.py
+│       └── logger.py
+│
+└── app/                           # LEGACY (to be removed)
+    └── ...
 ```
 
 ## Setup and Installation
 
-This project uses Poetry for dependency management:
+### Prerequisites
 
-1. Install Poetry (if not already installed):
-```
+- Python 3.10+
+- PostgreSQL 14+ with TimescaleDB extension
+- Redis (for queues and caching)
+- Elasticsearch/OpenSearch (for two-stage search)
+- Ollama (for LLM inference)
+
+### Installation
+
+1. Install Poetry:
+```bash
 curl -sSL https://install.python-poetry.org | python3 -
 ```
 
 2. Install dependencies:
-```
-cd genai-crops-analyzer
+```bash
+cd agroai_crops-agent-api
 poetry install
 ```
 
-3. Run the application:
-```
-poetry run python run.py
+3. Configure environment:
+```bash
+cp .env.example .env
+# Edit .env with your settings
 ```
 
-Or with Gunicorn (production):
-```
-poetry run gunicorn "app:create_app()"
+4. Run the application:
+```bash
+# Development
+poetry run uvicorn src.main:app --reload
+
+# Production
+poetry run uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 ## API Endpoints
 
-### Analyze Image
-`POST /api/analyze`
+### Authentication
+- `POST /api/v1/auth/login` - Login and get JWT token
+- `POST /api/v1/auth/signup` - Register new user
+- `GET /api/v1/auth/me` - Get current user info
 
-Upload an image for analysis of crop diseases and nutrient deficiencies.
+### Weather (Ingestion)
+- `GET /api/v1/weather/latest` - Get latest weather data
+- `GET /api/v1/weather/current` - Get real-time weather (OpenWeatherMap)
+- `POST /api/v1/weather/fetch` - Fetch weather for all zones
+- `GET /api/v1/weather/history` - Get historical weather
 
-**Request:**
-- Form data with:
-  - `image`: Image file (JPG, PNG)
+### Chat (Agent)
+- `POST /api/v1/chat` - Send message to agent
+- `DELETE /api/v1/chat/memory` - Clear conversation memory
+- `GET /api/v1/chat/health` - Agent health check
 
-**Response:**
-```json
-{
-  "status": "success",
-  "caption": "A tomato plant with yellow leaves and brown spots",
-  "diagnosis": "The plant appears to be suffering from early blight...",
-  "segmentation_mask": "base64_encoded_image_data",
-  "metadata": {
-    "affected_percentage": 35.2
-  }
-}
-```
+### Reports (Action)
+- `GET /api/v1/reports` - List all reports
+- `POST /api/v1/reports` - Create report
+- `GET /api/v1/reports/{id}` - Get report by ID
+- `PUT /api/v1/reports/{id}` - Update report
+- `DELETE /api/v1/reports/{id}` - Delete report
 
-### Analyze Video
-`POST /api/analyze-video`
+### Analysis (Action)
+- `POST /api/v1/analyze` - Analyze crop image
 
-Upload a video for automatic extraction and analysis of plant images. The API will:
-1. Extract frames from the video at specified intervals
-2. Detect and segment individual plants from each frame
-3. Analyze each plant for diseases and nutrient deficiencies
+### Alerts (Action)
+- `GET /api/v1/alerts` - List alerts
+- `POST /api/v1/alerts` - Create alert
+- `GET /api/v1/alerts/active` - Get active (unacknowledged) alerts
+- `PUT /api/v1/alerts/{id}/acknowledge` - Acknowledge alert
 
-**Request:**
-- Form data with:
-  - `video`: Video file (MP4, AVI, MOV, MKV)
-  - `frame_interval`: Extract 1 frame every N frames (default: 30)
-  - `analysis_type`: Type of analysis to perform (options: "disease", "nutrient", "both")
+### Upload (Ingestion)
+- `POST /api/v1/upload/image` - Upload crop image
 
-**Response:**
-```json
-{
-  "video_filename": "unique_filename.mp4",
-  "frames_extracted": 10,
-  "plants_detected": 25,
-  "analysis_results": [
-    {
-      "plant_image": "frame_20230505_123045_abcd1234_plant_0.jpg",
-      "status": "success",
-      "diseases": { ... },
-      "nutrients": { ... }
-    },
-    ...
-  ],
-  "status": "success"
-}
-```
+## Two-Stage Search System
 
-### Health Check
-`GET /api/health`
+The search system uses a two-stage approach for efficient document retrieval:
 
-Check if the API is running.
+### Stage 1: Index Lookup
+- Searches a lightweight index of summaries/categories
+- Identifies which document collections are relevant
+- Uses Elasticsearch/OpenSearch `agro_summaries` index
 
-**Response:**
-```json
-{
-  "status": "healthy"
-}
-```
+### Stage 2: Document Search
+- Searches full documents within identified categories
+- Applies region filters when applicable
+- Uses Elasticsearch/OpenSearch `agro_documents` index
 
-## Architecture
+This approach:
+- Reduces search space for large document collections
+- Improves relevance by focusing on appropriate categories
+- Supports multi-country/region filtering
 
-This application follows a clean architecture pattern with:
+## Multi-Country Support
 
-1. **Service Layer**: Coordinates the repositories to perform analysis
-2. **Repository Pattern**: Abstracts the AI components (segmentation, captioning, reasoning)
-3. **Dependency Injection**: Uses the `dependency-injector` package to manage dependencies
-
-### Dependency Injection
-
-The application uses the `dependency-injector` package to implement the dependency injection pattern, which:
-
-- Decouples components and makes the code more testable
-- Centralizes configuration management
-- Makes it easier to swap implementations (e.g., for testing or different environments)
-
-The dependency injection container is defined in `app/analysis/container.py` and provides:
-
-- Repository implementations (UNetRepository, Blip2Repository, MistralRepository)
-- Services that coordinate these repositories (AnalysisService)
-
-### Example of Service with Injected Dependencies:
+The architecture supports multi-country deployment without full i18n:
 
 ```python
-class AnalysisService:
-    def __init__(
-        self,
-        segmenter: SegmenterRepository,
-        captioner: CaptionerRepository,
-        reasoner: ReasoningRepository
-    ):
-        self.segmenter = segmenter
-        self.captioner = captioner
-        self.reasoner = reasoner
-        
-    def analyze_image(self, image: np.ndarray) -> CropReport:
-        # Implementation using the injected repositories
+# Region filtering in queries
+from src.shared.domain.region import Region, get_region
+
+region = get_region("AR")  # Argentina
+documents = await search_service.search(
+    query="tratamiento para trips",
+    region=region.country_code
+)
 ```
+
+Supported countries:
+- AR (Argentina)
+- MX (México)
+- CO (Colombia)
 
 ## Configuration
 
-The system uses a centralized configuration system for all external services. Configuration is managed through environment variables and the `app/analysis/config/services_config.py` file.
+Configuration is managed through:
+1. `config.yml` - Main configuration file
+2. Environment variables - Override config values
+3. `src/config/settings.py` - Default values
 
-### Configuration Settings
+Key configuration sections:
+- `app` - Application settings (name, version, CORS)
+- `auth` - JWT settings
+- `database` - PostgreSQL connection
+- `timescale` - TimescaleDB connection
+- `queues` - Message queue settings (Redis)
+- `search` - Elasticsearch settings
+- `weather_data` - Weather service settings
 
-- **UNet/TorchServe settings:**
-  - `UNET_MODEL_ENDPOINT`: TorchServe endpoint URL for the UNet model
+## Development
 
-- **BLIP-2 settings:**
-  - `BLIP_MODEL_NAME`: Name of the BLIP model to use
-  - `BLIP_DEVICE`: Device to run the model on ('cuda', 'cpu')
-  - `BLIP_MAX_NEW_TOKENS`: Maximum number of tokens to generate
-  - `BLIP_LIGHTWEIGHT`: Whether to use a lightweight model variant
-  - `BLIP_LIGHTWEIGHT_MODEL`: Name of the lightweight model to use
-
-- **Mistral/Ollama LLM settings:**
-  - `LLM_MODEL_NAME`: Name of the Mistral model variant to use
-  - `OLLAMA_ENDPOINT`: Endpoint for Ollama API
-  - `LLM_MAX_TOKENS`: Maximum number of tokens to generate
-  - `LLM_TEMPERATURE`: Temperature for generation (higher = more creative)
-  - `LLM_SYSTEM_PROMPT`: System prompt to guide the LLM
-  - `LLM_LIGHTWEIGHT_MODEL`: Name of the lightweight model to use
-  - `LLM_PROMPT_TEMPLATE`: Template for the LLM analysis prompt (with {caption} and {affected_percentage} placeholders)
-
-- **Development mode settings:**
-  - `DEV_MODE`: Whether to run in development mode (automatic lightweight models) 
-  - `USE_CUDA`: Whether to use CUDA for hardware acceleration
-
-### Environment Variables
-
-Configuration is managed through environment variables. Create a `.env` file in the project root with your settings:
-
-```
-# Application settings
-SECRET_KEY=your-secret-key-here
-DEV_MODE=true  # Set to false in production
-
-# Hardware settings
-USE_CUDA=false  # Set to true if GPU is available
-
-# UNet/TorchServe settings
-UNET_MODEL_ENDPOINT=http://localhost:8080/predictions/unet-plants
-
-# BLIP-2 settings
-BLIP_MODEL_NAME=Salesforce/blip2-opt-2.7b
-BLIP_DEVICE=cpu  # cpu or cuda
-BLIP_MAX_NEW_TOKENS=50
-BLIP_LIGHTWEIGHT=true  # Set to true for development
-BLIP_LIGHTWEIGHT_MODEL=Salesforce/blip-image-captioning-base
-
-# Mistral/Ollama LLM settings
-LLM_MODEL_NAME=mistral
-OLLAMA_ENDPOINT=http://localhost:11434/api/generate
-LLM_MAX_TOKENS=1000
-LLM_TEMPERATURE=0.7
-LLM_LIGHTWEIGHT_MODEL=mistral:7b-instruct-v0.2-q4_0
-LLM_PROMPT_TEMPLATE="Image Caption: {caption}\n\nAffected Area: Approximately {affected_percentage:.1f}% of the plant shows signs of stress or damage.\n\nBased on this information, please provide:\n1. A diagnosis of the most likely issues affecting this plant\n2. Potential causes of these symptoms\n3. Recommended treatments or interventions\n4. Preventative measures for the future"
+### Running Tests
+```bash
+poetry run pytest
 ```
 
-## Usage
+### Code Formatting
+```bash
+poetry run black src/
+poetry run isort src/
+```
 
-(Other sections of the README remain unchanged) 
+### Linting
+```bash
+poetry run flake8 src/
+```
+
+## Migration from Legacy
+
+The legacy code in `src/app/` will be removed in a future version. To migrate:
+
+1. Update imports from `src.app.*` to new paths:
+   - `src.app.users` → `src.auth`
+   - `src.app.reports` → `src.action.reports`
+   - `src.app.storage` → `src.action.storage`
+   - `src.app.agent` → `src.agent`
+   - `src.app.weather_data` → `src.ingestion`
+
+2. Use new container paths:
+   - `Container.users` → `Container.auth`
+   - `Container.reports` → `Container.action`
+   - `Container.agent` → `Container.agent`
+
+3. Update entry point:
+   - Old: `uvicorn src:app`
+   - New: `uvicorn src.main:app`
+
+## License
+
+Proprietary - All rights reserved.
