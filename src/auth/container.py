@@ -6,7 +6,10 @@ from dependency_injector import containers, providers
 
 from .services.auth_service import AuthService
 from .services.user_service import UserService
+from .services.profile_service import ProfileService
 from .adapters.user_repository import SQLAlchemyUserRepository
+from .adapters.account_repository import SQLAlchemyAccountRepository
+from .adapters.profile_repository import SQLAlchemyProfileRepository
 
 
 class AuthLayerContainer(containers.DeclarativeContainer):
@@ -27,6 +30,16 @@ class AuthLayerContainer(containers.DeclarativeContainer):
         session_factory=db_session_factory
     )
     
+    account_repository = providers.Factory(
+        SQLAlchemyAccountRepository,
+        session_factory=db_session_factory
+    )
+    
+    profile_repository = providers.Factory(
+        SQLAlchemyProfileRepository,
+        session_factory=db_session_factory
+    )
+    
     # Services
     user_service = providers.Factory(
         UserService,
@@ -38,4 +51,10 @@ class AuthLayerContainer(containers.DeclarativeContainer):
         AuthService,
         config=config,
         user_service=user_service
+    )
+    
+    profile_service = providers.Factory(
+        ProfileService,
+        profile_repository=profile_repository,
+        user_repository=user_repository
     )

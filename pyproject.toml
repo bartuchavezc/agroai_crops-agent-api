@@ -25,6 +25,7 @@ langchain-core = "^0.1.0"
 langchain-community = "^0.0.30"
 email-validator = "^2.2.0"
 passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+bcrypt = "4.0.1"  # Pin bcrypt for passlib compatibility
 python-jose = {extras = ["cryptography"], version = "^3.5.0"}
 redis = {extras = ["hiredis"], version = "^6.2.0"}
 timescale = "^0.0.8"
@@ -35,9 +36,15 @@ elasticsearch = {extras = ["async"], version = "^8.0.0"}  # Two-stage search bac
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
+pytest-asyncio = "^0.21.0"
 black = "^23.7.0"
 flake8 = "^6.1.0"
 isort = "^5.12.0"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
 
 [build-system]
 requires = ["poetry-core"]

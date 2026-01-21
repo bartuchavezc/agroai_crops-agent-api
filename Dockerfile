@@ -69,6 +69,9 @@ WORKDIR /app
 # Copy application code
 COPY --chown=appuser:appuser . .
 
+# Copy init scripts
+COPY --chown=appuser:appuser init-scripts /app/init-scripts/
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV HOST=0.0.0.0

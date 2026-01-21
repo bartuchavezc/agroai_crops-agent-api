@@ -5,6 +5,7 @@ Root dependency injection container for the application.
 from dependency_injector import containers, providers
 
 from src.shared.database import get_session_factory
+from src.shared.container import SharedContainer
 from src.auth.container import AuthLayerContainer
 from src.ingestion.container import IngestionContainer
 from src.agent.container import AgentContainer
@@ -31,7 +32,15 @@ class Container(containers.DeclarativeContainer):
     db_session_factory = providers.Singleton(
         lambda: get_session_factory()
     )
-    
+
+    # ============================================
+    # SHARED SERVICES
+    # ============================================
+    shared = providers.Container(
+        SharedContainer,
+        db_session_factory=db_session_factory,
+    )
+
     # ============================================
     # AUTH LAYER (Separate)
     # ============================================
@@ -39,6 +48,7 @@ class Container(containers.DeclarativeContainer):
         AuthLayerContainer,
         config=config.auth,
         db_session_factory=db_session_factory,
+        account_service=shared.account_service,
     )
     
     # ============================================

@@ -1,1 +1,0 @@
-# This file is deprecated. Models have been moved to the src/app/reports/domain directory. 

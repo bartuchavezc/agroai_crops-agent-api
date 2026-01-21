@@ -1,1 +1,0 @@
-# Migrations package for weather_data module 
