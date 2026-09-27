@@ -1,119 +1,92 @@
-# src/shared/database/postgres.py
 """
-PostgreSQL database connection management.
+PostgreSQL (TimescaleDB + pgvector) connection management. One database for everything.
 """
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+import ssl
+from typing import Optional
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
 from sqlalchemy import MetaData
-from typing import AsyncGenerator, Optional
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base
 
-# Define shared_metadata FIRST, before other imports that might depend on it
-shared_metadata = MetaData()
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
 
-# Globals to be initialized by init_database_config
-_async_engine: Optional[create_async_engine] = None
-_AsyncSessionLocal: Optional[async_sessionmaker[AsyncSession]] = None
+shared_metadata = MetaData(naming_convention=NAMING_CONVENTION)
+Base = declarative_base(metadata=shared_metadata)
+
+ADK_SCHEMA = "adk"
+
+_engine: Optional[AsyncEngine] = None
+_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+_adk_engine: Optional[AsyncEngine] = None
 
 
-def init_database_connections(db_url: str, echo_sql: bool):
-    """
-    Initializes the database engine and session factory.
-    This should be called once at application startup after config is loaded.
-    """
-    global _async_engine, _AsyncSessionLocal
-    if _async_engine is not None:
-        return
-
-    # Parse URL to extract SSL configuration
+def parse_db_url(db_url: str) -> tuple[str, dict]:
+    """Strip libpq-style ssl* query params (unsupported by asyncpg) and turn them into connect_args."""
     parsed = urlparse(db_url)
-    query_params = parse_qs(parsed.query)
-    
-    # Extract SSL parameters
-    sslmode = query_params.get('sslmode', ['disable'])[0].lower()
-    ssl_cert = query_params.get('sslcert', [None])[0]
-    ssl_key = query_params.get('sslkey', [None])[0]
-    ssl_ca = query_params.get('sslrootcert', [None])[0]
-    
-    # Remove SSL parameters from URL
-    ssl_params = ['sslmode', 'sslcert', 'sslkey', 'sslrootcert']
-    for param in ssl_params:
-        query_params.pop(param, None)
-    
-    # Rebuild clean URL
-    clean_query = urlencode(query_params, doseq=True) if query_params else ""
-    clean_url = urlunparse((
-        parsed.scheme,
-        parsed.netloc,
-        parsed.path,
-        parsed.params,
-        clean_query,
-        parsed.fragment
-    ))
-    
-    # Configure SSL based on mode
-    connect_args = {}
-    if sslmode in ['require', 'verify-ca', 'verify-full']:
-        import ssl
-        ssl_context = ssl.create_default_context()
-        
-        if sslmode == 'require':
-            # Require SSL but don't verify certificates (for self-signed certs)
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-        elif sslmode in ['verify-ca', 'verify-full']:
-            ssl_context.check_hostname = (sslmode == 'verify-full')
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-            
+    query = parse_qs(parsed.query)
+    sslmode = query.pop("sslmode", ["disable"])[0].lower()
+    ssl_cert = query.pop("sslcert", [None])[0]
+    ssl_key = query.pop("sslkey", [None])[0]
+    ssl_ca = query.pop("sslrootcert", [None])[0]
+    clean_url = urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
+
+    connect_args: dict = {}
+    if sslmode in {"require", "verify-ca", "verify-full"}:
+        ctx = ssl.create_default_context()
+        if sslmode == "require":
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        else:
+            ctx.check_hostname = sslmode == "verify-full"
+            ctx.verify_mode = ssl.CERT_REQUIRED
         if ssl_cert and ssl_key:
-            ssl_context.load_cert_chain(ssl_cert, ssl_key)
+            ctx.load_cert_chain(ssl_cert, ssl_key)
         if ssl_ca:
-            ssl_context.load_verify_locations(ssl_ca)
-            
-        connect_args['ssl'] = ssl_context
-    
-    _async_engine = create_async_engine(clean_url, echo=echo_sql, connect_args=connect_args)
-    _AsyncSessionLocal = async_sessionmaker(
-        bind=_async_engine,
-        class_=AsyncSession,
-        expire_on_commit=False
-    )
+            ctx.load_verify_locations(ssl_ca)
+        connect_args["ssl"] = ctx
+    return clean_url, connect_args
 
 
-async def init_db_tables():
-    """
-    Creates database tables if they don't exist.
-    Requires init_database_connections to have been called.
-    """
-    if not _async_engine:
-        raise RuntimeError("Database engine not initialized. Call init_database_connections first.")
-    
-    async with _async_engine.begin() as conn:
-        await conn.run_sync(shared_metadata.create_all)
+def init_database_connections(db_url: str, echo_sql: bool = False) -> None:
+    global _engine, _session_factory, _adk_engine
+    if _engine is not None:
+        return
+    clean_url, connect_args = parse_db_url(db_url)
+    _engine = create_async_engine(clean_url, echo=echo_sql, connect_args=connect_args, pool_pre_ping=True)
+    _session_factory = async_sessionmaker(bind=_engine, class_=AsyncSession, expire_on_commit=False)
+
+    adk_args = {**connect_args, "server_settings": {"search_path": ADK_SCHEMA}}
+    _adk_engine = create_async_engine(clean_url, echo=echo_sql, connect_args=adk_args, pool_pre_ping=True)
 
 
-def get_session_factory():
-    """
-    Returns the session factory.
-    Requires init_database_connections to have been called.
-    """
-    if not _AsyncSessionLocal:
-        raise RuntimeError("Database session factory not initialized. Call init_database_connections first.")
-    return _AsyncSessionLocal
+def get_engine() -> AsyncEngine:
+    if _engine is None:
+        raise RuntimeError("Database not initialized. Call init_database_connections first.")
+    return _engine
 
 
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """
-    Provides a database session. 
-    Requires init_database_connections to have been called.
-    """
-    session_factory = get_session_factory()
-    session = session_factory()
-    try:
-        yield session
-        await session.commit()
-    except Exception:
-        if session.in_transaction():
-            await session.rollback()
-        raise
-    finally:
-        await session.close()
+def get_adk_engine() -> AsyncEngine:
+    if _adk_engine is None:
+        raise RuntimeError("Database not initialized. Call init_database_connections first.")
+    return _adk_engine
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    if _session_factory is None:
+        raise RuntimeError("Database not initialized. Call init_database_connections first.")
+    return _session_factory
+
+
+async def dispose_database_connections() -> None:
+    global _engine, _session_factory, _adk_engine
+    for engine in (_engine, _adk_engine):
+        if engine is not None:
+            await engine.dispose()
+    _engine = _session_factory = _adk_engine = None

@@ -2,8 +2,8 @@
 """
 JWT token utilities for authentication.
 """
-from jose import jwt, JWTError
-from datetime import datetime, timedelta
+from jose import jwt
+from datetime import datetime, timedelta, timezone
 
 
 def create_access_token(data: dict, secret_key: str, algorithm: str, expires_delta: int) -> str:
@@ -20,7 +20,7 @@ def create_access_token(data: dict, secret_key: str, algorithm: str, expires_del
         Encoded JWT token
     """
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=expires_delta)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_delta)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, secret_key, algorithm=algorithm)
     return encoded_jwt

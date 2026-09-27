@@ -1,89 +1,37 @@
-# src/config/container.py
-"""
-Root dependency injection container for the application.
-"""
-from dependency_injector import containers, providers
+from dependency_injector import containers
+from dependency_injector import providers as di
 
-from src.shared.database import get_session_factory
-from src.shared.container import SharedContainer
-from src.auth.container import AuthLayerContainer
-from src.ingestion.container import IngestionContainer
 from src.agent.container import AgentContainer
-from src.action.container import ActionContainer
+from src.application.container import ApplicationContainer
+from src.auth.container import AuthLayerContainer
+from src.providers.container import ProvidersContainer
+from src.shared.database import get_adk_engine, get_session_factory
 
 
 class Container(containers.DeclarativeContainer):
-    """
-    Root container for the application.
-    
-    Architecture: 3 Layers + Auth
-    - Auth: Authentication and user management (separate)
-    - Ingestion: Data reception, queues, and managers
-    - Agent: Conversational AI, search, and reasoning
-    - Action: Reports, storage, alerts, and commands
-    
-    Configuration is loaded and applied in src/__init__.py
-    """
-    
-    # Configuration - will be populated by from_dict() in src/__init__.py
-    config = providers.Configuration()
-    
-    # Database session factory (shared between containers)
-    db_session_factory = providers.Singleton(
-        lambda: get_session_factory()
-    )
+    """Layers: providers (external data) <- application (business) <- agent (LLM). Auth is transversal."""
 
-    # ============================================
-    # SHARED SERVICES
-    # ============================================
-    shared = providers.Container(
-        SharedContainer,
-        db_session_factory=db_session_factory,
-    )
+    config = di.Configuration()
 
-    # ============================================
-    # AUTH LAYER (Separate)
-    # ============================================
-    auth = providers.Container(
-        AuthLayerContainer,
-        config=config.auth,
-        db_session_factory=db_session_factory,
-        account_service=shared.account_service,
-    )
-    
-    # ============================================
-    # INGESTION LAYER
-    # ============================================
-    ingestion = providers.Container(
-        IngestionContainer,
+    db_session_factory = di.Singleton(get_session_factory)
+    adk_engine = di.Singleton(get_adk_engine)
+
+    auth = di.Container(AuthLayerContainer, config=config.auth, db_session_factory=db_session_factory)
+    data_providers = di.Container(ProvidersContainer, config=config, db_session_factory=db_session_factory)
+    application = di.Container(
+        ApplicationContainer,
         config=config,
         db_session_factory=db_session_factory,
+        weather_service=data_providers.weather_service,
+        user_repository=auth.user_repository,
     )
-    
-    # ============================================
-    # AGENT LAYER
-    # ============================================
-    agent = providers.Container(
+    agent = di.Container(
         AgentContainer,
         config=config,
-    )
-    
-    # ============================================
-    # ACTION LAYER
-    # ============================================
-    action = providers.Container(
-        ActionContainer,
-        config=config,
         db_session_factory=db_session_factory,
-        message_queue=ingestion.message_queue,
+        adk_engine=adk_engine,
+        application=application,
+        weather_service=data_providers.weather_service,
+        profile_service=auth.profile_service,
+        search_provider=data_providers.search,
     )
-
-
-# Backward compatibility aliases for gradual migration
-class LegacyContainer(Container):
-    """
-    Legacy container with backwards compatibility mappings.
-    Provides aliases to old container paths during migration.
-    To be removed after full migration is complete.
-    """
-    pass

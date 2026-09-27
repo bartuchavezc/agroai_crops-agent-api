@@ -1,9 +1,9 @@
-# src/shared/domain/base.py
-"""
-Base classes for domain models.
-"""
-from sqlalchemy.orm import declarative_base
-from src.shared.database import shared_metadata
+from datetime import datetime, timezone
 
-# Base for all domain tables using shared metadata
-DomainBase = declarative_base(metadata=shared_metadata)
+from src.shared.database import Base
+
+DomainBase = Base
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)

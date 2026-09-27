@@ -2,6 +2,7 @@
 """
 User management service.
 """
+from typing import List
 from uuid import UUID
 
 from ..domain.models import User
@@ -61,6 +62,14 @@ class UserService:
             User object if found, None otherwise
         """
         return await self.user_repository.get_by_email(email)
+
+    async def list_account_members(self, account_id: UUID) -> List[UserRead]:
+        users = await self.user_repository.list_by_account(account_id)
+        return [UserRead.model_validate(u) for u in users]
+
+    async def update_member_role(self, user_id: UUID, account_id: UUID, role: str) -> UserRead | None:
+        user = await self.user_repository.update_role(user_id, account_id, role)
+        return UserRead.model_validate(user) if user else None
 
     async def get_user_with_account(self, user_id: UUID) -> tuple[User | None, dict | None]:
         """

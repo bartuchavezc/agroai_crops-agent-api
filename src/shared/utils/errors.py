@@ -1,4 +1,3 @@
-# src/shared/utils/errors.py
 """
 Custom exception classes for the application.
 """
@@ -16,34 +15,9 @@ class CropAnalysisError(Exception):
         super().__init__(self.message)
 
 
-class ImagePreprocessingError(CropAnalysisError):
-    """Error during image preprocessing."""
-    status_code = 400
-    error_code = "preprocessing_error"
 
 
-class SegmentationError(CropAnalysisError):
-    """Error during image segmentation."""
-    status_code = 500
-    error_code = "segmentation_error"
 
-
-class CaptioningError(CropAnalysisError):
-    """Error during image captioning."""
-    status_code = 500
-    error_code = "captioning_error"
-
-
-class ReasoningError(CropAnalysisError):
-    """Error during crop analysis reasoning."""
-    status_code = 500
-    error_code = "reasoning_error"
-
-
-class MissingInputError(CropAnalysisError):
-    """Required input is missing."""
-    status_code = 400
-    error_code = "missing_input"
 
 
 class InvalidInputError(CropAnalysisError):
@@ -58,16 +32,12 @@ class StorageError(CropAnalysisError):
     error_code = "storage_error"
 
 
-class AuthenticationError(CropAnalysisError):
-    """Error related to authentication."""
-    status_code = 401
-    error_code = "authentication_error"
 
 
-class AuthorizationError(CropAnalysisError):
-    """Error related to authorization."""
+class PermissionDeniedError(CropAnalysisError):
+    """Your role does not allow this operation."""
     status_code = 403
-    error_code = "authorization_error"
+    error_code = "permission_denied"
 
 
 class UserAlreadyExistsError(CropAnalysisError):
@@ -76,13 +46,31 @@ class UserAlreadyExistsError(CropAnalysisError):
     error_code = "user_already_exists"
 
 
-class QueueError(CropAnalysisError):
-    """Error related to message queue operations."""
-    status_code = 500
-    error_code = "queue_error"
+class NotFoundError(CropAnalysisError):
+    """Resource not found."""
+    status_code = 404
+    error_code = "not_found"
 
 
-class SearchError(CropAnalysisError):
-    """Error related to search operations."""
-    status_code = 500
-    error_code = "search_error"
+class ProviderKeyMissingError(CropAnalysisError):
+    """No Gemini API key configured for this user. Add one in your profile."""
+    status_code = 409
+    error_code = "PROVIDER_KEY_MISSING"
+
+
+class ProviderKeyInvalidError(CropAnalysisError):
+    """The configured Gemini API key was rejected by the provider."""
+    status_code = 409
+    error_code = "PROVIDER_KEY_INVALID"
+
+
+class ProviderQuotaExceededError(CropAnalysisError):
+    """The Gemini API quota for this user's key is exhausted. Try again later."""
+    status_code = 429
+    error_code = "PROVIDER_QUOTA_EXCEEDED"
+
+
+class ProviderError(CropAnalysisError):
+    """The model provider returned an unexpected error."""
+    status_code = 502
+    error_code = "PROVIDER_ERROR"

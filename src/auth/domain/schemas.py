@@ -3,8 +3,10 @@
 Pydantic schemas for authentication.
 """
 from datetime import datetime
-from pydantic import BaseModel, EmailStr
+from typing import Literal
 from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class UserBase(BaseModel):
@@ -15,15 +17,26 @@ class UserBase(BaseModel):
 
 
 class SignupRequest(UserBase):
-    """Schema for signup request - creates both account and user."""
-    password: str
+    """Creates a new account and its owner user."""
+    password: str = Field(min_length=8)
+    account_name: str | None = Field(default=None, max_length=255)
+
+
+class MemberCreate(UserBase):
+    """An account owner adds a family member / technician to the account."""
+    password: str = Field(min_length=8)
+    role: Literal["tecnico", "staff"] = "staff"
+
+
+class MemberRoleUpdate(BaseModel):
+    role: Literal["tecnico", "staff"]
 
 
 class UserCreate(UserBase):
-    """Schema for creating a new user."""
+    """Internal DTO for creating a user."""
     password: str
     account_id: UUID
-    role: str | None = None
+    role: str
 
 
 class UserRead(UserBase):
@@ -35,8 +48,21 @@ class UserRead(UserBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AccountRead(BaseModel):
+    id: UUID
+    name: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MeResponse(BaseModel):
+    user: UserRead
+    account: AccountRead
 
 
 class LoginRequest(BaseModel):
@@ -91,8 +117,7 @@ class UserProfileRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserProfileContext(BaseModel):
@@ -105,8 +130,7 @@ class UserProfileContext(BaseModel):
     calculated_profile: str  # "guardian", "purist", "alchemist", "professional"
     config: dict  # Configuración específica del agente
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(json_schema_extra={
             "example": {
                 "calculated_profile": "alchemist",
                 "config": {
@@ -117,4 +141,4 @@ class UserProfileContext(BaseModel):
                     "alert_threshold": "critical_only"
                 }
             }
-        }
+        })

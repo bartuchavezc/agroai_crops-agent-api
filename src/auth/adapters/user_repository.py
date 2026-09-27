@@ -3,7 +3,7 @@
 User repository implementations.
 """
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select
@@ -33,6 +33,14 @@ class UserRepositoryInterface(ABC):
     @abstractmethod
     async def mark_as_enrolled(self, user_id: UUID) -> Optional[User]:
         """Mark a user as enrolled after completing onboarding."""
+        ...
+
+    @abstractmethod
+    async def list_by_account(self, account_id: UUID) -> List[User]:
+        ...
+
+    @abstractmethod
+    async def update_role(self, user_id: UUID, account_id: UUID, role: str) -> Optional[User]:
         ...
 
 
@@ -82,6 +90,26 @@ class SQLAlchemyUserRepository(UserRepositoryInterface):
                 return None
             
             user.is_enrolled = True
+            await session.commit()
+            await session.refresh(user)
+        return user
+
+    async def list_by_account(self, account_id: UUID) -> List[User]:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(User).filter(User.account_id == account_id).order_by(User.created_at)
+            )
+            return list(result.scalars().all())
+
+    async def update_role(self, user_id: UUID, account_id: UUID, role: str) -> Optional[User]:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(User).filter(User.id == user_id, User.account_id == account_id)
+            )
+            user = result.scalars().first()
+            if not user:
+                return None
+            user.role = role
             await session.commit()
             await session.refresh(user)
         return user

@@ -1,75 +1,67 @@
-version: '3.8'
-
+# AgroAI: one Python image (api + batch worker) and one PostgreSQL with TimescaleDB + pgvector.
+#   cp .env.example .env   # set AUTH_SECRET_KEY, CREDENTIALS_ENCRYPTION_KEY, OPENWEATHER_API_KEY
+#   docker compose up --build
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: agroai_postgres
+  db:
+    image: timescale/timescaledb-ha:pg17
     environment:
-      POSTGRES_USER: genai_user
-      POSTGRES_PASSWORD: genai_password
-      POSTGRES_DB: genai_reports_db
+      POSTGRES_USER: ${POSTGRES_USER:-agroai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agroai}
+      POSTGRES_DB: ${POSTGRES_DB:-agroai}
     ports:
-      - "54321:5432"
+      - "${DB_PORT:-54321}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d
+      - pgdata:/home/postgres/pgdata/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U genai_user -d genai_reports_db"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
       timeout: 5s
-      retries: 5
-    networks:
-      - agroai_network
+      retries: 20
 
-  # TimescaleDB (PostgreSQL with TimescaleDB extension)
-  timescaledb:
-    image: timescale/timescaledb:latest-pg15
-    container_name: agroai_timescaledb
-    environment:
-      POSTGRES_USER: genai_user
-      POSTGRES_PASSWORD: genai_password
-      POSTGRES_DB: genai_reports_db
-    ports:
-      - "54320:5432"
-    volumes:
-      - timescaledb_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U genai_user -d genai_reports_db"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - agroai_network
-
-  # AgroAI Application
-  app:
+  migrate:
     build: .
-    container_name: agroai_app
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://genai_user:genai_password@postgres:5432/genai_reports_db
-      - TIMESCALE_URL=postgresql+asyncpg://genai_user:genai_password@timescaledb:5432/genai_reports_db
-      - DEV_MODE=true
-      - HOST=0.0.0.0
-      - PORT=8000
-    ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
-      - /app/__pycache__
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agroai}:${POSTGRES_PASSWORD:-agroai}@db:5432/${POSTGRES_DB:-agroai}
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
-      timescaledb:
-        condition: service_healthy
-    networks:
-      - agroai_network
-    command: python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+
+  api:
+    build: .
+    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agroai}:${POSTGRES_PASSWORD:-agroai}@db:5432/${POSTGRES_DB:-agroai}
+      BASE_DATA_PATH: /data/uploads
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: .
+    command: ["python", "-m", "src.batch", "smn", "--every-hours", "${SMN_INTERVAL_HOURS:-6}"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agroai}:${POSTGRES_PASSWORD:-agroai}@db:5432/${POSTGRES_DB:-agroai}
+      SMN_GRID_CACHE_DIR: /data/smn_cache
+    volumes:
+      - smn_cache:/data/smn_cache
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
-  postgres_data:
-  timescaledb_data:
-
-networks:
-  agroai_network:
-    driver: bridge
+  pgdata:
+  uploads:
+  smn_cache:

@@ -1,0 +1,3 @@
+api.167-172-135-217.nip.io {
+	reverse_proxy api:8000
+}

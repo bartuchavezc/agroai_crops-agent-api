@@ -1,20 +1,34 @@
-# src/auth/api/routes.py
 """
-Authentication API routes.
+Authentication, account membership and onboarding routes.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
-from dependency_injector.wiring import inject, Provide
+from typing import List
 from uuid import UUID
 
+from dependency_injector.wiring import Provide, inject
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from ..services.account_service import AccountService
+from src.shared.utils.errors import UserAlreadyExistsError
+
+from ..domain.models import ROLE_OWNER
 from ..domain.schemas import (
-    LoginRequest, TokenResponse, UserCreate, UserRead, SignupRequest,
-    EnrollRequest, UserProfileRead, UserProfileContext
+    AccountRead,
+    EnrollRequest,
+    LoginRequest,
+    MemberCreate,
+    MemberRoleUpdate,
+    MeResponse,
+    SignupRequest,
+    TokenResponse,
+    UserCreate,
+    UserProfileContext,
+    UserProfileRead,
+    UserRead,
 )
 from ..services.auth_service import AuthService
-from ..services.user_service import UserService
 from ..services.profile_service import ProfileService
-from src.shared.services.account_service import AccountService
-from .dependencies import get_current_user
+from ..services.user_service import UserService
+from .dependencies import get_current_user, require_owner
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -23,11 +37,8 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @inject
 async def login(
     login_req: LoginRequest,
-    auth_service: AuthService = Depends(Provide["auth.auth_service"])
+    auth_service: AuthService = Depends(Provide["auth.auth_service"]),
 ):
-    """
-    Authenticate user and return access token.
-    """
     user = await auth_service.authenticate_user(login_req.email, login_req.password)
     if not user:
         raise HTTPException(
@@ -35,130 +46,123 @@ async def login(
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = auth_service.create_token(user)
-    return TokenResponse(access_token=token)
+    return TokenResponse(access_token=auth_service.create_token(user))
 
 
-@router.post("/signup", response_model=TokenResponse, summary="Sign Up")
+@router.post("/signup", response_model=TokenResponse, summary="Sign Up (new account + owner)")
 @inject
 async def signup(
     signup_req: SignupRequest,
     user_service: UserService = Depends(Provide["auth.user_service"]),
     auth_service: AuthService = Depends(Provide["auth.auth_service"]),
-    account_service: AccountService = Depends(Provide["shared.account_service"])
+    account_service: AccountService = Depends(Provide["auth.account_service"]),
 ):
-    """
-    Create a new account and user, then return access token.
-    The account name is derived from the user's name or email.
-    """
-    from src.shared.utils.errors import UserAlreadyExistsError
-    
+    if await user_service.get_user_by_email(signup_req.email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered.")
+
+    account_name = (
+        signup_req.account_name
+        or " ".join(p for p in (signup_req.first_name, signup_req.last_name) if p)
+        or signup_req.email.split("@")[0]
+    )
+    account = await account_service.create_account(name=account_name)
     try:
-        # Generate account name from user data
-        if signup_req.first_name and signup_req.last_name:
-            account_name = f"{signup_req.first_name} {signup_req.last_name}"
-        elif signup_req.first_name:
-            account_name = signup_req.first_name
-        else:
-            # Use email prefix as account name
-            account_name = signup_req.email.split("@")[0]
-        
-        # Create the account first
-        account = await account_service.create_account(name=account_name)
-        
-        # Create the user with the new account_id
-        user_create = UserCreate(
-            email=signup_req.email,
-            password=signup_req.password,
-            first_name=signup_req.first_name,
-            last_name=signup_req.last_name,
-            account_id=account.id
+        user = await user_service.create_user(
+            user_create_dto=UserCreate(
+                email=signup_req.email,
+                password=signup_req.password,
+                first_name=signup_req.first_name,
+                last_name=signup_req.last_name,
+                account_id=account.id,
+                role=ROLE_OWNER,
+            )
         )
-        user = await user_service.create_user(user_create_dto=user_create)
-        
-        token = auth_service.create_token(user)
-        return TokenResponse(access_token=token)
     except UserAlreadyExistsError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    return TokenResponse(access_token=auth_service.create_token(user))
 
 
-@router.post("/users", response_model=UserRead, summary="Create User")
-@inject
-async def create_user_endpoint(
-    user: UserCreate,
-    user_service: UserService = Depends(Provide["auth.user_service"]),
-):
-    """
-    Create a new user (admin endpoint).
-    """
-    from src.shared.utils.errors import UserAlreadyExistsError
-    
-    try:
-        return await user_service.create_user(user_create_dto=user)
-    except UserAlreadyExistsError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-@router.get("/me", response_model=dict, summary="Get Current User")
+@router.get("/me", response_model=MeResponse, summary="Get Current User")
 @inject
 async def get_me(
     current_user: UserRead = Depends(get_current_user),
-    account_service = Depends(Provide["shared.account_service"]),
+    account_service: AccountService = Depends(Provide["auth.account_service"]),
 ):
-    """
-    Get current authenticated user with account info.
-    """
     account = await account_service.get_account(current_user.account_id)
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
-    return {"user": current_user, "account": account}
+    return MeResponse(user=current_user, account=AccountRead.model_validate(account))
 
 
-@router.get("/users/{user_id}", response_model=UserRead, summary="Get User by ID")
+@router.get("/users", response_model=List[UserRead], summary="List Account Members")
 @inject
-async def read_user_endpoint(
-    user_id: UUID,
+async def list_members(
+    current_user: UserRead = Depends(get_current_user),
     user_service: UserService = Depends(Provide["auth.user_service"]),
 ):
-    """
-    Get a user by their ID.
-    """
-    db_user = await user_service.get_user(user_id=user_id)
-    if db_user is None:
+    return await user_service.list_account_members(current_user.account_id)
+
+
+@router.post("/users", response_model=UserRead, status_code=status.HTTP_201_CREATED, summary="Add Account Member")
+@inject
+async def add_member(
+    member: MemberCreate,
+    owner: UserRead = Depends(require_owner),
+    user_service: UserService = Depends(Provide["auth.user_service"]),
+):
+    try:
+        user = await user_service.create_user(
+            user_create_dto=UserCreate(
+                email=member.email,
+                password=member.password,
+                first_name=member.first_name,
+                last_name=member.last_name,
+                account_id=owner.account_id,
+                role=member.role,
+            )
+        )
+    except UserAlreadyExistsError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    return UserRead.model_validate(user)
+
+
+@router.get("/users/{user_id}", response_model=UserRead, summary="Get Account Member")
+@inject
+async def read_member(
+    user_id: UUID,
+    current_user: UserRead = Depends(get_current_user),
+    user_service: UserService = Depends(Provide["auth.user_service"]),
+):
+    user = await user_service.get_user(user_id=user_id)
+    if user is None or user.account_id != current_user.account_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return db_user
+    return user
 
 
-# ============================================
-# User Profile / Enrollment Endpoints
-# ============================================
+@router.patch("/users/{user_id}/role", response_model=UserRead, summary="Change Member Role")
+@inject
+async def change_member_role(
+    user_id: UUID,
+    body: MemberRoleUpdate,
+    owner: UserRead = Depends(require_owner),
+    user_service: UserService = Depends(Provide["auth.user_service"]),
+):
+    if user_id == owner.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The owner cannot change their own role.")
+    user = await user_service.update_member_role(user_id, owner.account_id, body.role)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
 
 @router.post("/enroll", response_model=UserProfileRead, summary="Enroll User Profile")
 @inject
 async def enroll(
     enroll_req: EnrollRequest,
     current_user: UserRead = Depends(get_current_user),
-    profile_service: ProfileService = Depends(Provide["auth.profile_service"])
+    profile_service: ProfileService = Depends(Provide["auth.profile_service"]),
 ):
-    """
-    Create or update user profile based on onboarding questionnaire.
-    
-    The form should contain q1-q10 answers (A/B/C) that determine:
-    - Experience level (q1-q2)
-    - Production goal (q3)
-    - Risk tolerance (q4-q5)
-    - Philosophy (q6-q7)
-    - Tech preferences (q8-q10)
-    
-    Based on these answers, a profile type is calculated:
-    - guardian: Novice, conservative users
-    - purist: Organic philosophy with experience
-    - alchemist: High risk tolerance + premium goals
-    - professional: Expert with advanced tech preferences
-    """
+    """Save the onboarding questionnaire (q1..q10, A/B/C) and compute the agent profile."""
     profile = await profile_service.enroll(current_user.id, enroll_req.form)
     return UserProfileRead.model_validate(profile)
 
@@ -167,22 +171,11 @@ async def enroll(
 @inject
 async def get_profile(
     current_user: UserRead = Depends(get_current_user),
-    profile_service: ProfileService = Depends(Provide["auth.profile_service"])
+    profile_service: ProfileService = Depends(Provide["auth.profile_service"]),
 ):
-    """
-    Get the current user's profile.
-    
-    Returns the complete profile including:
-    - Raw form data
-    - Calculated categories (experience, goal, risk, philosophy)
-    - Calculated profile type
-    """
     profile = await profile_service.get_profile(current_user.id)
     if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profile not found. Please complete enrollment first."
-        )
+        raise HTTPException(status_code=404, detail="Profile not found. Please complete enrollment first.")
     return profile
 
 
@@ -190,25 +183,9 @@ async def get_profile(
 @inject
 async def get_profile_context(
     current_user: UserRead = Depends(get_current_user),
-    profile_service: ProfileService = Depends(Provide["auth.profile_service"])
+    profile_service: ProfileService = Depends(Provide["auth.profile_service"]),
 ):
-    """
-    Get the agent context configuration based on user profile.
-    
-    This endpoint returns the configuration that should be used
-    to customize the agent's behavior for this specific user.
-    
-    The config includes:
-    - technical_tone: How technical the agent should be
-    - risk_tolerance: How the agent handles risk scenarios
-    - sanitary_framework: Approach to pest/disease management
-    - priority: What the agent should prioritize
-    - alert_threshold: When to alert the user
-    """
     context = await profile_service.get_profile_context(current_user.id)
     if not context:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profile not found. Please complete enrollment first."
-        )
+        raise HTTPException(status_code=404, detail="Profile not found. Please complete enrollment first.")
     return context

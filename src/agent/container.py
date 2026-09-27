@@ -1,82 +1,73 @@
-# src/agent/container.py
-"""
-Dependency injection container for the Agent layer.
-"""
 from dependency_injector import containers, providers
+from google.adk.sessions import DatabaseSessionService
 
-from .conversation.agent_service import AgentService
-from .conversation.memory_manager import MemoryManager
-from .search.elastic_adapter import ElasticSearchAdapter
-from .search.index_lookup import IndexLookupService
-from .search.doc_search import DocumentSearchService
-from .search.search_service import TwoStageSearchService
-from .reasoning.llm_service import LLMService
-from .reasoning.rules_engine import RulesEngine
+from .conversations.service import ConversationService
+from .memory.service import MemoryService
+from .providers.credentials_service import CredentialsService
+from .providers.encryption import SecretBox
+from .providers.gemini import GeminiGateway
+from .providers.repository import ProviderCredentialRepository
 from .reasoning.diagnosis_service import DiagnosisService
+from .runner import AgentRunner
+from .tools import ToolDeps
 
 
 class AgentContainer(containers.DeclarativeContainer):
-    """Container for agent-related services."""
-    
-    # Configuration (will be provided by parent container)
+    """LLM providers (BYOK), conversations, memory, diagnosis and the ADK runner."""
+
     config = providers.Configuration()
-    
-    # ============================================
-    # SEARCH LAYER
-    # ============================================
-    
-    elastic_adapter = providers.Singleton(
-        ElasticSearchAdapter,
-        hosts=config.search.elasticsearch.hosts,
-        index_summaries=config.search.elasticsearch.index_summaries,
-        index_documents=config.search.elasticsearch.index_documents,
+    db_session_factory = providers.Dependency()
+    adk_engine = providers.Dependency()
+    application = providers.DependenciesContainer()
+    weather_service = providers.Dependency()
+    profile_service = providers.Dependency()
+    search_provider = providers.Dependency()
+
+    secret_box = providers.Singleton(SecretBox, key=config.security.credentials_encryption_key)
+    credential_repository = providers.Singleton(ProviderCredentialRepository, session_factory=db_session_factory)
+    credentials_service = providers.Singleton(
+        CredentialsService, repository=credential_repository, secret_box=secret_box
     )
-    
-    index_lookup = providers.Singleton(
-        IndexLookupService,
-        elastic_adapter=elastic_adapter,
+    gemini = providers.Singleton(GeminiGateway, credentials_service=credentials_service, config=config.gemini)
+
+    conversation_service = providers.Singleton(ConversationService, session_factory=db_session_factory)
+    memory_service = providers.Singleton(MemoryService, session_factory=db_session_factory, gemini_gateway=gemini)
+    session_service = providers.Singleton(DatabaseSessionService, db_engine=adk_engine)
+
+    tool_deps = providers.Singleton(
+        ToolDeps,
+        farm=application.farm_service,
+        memory=memory_service,
+        weather=weather_service,
+        alerts=application.alert_service,
+        reports=application.reports_service,
+        rules=application.rules_engine,
+        gemini=gemini,
+        search=search_provider,
     )
-    
-    doc_search = providers.Singleton(
-        DocumentSearchService,
-        elastic_adapter=elastic_adapter,
+    runner = providers.Singleton(
+        AgentRunner,
+        gemini=gemini,
+        session_service=session_service,
+        conversations=conversation_service,
+        tool_deps=tool_deps,
+        farm_service=application.farm_service,
+        alert_service=application.alert_service,
+        profile_service=profile_service,
+        storage_service=application.storage_service,
+        reports_service=application.reports_service,
+        timezone_name=config.app.timezone,
+        max_image_side=config.gemini.max_image_side,
     )
-    
-    search_service = providers.Singleton(
-        TwoStageSearchService,
-        index_lookup=index_lookup,
-        doc_search=doc_search,
-    )
-    
-    # ============================================
-    # REASONING LAYER
-    # ============================================
-    
-    llm_service = providers.Factory(
-        LLMService,
-        model_name=config.agent_llm.model_name,
-        ollama_endpoint=config.agent_llm.ollama_endpoint,
-        max_tokens=config.chat_llm.max_tokens,
-        temperature=config.chat_llm.temperature,
-    )
-    
-    rules_engine = providers.Singleton(RulesEngine)
-    
-    diagnosis_service = providers.Factory(
+    diagnosis_service = providers.Singleton(
         DiagnosisService,
-        llm_service=llm_service,
-        rules_engine=rules_engine,
-    )
-    
-    # ============================================
-    # CONVERSATION LAYER
-    # ============================================
-    
-    agent_service = providers.Factory(
-        AgentService,
-        llm_service=llm_service,
-        search_service=search_service,
-        reasoning_service=diagnosis_service,
-        system_prompt=config.agent_llm.system_prompt,
-        max_memory_turns=10,
+        gemini=gemini,
+        storage_service=application.storage_service,
+        reports_service=application.reports_service,
+        farm_service=application.farm_service,
+        weather_service=weather_service,
+        rules_engine=application.rules_engine,
+        profile_service=profile_service,
+        notification_service=application.notification_service,
+        max_image_side=config.gemini.max_image_side,
     )

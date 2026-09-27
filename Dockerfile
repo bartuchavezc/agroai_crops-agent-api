@@ -1,88 +1,22 @@
-# Multi-stage build for smaller final image
-FROM python:3.10-alpine AS builder
+FROM python:3.12-slim AS builder
 
-# Install build dependencies
-RUN apk add --no-cache \
-    curl \
-    build-base \
-    libffi-dev \
-    openssl-dev \
-    postgresql-dev \
-    jpeg-dev \
-    zlib-dev \
-    freetype-dev \
-    lcms2-dev \
-    openjpeg-dev \
-    tiff-dev \
-    tk-dev \
-    tcl-dev \
-    harfbuzz-dev \
-    fribidi-dev \
-    libimagequant-dev \
-    libxcb-dev \
-    musl-dev \
-    linux-headers
-
-# Install Poetry
-RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=/opt/poetry python3 - && \
-    cd /usr/local/bin && \
-    ln -s /opt/poetry/bin/poetry && \
-    poetry config virtualenvs.create false && \
-    poetry config installer.max-workers 10
-
-# Copy poetry configuration files
-COPY pyproject.toml poetry.lock* ./
-
-# Install dependencies
-ENV PYTHONUNBUFFERED=1
-ENV PIP_NO_CACHE_DIR=1
-RUN poetry install --no-interaction --no-ansi --only main --no-root
-
-# Production stage
-FROM python:3.10-alpine AS production
-
-# Install only runtime dependencies
-RUN apk add --no-cache \
-    postgresql-libs \
-    libffi \
-    jpeg \
-    zlib \
-    freetype \
-    lcms2 \
-    openjpeg \
-    tiff \
-    harfbuzz \
-    fribidi \
-    libimagequant \
-    libxcb
-
-# Create non-root user
-RUN addgroup -g 1000 appuser && adduser -D -s /bin/sh -u 1000 -G appuser appuser
-
-# Copy Python packages from builder
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# Set working directory
+COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv
 WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy application code
-COPY --chown=appuser:appuser . .
+FROM python:3.12-slim
 
-# Copy init scripts
-COPY --chown=appuser:appuser init-scripts /app/init-scripts/
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV HOST=0.0.0.0
-ENV PORT=8080
-ENV PYTHONPATH=/app
-
-# Switch to non-root user
+RUN useradd --create-home --uid 1000 appuser \
+    && mkdir -p /data/uploads /data/smn_cache \
+    && chown -R appuser:appuser /data
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONPATH=/app
+WORKDIR /app
+COPY --chown=appuser:appuser alembic.ini ./
+COPY --chown=appuser:appuser alembic ./alembic
+COPY --chown=appuser:appuser src ./src
 USER appuser
-
-# Expose the port
-EXPOSE 8080
-
-# Run the application
-CMD ["python", "run.py"] 
+EXPOSE 8000
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
