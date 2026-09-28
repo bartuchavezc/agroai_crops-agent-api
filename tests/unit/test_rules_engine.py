@@ -155,6 +155,53 @@ class TestRule:
         )
         
         result = rule.evaluate({"temperature": 25})
-        
+
         assert result.matched is False
         assert "Error" in result.message
+
+
+class TestIrrigationRules:
+    """Deterministic irrigation-deficit state transitions (regar / cubierto)."""
+
+    def test_deficit_above_threshold_triggers_regar(self, rules_engine):
+        results = rules_engine.evaluate({"net_mm": 5.0}, categories=["irrigation"])
+        assert [r.rule_id for r in results] == ["irrigation_deficit"]
+
+    def test_deficit_at_or_below_threshold_triggers_covered(self, rules_engine):
+        for net_mm in (2.0, 0.0, -3.0):
+            results = rules_engine.evaluate({"net_mm": net_mm}, categories=["irrigation"])
+            assert [r.rule_id for r in results] == ["irrigation_covered"], net_mm
+
+    def test_irrigation_and_covered_are_mutually_exclusive(self, rules_engine):
+        for net_mm in (-10.0, 0.0, 2.0, 2.1, 10.0):
+            results = rules_engine.evaluate({"net_mm": net_mm}, categories=["irrigation"])
+            assert len(results) == 1, net_mm
+
+    def test_heavy_rain_overrides_irrigation_need(self, rules_engine):
+        """The caller (EvapotranspirationService._status_for) checks 'forecast' category first and treats
+        a forecast_heavy_rain match as an override — this just confirms that rule still fires standalone."""
+        results = rules_engine.evaluate(
+            {"precipitation_mm": 35, "date": "hoy"}, categories=["forecast"]
+        )
+        assert any(r.rule_id == "forecast_heavy_rain" for r in results)
+
+
+class TestSatelliteRules:
+    """Deterministic zone NDVI/NDWI signal rules, relative to the field's own recent baseline."""
+
+    def test_ndvi_drop_triggers_when_baseline_available(self, rules_engine):
+        context = {"ndvi_mean": 0.3, "ndwi_mean": -0.1, "ndvi_drop": 0.2}
+        results = rules_engine.evaluate(context, categories=["satellite"])
+        assert any(r.rule_id == "satellite_ndvi_drop" for r in results)
+
+    def test_no_ndvi_drop_rule_without_a_baseline(self, rules_engine):
+        results = rules_engine.evaluate({"ndvi_mean": 0.3, "ndwi_mean": -0.1}, categories=["satellite"])
+        assert not any(r.rule_id == "satellite_ndvi_drop" for r in results)
+
+    def test_high_ndwi_triggers_flood_signal(self, rules_engine):
+        results = rules_engine.evaluate({"ndvi_mean": 0.5, "ndwi_mean": 0.25}, categories=["satellite"])
+        assert any(r.rule_id == "satellite_high_ndwi_flood_signal" for r in results)
+
+    def test_normal_readings_trigger_no_satellite_rule(self, rules_engine):
+        results = rules_engine.evaluate({"ndvi_mean": 0.6, "ndwi_mean": -0.2}, categories=["satellite"])
+        assert results == []
