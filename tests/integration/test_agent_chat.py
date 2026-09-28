@@ -89,15 +89,20 @@ async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_memb
     assert all(t["ok"] for t in body["metadata"]["tool_calls"])
     conversation_id = body["metadata"]["conversation_id"]
 
-    # The instruction sent to the model carries the account context.
+    # The system instruction carries the static knowledge base and the account's modules — kept free
+    # of anything that changes turn to turn (see AgentRunner._static_instruction) so Gemini/ADK's
+    # context caching can reuse this prefix across turns instead of reprocessing it every time.
     system = str(scripted_model.requests[0].config.system_instruction)
-    assert "Cantero 1" in system
+    assert "Cantero 1" not in system
 
-    # No profile yet -> falls back to the guardian's module set: general + horticulture, nothing else,
-    # and the (static) knowledge/style blocks come before the (per-turn) account context.
+    # No profile yet -> falls back to the guardian's module set: general + horticulture, nothing else.
     assert "## Agronomía general" in system and "## Horticultura a campo abierto" in system
     assert "## Viticultura" not in system and "## Cultivos extensivos" not in system
-    assert system.index("## Agronomía general") < system.index("Campos de la cuenta") < system.index("Cantero 1")
+
+    # Per-turn account context (fields, date) rides in the user message content instead, so it never
+    # touches the cached system instruction.
+    history = " ".join(str(c.parts) for c in scripted_model.requests[0].contents)
+    assert "Campos de la cuenta" in history and "Cantero 1" in history
 
     cycles = (await client.get("/api/v1/farm-management/crop-cycles", headers=h)).json()
     assert len(cycles) == 1 and cycles[0]["status"] == "planted" and cycles[0]["expected_harvest_date"]
@@ -337,8 +342,10 @@ async def test_chat_report_id_context_adds_note_to_first_turn(client, signup, wi
         json={"message": "¿qué opinás de esto?", "context": {"report_id": str(report.id)}},
     )
     assert response.status_code == 200, response.text
-    system = str(scripted_model.requests[0].config.system_instruction)
-    assert "Tizón tardío" in system
+    # The report note is per-turn account context, so it rides in the message content, not the
+    # (cacheable) system instruction — see AgentRunner._account_snapshot.
+    history = " ".join(str(c.parts) for c in scripted_model.requests[0].contents)
+    assert "Tizón tardío" in history
 
 
 async def test_chat_unknown_report_id_is_ignored_silently(client, signup, with_key, scripted_model):
