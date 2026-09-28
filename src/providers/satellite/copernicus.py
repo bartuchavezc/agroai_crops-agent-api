@@ -12,6 +12,7 @@ dataspace.copernicus.eu). Every method degrades gracefully (returns None) when c
 or a call fails, the same convention as the other provider adapters.
 """
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -130,7 +131,10 @@ class CopernicusAdapter:
             },
             "aggregation": {
                 "timeRange": {"from": f"{time_from}T00:00:00Z", "to": f"{time_to}T23:59:59Z"},
-                "aggregationInterval": {"of": "P10D"},
+                # ~5 days matches Sentinel-2's actual revisit cadence: more, smaller windows within the
+                # same lookback means more chances of landing on a cloud-free pass (real testing against
+                # Copernicus showed adjacent 10-day windows can both be entirely cloud-masked).
+                "aggregationInterval": {"of": "P5D"},
                 "evalscript": _NDVI_NDWI_EVALSCRIPT,
                 "resx": 10,
                 "resy": 10,
@@ -153,25 +157,39 @@ class CopernicusAdapter:
         return self._parse_stats(payload)
 
     @staticmethod
-    def _parse_stats(payload: dict) -> Optional[NdviStats]:
+    def _band_stat(outputs: dict, output_id: str, key: str) -> Optional[float]:
+        """A cloud-masked/no-data interval reports its stats as the JSON string "NaN" (Sentinel Hub
+        Statistical API convention, since JSON has no native NaN) rather than omitting the key."""
+        try:
+            value = outputs[output_id]["bands"]["B0"]["stats"][key]
+        except (KeyError, TypeError):
+            return None
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        return value if math.isfinite(value) else None
+
+    @classmethod
+    def _parse_stats(cls, payload: dict) -> Optional[NdviStats]:
         intervals = (payload or {}).get("data") or []
         if not intervals:
             return None
-        latest = intervals[-1]
-        outputs = latest.get("outputs", {})
 
-        def band_stat(output_id: str, key: str) -> Optional[float]:
-            try:
-                return outputs[output_id]["bands"]["B0"]["stats"][key]
-            except (KeyError, TypeError):
-                return None
+        def stats_for(interval: dict) -> NdviStats:
+            outputs = interval.get("outputs", {})
+            return NdviStats(
+                ndvi_mean=cls._band_stat(outputs, "ndvi", "mean"),
+                ndvi_min=cls._band_stat(outputs, "ndvi", "min"),
+                ndvi_max=cls._band_stat(outputs, "ndvi", "max"),
+                ndwi_mean=cls._band_stat(outputs, "ndwi", "mean"),
+            )
 
-        return NdviStats(
-            ndvi_mean=band_stat("ndvi", "mean"),
-            ndvi_min=band_stat("ndvi", "min"),
-            ndvi_max=band_stat("ndvi", "max"),
-            ndwi_mean=band_stat("ndwi", "mean"),
-        )
+        # Most recent interval first; an all-cloud/no-data window has every stat as None, so fall back to
+        # older intervals within the requested range rather than surfacing an empty reading needlessly.
+        for interval in reversed(intervals):
+            stats = stats_for(interval)
+            if any(v is not None for v in (stats.ndvi_mean, stats.ndvi_min, stats.ndvi_max, stats.ndwi_mean)):
+                return stats
+        return stats_for(intervals[-1])
 
     async def render_map(self, latitude: float, longitude: float, size_px: int = 512) -> Optional[bytes]:
         """True-color PNG for the chat mini-map / field satellite view. Only called on demand (see

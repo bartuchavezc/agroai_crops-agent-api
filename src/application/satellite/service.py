@@ -69,7 +69,10 @@ class ZoneSatelliteService:
             )
 
         end = utcnow().date()
-        start = end - timedelta(days=20)
+        # 30 days, not ~10: real testing against Copernicus showed consecutive Sentinel-2 passes can be
+        # entirely cloud-masked for a given point, so a short window risks "no data" even when a clear,
+        # still-recent pass exists a bit further back.
+        start = end - timedelta(days=30)
         stats = await self.copernicus.ndvi_stats(field.latitude, field.longitude, start.isoformat(), end.isoformat())
         if stats is None:
             return ZoneSatelliteStatus(
