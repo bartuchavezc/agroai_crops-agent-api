@@ -18,6 +18,9 @@ async def current_weather(latitude: float = LAT, longitude: float = LON, weather
     data = await weather.current(latitude, longitude)
     if not data:
         raise HTTPException(status_code=404, detail="Could not get current weather")
+    extra = await weather.open_meteo_current(latitude, longitude)
+    if extra and extra.get("uv_index") is not None:
+        data = {**data, "uv_index": extra["uv_index"]}
     return {"success": True, "data": data, "source": "openweather", "cache_ttl_minutes": 15}
 
 
