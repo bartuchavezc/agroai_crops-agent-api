@@ -35,6 +35,9 @@ DEFAULT_CONFIG = {
         "secret_key": "",
         "algorithm": "HS256",
         "access_token_expire_minutes": 60 * 24,
+        # Off in production (see .env.example / deploy/.env.example): the family account is created by
+        # hand once; every other user is added via POST /auth/users (owner-only "add member").
+        "allow_public_signup": True,
     },
     "security": {
         "credentials_encryption_key": "",
@@ -122,6 +125,7 @@ def _apply_env_overrides(config: dict) -> None:
     auth["access_token_expire_minutes"] = int(
         env("AUTH_TOKEN_EXPIRE_MINUTES", auth["access_token_expire_minutes"])
     )
+    auth["allow_public_signup"] = _env_bool("ALLOW_PUBLIC_SIGNUP", auth["allow_public_signup"])
 
     security = config["security"]
     security["credentials_encryption_key"] = env(

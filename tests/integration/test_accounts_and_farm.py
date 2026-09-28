@@ -1,6 +1,20 @@
 """Accounts with roles, farm CRUD, account isolation and role permissions."""
 
 
+async def test_signup_disabled_returns_403(client, container):
+    auth_service = container.auth.auth_service()
+    original = auth_service.allow_public_signup
+    auth_service.allow_public_signup = False
+    try:
+        response = await client.post(
+            "/api/v1/auth/signup",
+            json={"email": "blocked@example.com", "password": "secret-pass-1", "first_name": "X"},
+        )
+        assert response.status_code == 403
+    finally:
+        auth_service.allow_public_signup = original
+
+
 async def test_signup_makes_owner_and_owner_adds_members(client, signup, add_member):
     owner = await signup("owner")
     assert owner["user"]["role"] == "owner"

@@ -57,6 +57,11 @@ async def signup(
     auth_service: AuthService = Depends(Provide["auth.auth_service"]),
     account_service: AccountService = Depends(Provide["auth.account_service"]),
 ):
+    if not auth_service.allow_public_signup:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public signup is disabled. Ask an account owner to add you as a member.",
+        )
     if await user_service.get_user_by_email(signup_req.email):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered.")
 

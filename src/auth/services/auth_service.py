@@ -16,6 +16,7 @@ class AuthService:
         self.secret_key = config.get("secret_key")
         self.algorithm = config.get("algorithm")
         self.access_token_expire_minutes = config.get("access_token_expire_minutes")
+        self.allow_public_signup = config.get("allow_public_signup", True)
         self.user_service = user_service
         self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
