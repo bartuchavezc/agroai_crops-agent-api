@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ReportType = Literal["diagnosis", "periodic"]
+ReportType = Literal["diagnosis", "periodic", "soil"]
 
 
 class ReportCreate(BaseModel):

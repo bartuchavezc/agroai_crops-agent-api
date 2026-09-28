@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from src.shared.database import Base
 from src.shared.domain.base import utcnow
 
-NOTIFICATION_TYPES = ("report_diagnosis", "report_periodic", "event")
+NOTIFICATION_TYPES = ("report_diagnosis", "report_periodic", "report_soil", "event")
 ENTITY_TYPES = ("report", "event")
 
 

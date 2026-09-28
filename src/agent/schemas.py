@@ -22,6 +22,9 @@ class DiagnosisResult(BaseModel):
     general_diagnosis: str = Field(
         description="Main diagnosis in one or two sentences, in Spanish, explicitly justified by visual_evidence"
     )
+    likely_category: Literal["disease", "pest", "nutrient_deficiency", "abiotic_stress", "healthy", "uncertain"] = (
+        Field(description="Coarse classification, decided from visual_evidence before naming the exact cause")
+    )
     possible_causes: list[str] = Field(
         default_factory=list,
         description="If the evidence is ambiguous between similar causes, list the plausible alternatives here "
@@ -37,9 +40,37 @@ class DiagnosisResult(BaseModel):
     needs_human_expert: bool = Field(description="True when an agronomist should confirm before acting")
 
 
+class SoilRecognitionResult(BaseModel):
+    apparent_soil_type: Literal[
+        "arenoso", "arcilloso", "franco", "franco-arenoso", "franco-arcilloso", "orgánico", "desconocido"
+    ]
+    apparent_porosity: Literal["alta", "media", "baja"]
+    visual_evidence: str = Field(description="Texture/color/cohesion facts seen in the photo BEFORE classifying")
+    drainage_note: str
+    companion_planting_suggestions: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0, le=0.6, description="Capped: a photo of a small soil sample, not a lab test")
+    explicit_limitations: str = Field(
+        description="Must always state that nitrogen/nutrient levels cannot be determined from a photo"
+    )
+    needs_human_expert: bool = False
+
+
+class HarvestVerdictResult(BaseModel):
+    ready: bool
+    verdict: str = Field(description="Justification citing the concrete visual signal, in Spanish")
+    confidence: float = Field(ge=0, le=1)
+
+
 class Source(BaseModel):
     title: Optional[str] = None
     uri: str
+
+
+class Attachment(BaseModel):
+    type: Literal["zone_map"]
+    image_identifier: str
+    field_id: UUID
+    caption: str
 
 
 class ToolCallInfo(BaseModel):
@@ -58,4 +89,5 @@ class ChatMetadata(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     sources: list[Source] = Field(default_factory=list)
+    attachments: list[Attachment] = Field(default_factory=list)
     metadata: ChatMetadata

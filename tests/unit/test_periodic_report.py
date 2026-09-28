@@ -24,6 +24,8 @@ def _valid_result(**overrides) -> dict:
         past_actions_assessment="El riego regular parece haber ayudado al desarrollo.",
         estimated_harvest_window="en 3-4 semanas",
         days_to_harvest_estimate=25,
+        harvest_ready=False,
+        harvest_verdict="Todavía en floración, faltan semanas para el fruto.",
         objectives_assessment="No hay objetivos declarados explícitamente.",
         risks=[],
         risk_severity="low",

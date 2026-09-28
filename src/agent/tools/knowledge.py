@@ -93,6 +93,7 @@ def report_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         general_diagnosis: str,
         severity: str,
         confidence: float,
+        likely_category: str = "uncertain",
         possible_causes: Optional[list[str]] = None,
         recommended_treatments: Optional[list[str]] = None,
         preventative_measures: Optional[list[str]] = None,
@@ -105,6 +106,9 @@ def report_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         general_diagnosis must be justified by visual_evidence, not asserted on its own. If the evidence is
         ambiguous between similar causes, list the alternatives in possible_causes too and lower confidence
         instead of forcing a single answer.
+        likely_category: disease|pest|nutrient_deficiency|abiotic_stress|healthy|uncertain — decide this from
+        visual_evidence: uniform interveinal chlorosis or an age-of-leaf pattern points to a nutrient
+        deficiency; localized lesions/spots with a defined border point to disease/pest.
         severity: low|medium|high|critical. confidence 0-1 (reserve >0.8 for unambiguous evidence).
         recommended_treatments items as 'Title: description'."""
         if not ctx.image_identifier:
@@ -118,6 +122,7 @@ def report_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             "detected_crop": detected_crop,
             "visual_evidence": visual_evidence,
             "general_diagnosis": general_diagnosis,
+            "likely_category": likely_category,
             "possible_causes": possible_causes or [],
             "recommended_treatments": treatments,
             "preventative_measures": preventative_measures or [],

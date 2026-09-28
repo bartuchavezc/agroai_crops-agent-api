@@ -9,26 +9,6 @@ from pydantic import BaseModel, Field
 
 from src.application.farm.schemas import CropCycleRead, CropMasterRead, FieldEventRead
 
-PERIODIC_SYSTEM_INSTRUCTION = """Sos un ingeniero agrónomo haciendo el seguimiento periódico (control de
-rutina, no solo diagnóstico de enfermedad) de un cultivo a partir de una foto y del historial del ciclo.
-Tu trabajo es responder, con la evidencia disponible, estas preguntas concretas:
-1. ¿Cómo está la planta hoy? (salud general, no solo plagas/enfermedades)
-2. ¿Cómo debería estar a esta altura del ciclo, dado lo sembrado y los días transcurridos?
-3. ¿Los eventos/decisiones registrados hasta ahora (riegos, fertilizaciones, tratamientos) parecen haber
-   afectado el resultado, para bien o para mal?
-4. ¿Cuándo se podría cosechar, en base al ciclo del cultivo y su estado actual?
-5. A partir de la descripción del campo y las notas del ciclo (texto libre, sin estructura), ¿parece que se
-   están cumpliendo los objetivos declarados? Si no hay objetivos explícitos, decilo.
-6. ¿Hay algún riesgo (sanitario, climático, de manejo) a vigilar?
-
-Rigor antes que nada: `health_summary` y `stress_signals` tienen que describir señales visuales concretas
-(color, marchitez, manchas, tamaño relativo al esperado, densidad de follaje) que sustenten tu evaluación —
-no un juicio suelto ("está mal"/"está bien") sin evidencia. Si la foto no alcanza para evaluar algo con
-confianza, decilo explícitamente en vez de afirmarlo igual.
-Respondé en español rioplatense, concreto, sin inventar datos que no estén en el contexto o en la foto.
-Si falta contexto (fechas, eventos) para responder con confianza, decilo explícitamente y bajá `confidence`.
-Marcá needs_human_expert=true si health_status es poor/critical o la confianza es baja (< 0.6)."""
-
 
 class PeriodicReportResult(BaseModel):
     detected_crop: Optional[str] = Field(None, description="Cultivo identificado en la foto, en español")
@@ -41,6 +21,8 @@ class PeriodicReportResult(BaseModel):
     past_actions_assessment: str = Field(description="Responde: ¿las decisiones tomadas afectaron algo?")
     estimated_harvest_window: Optional[str] = Field(None, description="Texto libre, ej: 'en 2-3 semanas'")
     days_to_harvest_estimate: Optional[int] = Field(None, ge=0)
+    harvest_ready: bool = Field(description="True solo si hay evidencia visual concreta de punto de cosecha")
+    harvest_verdict: str = Field(description="Justificación del veredicto de cosecha, citando la señal visual")
     objectives_assessment: str = Field(description="Responde: ¿se cumplen los objetivos del campo?")
     risks: list[str] = Field(default_factory=list)
     risk_severity: Literal["low", "medium", "high", "critical"]

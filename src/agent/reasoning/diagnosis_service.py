@@ -23,33 +23,16 @@ from src.providers.weather.service import WeatherService
 from src.shared.domain.actor import Actor
 from src.shared.utils.errors import InvalidInputError
 
-from ..knowledge_ar import modules_for_account
+from ..prompts.diagnosis import SYSTEM_INSTRUCTION
+from ..prompts.harvest import HARVEST_VERDICT_INSTRUCTION
+from ..prompts.knowledge_ar import modules_for_account
+from ..prompts.periodic import PERIODIC_SYSTEM_INSTRUCTION
+from ..prompts.soil import SOIL_SYSTEM_INSTRUCTION
 from ..providers.gemini import GeminiGateway
-from ..schemas import DiagnosisResult
-from .periodic_report import (
-    PERIODIC_SYSTEM_INSTRUCTION,
-    PeriodicReportResult,
-    format_cycle_progress,
-    format_event_history,
-)
+from ..schemas import DiagnosisResult, HarvestVerdictResult, SoilRecognitionResult
+from .periodic_report import PeriodicReportResult, format_cycle_progress, format_event_history
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_INSTRUCTION = """Sos un ingeniero agrónomo especializado en huertas y cultivos hortícolas,
-patología vegetal, plagas y nutrición. Analizás la foto que te envían y el contexto del lote.
-- Respondé en español rioplatense, claro y concreto.
-- Rigor antes que nada: primero describí en `visual_evidence` lo que efectivamente se ve en la foto (color,
-  forma y distribución de las manchas/lesiones, qué partes de la planta están afectadas, patrón de avance) —
-  hechos observables, no un veredicto. Recién después nombrá la causa en `general_diagnosis`, y esa causa
-  tiene que quedar justificada por lo que describiste en `visual_evidence`, no ser una conclusión sin sustento.
-- Si la evidencia visual es compatible con más de una causa (p. ej. dos hongos con síntomas parecidos), decilo
-  explícitamente, listá las alternativas plausibles en `possible_causes` (no solo la más probable) y bajá la
-  confianza en consecuencia — no fuerces una única respuesta cuando la foto no alcanza para diferenciar.
-- Reservá confidence alta (> 0.8) para cuando el patrón, color y ubicación sean característicos e inequívocos;
-  si hay señales pero no alcanzan para confirmar la causa exacta, decilo en vez de adivinar.
-- Diagnosticá solo lo que se ve o se infiere con fundamento; si la foto no alcanza, decilo y bajá la confianza.
-- Priorizá manejo integrado y alternativas de bajo impacto; indicá dosis solo si son estándar y seguras.
-- Marcá needs_human_expert=true si la severidad es alta o la confianza es baja (< 0.6)."""
 
 
 class DiagnosisService:
@@ -149,6 +132,8 @@ class DiagnosisService:
         try:
             if report.report_type == "periodic":
                 return await self._analyze_periodic(actor, report, image_identifier)
+            if report.report_type == "soil":
+                return await self._analyze_soil(actor, report, image_identifier)
             return await self._analyze_diagnosis(actor, report, image_identifier)
         except Exception:
             # Persist the failure (quota exhausted, model overloaded, etc.) so the report doesn't stay
@@ -304,4 +289,108 @@ class DiagnosisService:
                 "confidence": result.confidence,
                 "needs_human_expert": result.needs_human_expert,
             },
+        }
+
+    async def _analyze_soil(self, actor: Actor, report: Report, image_identifier: Optional[str] = None) -> dict:
+        """Soil-sample photo recognition: apparent type/porosity only, never nutrient levels (see soil prompt)."""
+        report_id = report.id
+        image_bytes, mime_type, image_id = await self._load_image(actor, report, image_identifier)
+
+        context_lines, _ = await self._field_context(actor, report.field_id)
+        prompt = "Identificá el tipo de suelo aparente y la porosidad/drenaje a partir de la foto de la muestra."
+        if context_lines:
+            prompt += "\n\nContexto del lote:\n" + "\n".join(f"- {line}" for line in context_lines)
+
+        result: SoilRecognitionResult = await self.gemini.generate_structured(
+            actor.user_id,
+            contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt],
+            schema=SoilRecognitionResult,
+            system_instruction=SOIL_SYSTEM_INSTRUCTION,
+        )
+
+        await self.reports.update_report(
+            actor,
+            report_id,
+            ReportUpdate(
+                title="Muestra de suelo",
+                summary=f"{result.apparent_soil_type}, porosidad {result.apparent_porosity}",
+                recommendations="\n".join(result.companion_planting_suggestions),
+                status="ANALYSIS_COMPLETED",
+                raw_analysis_data={
+                    "llm_structured_soil": result.model_dump(),
+                    "analyzed_image_identifier": image_id,
+                    "model": self.gemini.model,
+                },
+            ),
+        )
+        await self.notifications.notify_account(
+            account_id=actor.account_id,
+            exclude_user_id=actor.user_id,
+            type="report_soil",
+            title="Nuevo análisis de suelo",
+            message=result.drainage_note,
+            entity_type="report",
+            entity_id=report_id,
+            field_id=report.field_id,
+        )
+        return {
+            "status": "success",
+            "report_id": str(report_id),
+            "caption": f"{result.apparent_soil_type}, porosidad {result.apparent_porosity}",
+            "soil": result.model_dump(),
+            "metadata": {
+                "confidence": result.confidence,
+                "needs_human_expert": result.needs_human_expert,
+            },
+        }
+
+    async def harvest_verdict(
+        self,
+        actor: Actor,
+        field_id: Optional[UUID],
+        crop_cycle_id: Optional[UUID] = None,
+        image_identifier: Optional[str] = None,
+    ) -> dict:
+        """Standalone, non-persisting "ready to harvest?" check. With a fresh photo, a lightweight Gemini call
+        (no report saved). Without one, falls back to the harvest_ready/harvest_verdict already produced by
+        the latest periodic report of this field/cycle."""
+        if image_identifier:
+            image_bytes, mime_type = await self.storage.get_image_for_model(
+                actor, image_identifier, self.max_image_side
+            )
+            context_lines, _ = await self._field_context(actor, field_id)
+            context_lines += await self._periodic_context(actor, field_id, crop_cycle_id)
+            prompt = "¿Está lista para cosechar la planta/fruto de la foto?"
+            if context_lines:
+                prompt += "\n\nContexto:\n" + "\n".join(f"- {line}" for line in context_lines)
+
+            result: HarvestVerdictResult = await self.gemini.generate_structured(
+                actor.user_id,
+                contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt],
+                schema=HarvestVerdictResult,
+                system_instruction=HARVEST_VERDICT_INSTRUCTION,
+            )
+            return {
+                "source": "photo",
+                "ready": result.ready,
+                "verdict": result.verdict,
+                "confidence": result.confidence,
+            }
+
+        reports = await self.reports.list_reports(
+            actor, field_id=field_id, crop_cycle_id=crop_cycle_id, report_type="periodic", limit=1
+        )
+        completed = [r for r in reports if r.status == "ANALYSIS_COMPLETED"]
+        if not completed:
+            raise InvalidInputError(
+                "No hay foto en este turno ni un reporte periódico previo de este campo/ciclo para basar un "
+                "veredicto de cosecha. Pedí una foto o hacé un seguimiento periódico primero."
+            )
+        latest = completed[0]
+        periodic = (latest.raw_analysis_data or {}).get("llm_structured_periodic") or {}
+        return {
+            "source": "latest_periodic_report",
+            "report_date": latest.created_at.date().isoformat(),
+            "ready": periodic.get("harvest_ready", False),
+            "verdict": periodic.get("harvest_verdict", "Sin veredicto de cosecha en el último reporte."),
         }

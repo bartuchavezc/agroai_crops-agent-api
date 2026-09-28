@@ -1,6 +1,6 @@
 import re
 
-from src.agent.knowledge_ar import (
+from src.agent.prompts.knowledge_ar import (
     EXTENSIVE_GRAINS_MODULE,
     GENERAL_AGRONOMY,
     GREENHOUSE_MODULE,
