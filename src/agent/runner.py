@@ -38,6 +38,7 @@ from .conversations.schemas import ConversationCreate
 from .conversations.service import ConversationService
 from .prompts.chat import BASE_INSTRUCTION
 from .prompts.knowledge_ar import modules_for_account, style_for_profile
+from .prompts.knowledge_base import core_knowledge_base
 from .prompts.title import auto_title_prompt
 from .providers.gemini import RETRY_OPTIONS, GeminiGateway, error_from_event, translate_provider_error
 from .schemas import Attachment, ChatMetadata, ChatResponse, Source, ToolCallInfo
@@ -140,9 +141,14 @@ class AgentRunner:
         profile_name = profile.calculated_profile if profile else None
 
         blocks = [
-            BASE_INSTRUCTION,
-            modules_for_account(profile_name, crop_families, field_texts),
-            style_for_profile(profile_name),
+            block
+            for block in (
+                BASE_INSTRUCTION,
+                core_knowledge_base(),
+                modules_for_account(profile_name, crop_families, field_texts),
+                style_for_profile(profile_name),
+            )
+            if block
         ]
 
         now = datetime.now(self.tz)
