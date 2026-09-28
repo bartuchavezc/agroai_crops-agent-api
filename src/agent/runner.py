@@ -14,7 +14,9 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from google.adk.agents import LlmAgent, RunConfig
+from google.adk.agents.context_cache_config import ContextCacheConfig
 from google.adk.agents.run_config import StreamingMode
+from google.adk.apps import App
 from google.adk.models import FallbackModel, Gemini
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
@@ -47,6 +49,16 @@ from .tools import ToolDeps, TurnContext, build_tools
 logger = logging.getLogger(__name__)
 
 APP_NAME = "agroai"
+
+# The system instruction (base instructions + knowledge base + account modules/style, potentially
+# 100k+ tokens once the knowledge base fills out) stays byte-identical across the turns of a
+# session, so ADK/Gemini explicit context caching can reuse it instead of reprocessing it every
+# turn. Per-turn variable data (date, fields, alerts) is kept OUT of it on purpose — see
+# AgentRunner._account_snapshot — since baking it into the instruction would change the cached
+# prefix's fingerprint every turn and defeat the cache. ttl_seconds=3600 (the max Gemini honors
+# for an explicit cache) suits a prompt this large; cache_intervals keeps the default (10 reuses
+# before a refresh, which also picks up profile/crop changes made mid-session).
+CONTEXT_CACHE_CONFIG = ContextCacheConfig(ttl_seconds=3600)
 
 _ERRORS_BY_CODE = {
     ProviderQuotaExceededError.error_code: ProviderQuotaExceededError,
@@ -127,14 +139,12 @@ class AgentRunner:
             lines.append(f"Riesgos señalados: {', '.join(periodic.get('risks', [])) or 'ninguno'}.")
         return " ".join(lines)
 
-    async def _instruction(
-        self, actor: Actor, default_field_id: Optional[UUID], report_note: Optional[str] = None
-    ) -> str:
-        # Static/near-static content first (same across turns of a conversation): lets Gemini's implicit
-        # context caching reuse this prefix instead of re-processing it every turn. Per-turn, changing
-        # content (date, fields, alerts) goes last.
-        overview = await self.farm.overview(actor)
-        crop_families = await self.farm.crop_families(actor)
+    async def _static_instruction(self, actor: Actor, overview, crop_families: set[str]) -> str:
+        """Base instructions + knowledge base + account modules/style. Deliberately free of anything
+        that changes turn to turn (date, field state, alerts): this string is what LlmAgent uses as
+        `system_instruction`, and Gemini/ADK explicit context caching (see CONTEXT_CACHE_CONFIG) can
+        only reuse a cached prefix while it stays byte-identical across turns. Per-turn state goes in
+        `_account_snapshot` instead, folded into the user message so it never touches this string."""
         field_texts = [t for item in overview for t in (item.field.soil_type, item.field.description) if t]
 
         profile = await self.profiles.get_profile_context(actor.user_id)
@@ -150,9 +160,16 @@ class AgentRunner:
             )
             if block
         ]
+        return "\n\n".join(blocks)
 
+    async def _account_snapshot(
+        self, actor: Actor, overview, default_field_id: Optional[UUID], report_note: Optional[str]
+    ) -> str:
+        """Per-turn account state (date, fields, alerts, report context) rebuilt fresh on every turn.
+        Kept out of the system instruction on purpose — see `_static_instruction` — and instead
+        prepended to the user message content itself, so it never affects the cached prefix."""
         now = datetime.now(self.tz)
-        lines = ["", f"Fecha y hora local: {now:%A %d/%m/%Y %H:%M} ({self.tz.key})."]
+        lines = [f"Fecha y hora local: {now:%A %d/%m/%Y %H:%M} ({self.tz.key})."]
         lines.append(f"Rol del usuario en la cuenta: {actor.role}.")
         if actor.role == "staff":
             lines.append("Este usuario puede registrar eventos, pero no crear campos ni ciclos de cultivo.")
@@ -180,14 +197,19 @@ class AgentRunner:
         if report_note:
             lines.append(f"\n{report_note}")
 
-        return "\n\n".join(blocks) + "\n" + "\n".join(lines)
+        return "\n".join(lines)
 
-    async def _user_content(self, actor: Actor, message: str, image_identifier: Optional[str]) -> types.Content:
+    async def _user_content(
+        self, actor: Actor, message: str, image_identifier: Optional[str], context_snapshot: str
+    ) -> types.Content:
         parts = []
         if image_identifier:
             data, mime = await self.storage.get_image_for_model(actor, image_identifier, self.max_image_side)
             parts.append(types.Part.from_bytes(data=data, mime_type=mime))
-        parts.append(types.Part(text=message))
+        # The account-state snapshot rides along with the message text (not the system instruction,
+        # see _account_snapshot) and is never shown to the user: ConversationService persists the
+        # original `message` separately for the chat transcript.
+        parts.append(types.Part(text=f"[Contexto de la cuenta en este momento]\n{context_snapshot}\n\n{message}"))
         return types.Content(role="user", parts=parts)
 
     async def prepare_turn(
@@ -208,15 +230,18 @@ class AgentRunner:
             conversation = await self.conversations.get(actor, conversation_id)
         else:
             conversation = await self.conversations.create(actor, ConversationCreate(field_id=field_id))
-        new_content = await self._user_content(actor, message, image_identifier)
 
         session_id, user_id = str(conversation.id), str(actor.user_id)
         if await self.sessions.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id) is None:
             await self.sessions.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
 
         default_field_id = field_id or conversation.field_id
+        overview = await self.farm.overview(actor)
+        crop_families = await self.farm.crop_families(actor)
         report_note = await self._report_note(actor, report_id) if report_id else None
-        instruction = await self._instruction(actor, default_field_id, report_note)
+        instruction = await self._static_instruction(actor, overview, crop_families)
+        context_snapshot = await self._account_snapshot(actor, overview, default_field_id, report_note)
+        new_content = await self._user_content(actor, message, image_identifier, context_snapshot)
         ctx = TurnContext(
             actor=Actor(actor.user_id, actor.account_id, actor.role, via="agent"),
             conversation_id=conversation.id,
@@ -231,6 +256,7 @@ class AgentRunner:
             tools=build_tools(self.tool_deps, ctx),
             generate_content_config=types.GenerateContentConfig(temperature=0.4),
         )
+        app = App(name=APP_NAME, root_agent=agent, context_cache_config=CONTEXT_CACHE_CONFIG)
         return PreparedTurn(
             actor=actor,
             message=message,
@@ -239,7 +265,7 @@ class AgentRunner:
             is_new=conversation.title is None,
             content=new_content,
             ctx=ctx,
-            runner=Runner(app_name=APP_NAME, agent=agent, session_service=self.sessions),
+            runner=Runner(app=app, session_service=self.sessions),
         )
 
     async def stream_turn(self, turn: PreparedTurn) -> AsyncIterator[dict]:
