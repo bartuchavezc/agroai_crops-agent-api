@@ -116,9 +116,9 @@ async def upload_crop_image(
     reports_service=Depends(Provide["application.reports_service"]),
     diagnosis_service=Depends(Provide["agent.diagnosis_service"]),
 ):
-    if report_type not in ("diagnosis", "periodic"):
+    if report_type not in ("diagnosis", "periodic", "soil"):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="report_type must be 'diagnosis' or 'periodic'."
+            status_code=status.HTTP_400_BAD_REQUEST, detail="report_type must be 'diagnosis', 'periodic' or 'soil'."
         )
     if report_type == "periodic" and crop_cycle_id is None:
         raise HTTPException(
@@ -146,7 +146,7 @@ async def upload_crop_image(
         ),
     )
     logger.info(f"Image {image_identifier} uploaded for account {actor.account_id}")
-    if report_type == "periodic":
+    if report_type in ("periodic", "soil"):
         background_tasks.add_task(_analyze_in_background, diagnosis_service, actor, report.id)
     return UploadImageResponse(
         report_id=report.id,
