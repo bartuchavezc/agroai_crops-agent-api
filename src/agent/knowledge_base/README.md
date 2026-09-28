@@ -9,8 +9,8 @@ de PDF/HTML.
 
 ## core/
 
-Manual fijo: fisiología vegetal, fertirriego y nutrición mineral. No depende de la especie ni de la
-región del usuario, así que se carga siempre, en cada turno de cada conversación.
+Manuales de conocimiento general: no dependen de la especie ni de la región del usuario, así que se
+cargan siempre, en cada turno de cada conversación.
 
 Wireado en `src/agent/prompts/knowledge_base.py::core_knowledge_base()`, que concatena (ordenados
 por nombre de archivo) todos los `.md` de esta carpeta, y se invoca desde
@@ -20,6 +20,11 @@ prompt.
 Archivos:
 - `00_fisiologia_y_fertirriego_base.md` — Fisiología Vegetal (Vol. 1): introducción, relaciones
   hídricas y nutrición mineral. En construcción: se irá completando con más capítulos del manual.
+- `01_fertilizantes_y_enmiendas.md` — Manual de Fertilizantes y Enmiendas (PROMIPAC/PASOLAC,
+  Zamorano 2009): requerimientos nutricionales, análisis de suelo, tipos de fertilizantes y enmiendas,
+  cálculo de dosis, formas de aplicación y buenas prácticas de manejo. Va en `core/` y no en un
+  vademécum aparte porque es conocimiento general de cómo trabajar la fertilización (no depende del
+  cultivo ni de un insumo comercial puntual).
 
 ## specific/
 
@@ -29,11 +34,13 @@ haya manuales para sumar, si entran completos (mismo criterio que `core/`, mient
 el presupuesto de ~100-150k tokens) o seleccionados por cultivo del lote (como ya hace
 `FAMILY_TO_MODULE` en `src/agent/prompts/knowledge_ar.py` para los módulos cortos de Argentina).
 
-## inputs/
+## inputs/ (pendiente, no existe todavía como carpeta de manuales)
 
-Vademécum de insumos comerciales (fertilizantes, quelatos, bioestimulantes) y/o protocolo sanitario
-(plagas y enfermedades de invernadero) — el "Manual Variable 2". Misma nota que `specific/`:
-**todavía sin contenido ni wireo**.
+Se descartó como capa de manuales estáticos. En su lugar, `inputs/` va a ser una **tool de RAG**
+para fichas técnicas de insumos (fertilizantes comerciales específicos, plagas y enfermedades
+puntuales), consultada por el agente semánticamente según el cultivo/plaga/situación de la
+consulta — no cargada siempre en el prompt, a diferencia de `core/` y `specific/`. Pendiente de
+diseño e implementación (probablemente indexado con pgvector, igual que la memoria del agente).
 
 ## System prompt cacheado
 
