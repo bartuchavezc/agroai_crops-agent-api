@@ -22,6 +22,7 @@ class AgentContainer(containers.DeclarativeContainer):
     weather_service = providers.Dependency()
     profile_service = providers.Dependency()
     search_provider = providers.Dependency()
+    nasa_power = providers.Dependency()
 
     secret_box = providers.Singleton(SecretBox, key=config.security.credentials_encryption_key)
     credential_repository = providers.Singleton(ProviderCredentialRepository, session_factory=db_session_factory)
@@ -34,6 +35,19 @@ class AgentContainer(containers.DeclarativeContainer):
     memory_service = providers.Singleton(MemoryService, session_factory=db_session_factory, gemini_gateway=gemini)
     session_service = providers.Singleton(DatabaseSessionService, db_engine=adk_engine)
 
+    diagnosis_service = providers.Singleton(
+        DiagnosisService,
+        gemini=gemini,
+        storage_service=application.storage_service,
+        reports_service=application.reports_service,
+        farm_service=application.farm_service,
+        weather_service=weather_service,
+        rules_engine=application.rules_engine,
+        profile_service=profile_service,
+        notification_service=application.notification_service,
+        max_image_side=config.gemini.max_image_side,
+    )
+
     tool_deps = providers.Singleton(
         ToolDeps,
         farm=application.farm_service,
@@ -44,6 +58,12 @@ class AgentContainer(containers.DeclarativeContainer):
         rules=application.rules_engine,
         gemini=gemini,
         search=search_provider,
+        diagnosis=diagnosis_service,
+        irrigation=application.irrigation_service,
+        inventory=application.inventory_service,
+        management=application.management_service,
+        satellite=application.satellite_service,
+        nasa_power=nasa_power,
     )
     runner = providers.Singleton(
         AgentRunner,
@@ -57,17 +77,5 @@ class AgentContainer(containers.DeclarativeContainer):
         storage_service=application.storage_service,
         reports_service=application.reports_service,
         timezone_name=config.app.timezone,
-        max_image_side=config.gemini.max_image_side,
-    )
-    diagnosis_service = providers.Singleton(
-        DiagnosisService,
-        gemini=gemini,
-        storage_service=application.storage_service,
-        reports_service=application.reports_service,
-        farm_service=application.farm_service,
-        weather_service=weather_service,
-        rules_engine=application.rules_engine,
-        profile_service=profile_service,
-        notification_service=application.notification_service,
         max_image_side=config.gemini.max_image_side,
     )

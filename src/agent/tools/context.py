@@ -16,14 +16,20 @@ from src.application.alerts.rules_engine import RulesEngine
 from src.application.alerts.service import AlertService
 from src.application.farm.schemas import FieldRead
 from src.application.farm.service import FarmService
+from src.application.inventory.service import InventoryService
+from src.application.irrigation.service import EvapotranspirationService
+from src.application.management.service import ManagementService
 from src.application.reports.service import ReportsService
+from src.application.satellite.service import ZoneSatelliteService
 from src.providers.search.tavily import TavilyAdapter
+from src.providers.weather.nasa_power import NasaPowerAdapter
 from src.providers.weather.service import WeatherService
 from src.shared.domain.actor import Actor
 from src.shared.utils.errors import CropAnalysisError, InvalidInputError
 
 from ..memory.service import MemoryService
 from ..providers.gemini import GeminiGateway
+from ..reasoning.diagnosis_service import DiagnosisService
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +44,12 @@ class ToolDeps:
     rules: RulesEngine
     gemini: GeminiGateway
     search: TavilyAdapter
+    diagnosis: DiagnosisService
+    irrigation: EvapotranspirationService
+    inventory: InventoryService
+    management: ManagementService
+    satellite: ZoneSatelliteService
+    nasa_power: NasaPowerAdapter
 
 
 @dataclass
@@ -48,6 +60,7 @@ class TurnContext:
     default_field_id: Optional[UUID] = None
     image_identifier: Optional[str] = None
     sources: list[dict] = field(default_factory=list)
+    attachments: list[dict] = field(default_factory=list)
 
 
 def tool(func):

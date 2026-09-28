@@ -52,3 +52,4 @@ class WeatherForecast(Base):
     wind_speed = Column(Float)
     tmin = Column(Float)
     tmax = Column(Float)
+    radiation = Column(Float)  # shortwave radiation, W/m2 daily average (Open-Meteo; SMN rows leave this null)

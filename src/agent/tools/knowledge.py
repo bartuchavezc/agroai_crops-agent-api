@@ -1,4 +1,5 @@
 """Memory, weather, alerts and diagnosis-report tools."""
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
@@ -44,11 +45,15 @@ def weather_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def get_current_weather(field: Optional[str] = None) -> dict:
-        """Current weather at a field (OpenWeather): temperature, humidity, wind, rain."""
+        """Current weather at a field (OpenWeather): temperature, humidity, wind, rain, plus UV index
+        (Open-Meteo, when available)."""
         target = await _coords(field)
         data = await deps.weather.current(target.latitude, target.longitude)
         if not data:
             return {"error": "Current weather unavailable right now."}
+        extra = await deps.weather.open_meteo_current(target.latitude, target.longitude)
+        if extra and extra.get("uv_index") is not None:
+            data["uv_index"] = extra["uv_index"]
         return {"field_name": target.name, "current": data}
 
     @tool
@@ -66,7 +71,24 @@ def weather_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 risks.append({"date": day.date.isoformat(), "severity": match.severity.value, "message": match.message})
         return {"field_name": target.name, "daily": [d.to_dict() for d in daily], "risks": risks}
 
-    return [get_current_weather, get_forecast]
+    @tool
+    async def get_solar_radiation_context(field: Optional[str] = None) -> dict:
+        """Zone-level (NASA POWER, ~55km grid — context, not field precision) average solar radiation for
+        the current month and the annual average. Agronomic context (e.g. for framing why growth is slow in
+        winter), independent of the exact evapotranspiration calculation."""
+        target = await _coords(field)
+        climatology = await deps.nasa_power.solar_climatology(target.latitude, target.longitude)
+        if not climatology:
+            return {"error": "NASA POWER radiation data unavailable right now."}
+        month = date.today().month
+        return {
+            "field_name": target.name,
+            "unit": "MJ/m2/day",
+            "current_month_avg": climatology.monthly_avg_radiation_mj_m2_day.get(month),
+            "annual_avg": climatology.annual_avg_radiation_mj_m2_day,
+        }
+
+    return [get_current_weather, get_forecast, get_solar_radiation_context]
 
 
 def alert_tools(deps: ToolDeps, ctx: TurnContext) -> list:

@@ -8,6 +8,8 @@ from src.application.farm.schemas import (
     CropMasterCreate,
     FieldCreate,
     FieldEventCreate,
+    FieldUpdate,
+    Obstacle,
 )
 from src.shared.domain.base import utcnow
 from src.shared.utils.errors import InvalidInputError
@@ -54,6 +56,34 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return {"crops": compact(matches)}
 
     @tool
+    async def get_field_sun_exposure(field: Optional[str] = None) -> dict:
+        """Direct-sun hours per compass octant (N/NE/E/SE/S/SO/O/NO) for a field, in summer/winter/equinox,
+        computed from real solar astronomy and declared obstacles — not a guess. Use this to reason about
+        what to plant where (sun-loving crops toward the octants with the most hours, shade-tolerant ones
+        toward the least)."""
+        target = await resolve_field(deps, ctx, field)
+        result = await deps.farm.sun_exposure(ctx.actor, target.id)
+        return compact(result)
+
+    @tool
+    async def get_harvest_totals(field: Optional[str] = None, year: Optional[int] = None) -> dict:
+        """Total harvested quantity (by unit) for a field in a given year (default: current year), summed
+        from registered harvest events. Answers "how much did we harvest this year"."""
+        field_id = (await resolve_field(deps, ctx, field)).id if field else None
+        return compact(await deps.farm.harvest_totals(ctx.actor, field_id=field_id, year=year))
+
+    @tool
+    async def get_harvest_verdict(field: Optional[str] = None, crop_cycle_id: Optional[str] = None) -> dict:
+        """Is it ready to harvest? With a photo in this message, does a quick dedicated visual check (not
+        persisted as a report). Without one, falls back to the harvest_ready/harvest_verdict already in the
+        latest periodic report of this field/cycle."""
+        target = await resolve_field(deps, ctx, field)
+        result = await deps.diagnosis.harvest_verdict(
+            ctx.actor, target.id, UUID(crop_cycle_id) if crop_cycle_id else None, ctx.image_identifier
+        )
+        return compact(result)
+
+    @tool
     async def log_event(
         event_type: str,
         field: Optional[str] = None,
@@ -86,7 +116,16 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         )
         return {"created_event": compact(event), "field_name": target.name}
 
-    return [list_fields, list_crop_cycles, list_recent_events, find_crop_in_catalog, log_event]
+    return [
+        list_fields,
+        list_crop_cycles,
+        list_recent_events,
+        find_crop_in_catalog,
+        get_field_sun_exposure,
+        get_harvest_totals,
+        get_harvest_verdict,
+        log_event,
+    ]
 
 
 def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
@@ -101,8 +140,15 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         area_m2: Optional[float] = None,
         soil_type: Optional[str] = None,
         description: Optional[str] = None,
+        orientation_degrees: Optional[float] = None,
+        length_m: Optional[float] = None,
+        width_m: Optional[float] = None,
+        obstacles: Optional[list[dict]] = None,
     ) -> dict:
-        """Create a field (plot, garden bed, greenhouse...). Coordinates enable weather forecasts and alerts."""
+        """Create a field (plot, garden bed, greenhouse...). Coordinates enable weather forecasts and alerts.
+        orientation_degrees: compass bearing the long side faces (0-360, 0=N). length_m/width_m: typed
+        dimensions. obstacles: list of {type: pared|arbol|estructura, height_m, direction: N|NE|E|SE|S|SO|O|NO}
+        — declaring these enables get_field_sun_exposure (real sol/sombra, not a guess)."""
         created = await deps.farm.create_field(
             ctx.actor,
             FieldCreate(
@@ -113,9 +159,53 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 area_m2=area_m2,
                 soil_type=soil_type,
                 description=description,
+                orientation_degrees=orientation_degrees,
+                length_m=length_m,
+                width_m=width_m,
+                obstacles=[Obstacle(**o) for o in (obstacles or [])],
             ),
         )
+        if created.latitude is not None:
+            try:
+                await deps.satellite.check_field(ctx.actor, created.id)
+            except Exception:
+                pass  # best-effort context; a field is still successfully created without it
         return {"created_field": compact(created)}
+
+    @tool
+    async def update_field(
+        field: str,
+        name: Optional[str] = None,
+        city: Optional[str] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+        area_m2: Optional[float] = None,
+        soil_type: Optional[str] = None,
+        description: Optional[str] = None,
+        orientation_degrees: Optional[float] = None,
+        length_m: Optional[float] = None,
+        width_m: Optional[float] = None,
+        obstacles: Optional[list[dict]] = None,
+    ) -> dict:
+        """Update a field's data (any subset of fields). obstacles, if given, REPLACES the full list — pass
+        the complete set including any you want to keep, not just the new one."""
+        target = await resolve_field(deps, ctx, field)
+        values = {
+            "name": name,
+            "city": city,
+            "latitude": latitude,
+            "longitude": longitude,
+            "area_m2": area_m2,
+            "soil_type": soil_type,
+            "description": description,
+            "orientation_degrees": orientation_degrees,
+            "length_m": length_m,
+            "width_m": width_m,
+            "obstacles": [Obstacle(**o) for o in obstacles] if obstacles is not None else None,
+        }
+        update = FieldUpdate(**{k: v for k, v in values.items() if v is not None})
+        updated = await deps.farm.update_field(ctx.actor, target.id, update)
+        return {"updated_field": compact(updated)}
 
     @tool
     async def add_crop_to_catalog(
@@ -227,6 +317,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     return [
         create_field,
+        update_field,
         add_crop_to_catalog,
         create_crop_cycle,
         update_crop_cycle,

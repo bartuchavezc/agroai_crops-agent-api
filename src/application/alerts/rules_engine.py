@@ -184,6 +184,8 @@ class RulesEngine:
         ))
     
         self._load_forecast_rules()
+        self._load_irrigation_rules()
+        self._load_satellite_rules()
 
     def _load_forecast_rules(self) -> None:
         """Rules over a daily forecast context: date, tmin, tmax, precipitation_mm, humid_warm_hours."""
@@ -253,6 +255,64 @@ class RulesEngine:
                 "Postergar fertilizaciones y tratamientos",
             ],
             category="forecast",
+        ))
+
+    def _load_irrigation_rules(self) -> None:
+        """Rules over an evapotranspiration-deficit context: net_mm = ETc - recent irrigation (mm). The
+        "don't water, rain is coming" case deliberately reuses forecast_heavy_rain instead of a duplicate."""
+        self.add_rule(Rule(
+            id="irrigation_deficit",
+            name="Irrigation Deficit",
+            condition=lambda ctx: (ctx.get("net_mm") or 0) > 2,
+            severity=Severity.LOW,
+            message_template=(
+                "Falta riego: déficit estimado de {net_mm:.1f} mm respecto a lo que el cultivo necesita hoy."
+            ),
+            recommendations=["Regar hoy, preferentemente temprano a la mañana o al atardecer"],
+            category="irrigation",
+        ))
+        self.add_rule(Rule(
+            id="irrigation_covered",
+            name="Irrigation Covered",
+            condition=lambda ctx: (ctx.get("net_mm") or 0) <= 2,
+            severity=Severity.LOW,
+            message_template=(
+                "Riego cubierto: el agua reciente alcanza lo que el cultivo necesita (déficit {net_mm:.1f} mm)."
+            ),
+            recommendations=[],
+            category="irrigation",
+        ))
+
+    def _load_satellite_rules(self) -> None:
+        """Rules over a Sentinel-2 NDVI/NDWI context, compared against the field's own recent baseline
+        (not a fixed global threshold) — a zone-wide signal, cross-referenced against the account's own
+        reports, not a substitute for them."""
+        self.add_rule(Rule(
+            id="satellite_ndvi_drop",
+            name="Zone NDVI Drop",
+            condition=lambda ctx: (ctx.get("ndvi_drop") or 0) >= 0.15,
+            severity=Severity.MEDIUM,
+            message_template=(
+                "Posible sequía o estrés generalizado en la zona: el NDVI bajó {ndvi_drop:.2f} respecto "
+                "al promedio reciente de este campo."
+            ),
+            recommendations=[
+                "Revisar si el estrés parece ser de toda la zona (clima) o puntual de tus plantas",
+                "Confirmar con una recorrida visual antes de decidir un tratamiento",
+            ],
+            category="satellite",
+        ))
+        self.add_rule(Rule(
+            id="satellite_high_ndwi_flood_signal",
+            name="Zone NDWI Flood Signal",
+            condition=lambda ctx: (ctx.get("ndwi_mean") if ctx.get("ndwi_mean") is not None else -1) >= 0.2,
+            severity=Severity.MEDIUM,
+            message_template="Posible anegamiento en la zona: índice de agua (NDWI) elevado, {ndwi_mean:.2f}.",
+            recommendations=[
+                "Verificar el drenaje de canteros y bajadas de agua",
+                "Evitar riego adicional hasta que baje la humedad del suelo",
+            ],
+            category="satellite",
         ))
 
     def add_rule(self, rule: Rule) -> None:

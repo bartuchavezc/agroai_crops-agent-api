@@ -5,20 +5,29 @@ from .alerts.rules_engine import RulesEngine
 from .alerts.service import AlertService
 from .farm.repository import FarmRepository
 from .farm.service import FarmService
+from .inventory.repository import SeedLotRepository
+from .inventory.service import InventoryService
+from .irrigation.service import EvapotranspirationService
+from .management.repository import ManagementRepository
+from .management.service import ManagementService
 from .notifications.service import NotificationService
 from .reports.repository import SQLAlchemyReportsRepository
 from .reports.service import ReportsService
+from .satellite.repository import ZoneSatelliteRepository
+from .satellite.service import ZoneSatelliteService
 from .storage.local_adapter import LocalFileRepository
 from .storage.service import StorageService
 
 
 class ApplicationContainer(containers.DeclarativeContainer):
-    """Business services: farm, reports, alerts, storage, notifications."""
+    """Business services: farm, reports, alerts, storage, notifications, irrigation, inventory,
+    management, satellite."""
 
     config = providers.Configuration()
     db_session_factory = providers.Dependency()
     weather_service = providers.Dependency()
     user_repository = providers.Dependency()
+    copernicus = providers.Dependency()
 
     notification_service = providers.Singleton(
         NotificationService, session_factory=db_session_factory, user_repository=user_repository
@@ -46,4 +55,32 @@ class ApplicationContainer(containers.DeclarativeContainer):
         alert_service=alert_service,
         rules_engine=rules_engine,
         timezone_name=config.app.timezone,
+    )
+
+    irrigation_service = providers.Singleton(
+        EvapotranspirationService,
+        farm_service=farm_service,
+        farm_repository=farm_repository,
+        weather_service=weather_service,
+        alert_service=alert_service,
+        rules_engine=rules_engine,
+    )
+
+    seed_lot_repository = providers.Singleton(SeedLotRepository, session_factory=db_session_factory)
+    inventory_service = providers.Singleton(
+        InventoryService, repository=seed_lot_repository, farm_service=farm_service
+    )
+
+    management_repository = providers.Singleton(ManagementRepository, session_factory=db_session_factory)
+    management_service = providers.Singleton(ManagementService, repository=management_repository)
+
+    zone_satellite_repository = providers.Singleton(ZoneSatelliteRepository, session_factory=db_session_factory)
+    satellite_service = providers.Singleton(
+        ZoneSatelliteService,
+        farm_service=farm_service,
+        repository=zone_satellite_repository,
+        copernicus=copernicus,
+        storage_service=storage_service,
+        alert_service=alert_service,
+        rules_engine=rules_engine,
     )

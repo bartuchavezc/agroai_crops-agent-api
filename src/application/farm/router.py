@@ -9,6 +9,7 @@ from uuid import UUID
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from src.application.satellite.service import ZoneSatelliteService
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 from src.shared.utils.routing import route_with_and_without_slash as _both
@@ -28,12 +29,14 @@ from .schemas import (
     FieldOverview,
     FieldRead,
     FieldUpdate,
+    SunExposureRead,
 )
 from .service import FarmService
 
 router = APIRouter(prefix="/farm-management", tags=["Farm Management"])
 
 FARM = Provide["application.farm_service"]
+SATELLITE = Provide["application.satellite_service"]
 
 
 
@@ -55,8 +58,19 @@ async def list_fields(actor: Actor = Depends(get_actor), farm: FarmService = Dep
 
 @_both(router.post, "/fields", response_model=FieldRead, status_code=status.HTTP_201_CREATED, summary="Create Field")
 @inject
-async def create_field(body: FieldCreate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
-    return await farm.create_field(actor, body)
+async def create_field(
+    body: FieldCreate,
+    actor: Actor = Depends(get_actor),
+    farm: FarmService = Depends(FARM),
+    satellite: ZoneSatelliteService = Depends(SATELLITE),
+):
+    created = await farm.create_field(actor, body)
+    if created.latitude is not None:
+        try:
+            await satellite.check_field(actor, created.id)
+        except Exception:
+            pass  # best-effort context; the field is still successfully created without it
+    return created
 
 
 @router.get("/fields/{field_id}", response_model=FieldRead, summary="Get Field")
@@ -78,6 +92,24 @@ async def update_field(
 async def delete_field(field_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
     await farm.delete_field(actor, field_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/fields/{field_id}/sun-exposure", response_model=SunExposureRead, summary="Field Sun Exposure")
+@inject
+async def field_sun_exposure(field_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
+    return await farm.sun_exposure(actor, field_id)
+
+
+@router.get("/harvest-totals", summary="Harvest Totals")
+@inject
+async def harvest_totals(
+    field_id: Optional[UUID] = None,
+    crop_master_id: Optional[UUID] = None,
+    year: Optional[int] = None,
+    actor: Actor = Depends(get_actor),
+    farm: FarmService = Depends(FARM),
+):
+    return await farm.harvest_totals(actor, field_id=field_id, crop_master_id=crop_master_id, year=year)
 
 
 # ---------- crop masters ----------

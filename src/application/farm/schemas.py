@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field as PField
 
+Octant = Literal["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
 CropCycleStatus = Literal["planned", "planted", "growing", "harvested", "failed"]
 EventType = Literal[
     "sowing",
@@ -27,6 +28,12 @@ class ORMModel(BaseModel):
 
 # ---------- Fields ----------
 
+class Obstacle(BaseModel):
+    type: Literal["pared", "arbol", "estructura"]
+    height_m: float = PField(ge=0, le=100)
+    direction: Octant
+
+
 class FieldBase(BaseModel):
     name: str = PField(min_length=1, max_length=255)
     city: Optional[str] = None
@@ -35,6 +42,12 @@ class FieldBase(BaseModel):
     description: Optional[str] = None
     soil_type: Optional[str] = None
     area_m2: Optional[float] = PField(default=None, ge=0)
+    orientation_degrees: Optional[float] = PField(
+        default=None, ge=0, le=360, description="Compass bearing the field's reference (long) side faces"
+    )
+    length_m: Optional[float] = PField(default=None, ge=0)
+    width_m: Optional[float] = PField(default=None, ge=0)
+    obstacles: list[Obstacle] = PField(default_factory=list)
 
 
 class FieldCreate(FieldBase):
@@ -49,6 +62,10 @@ class FieldUpdate(BaseModel):
     description: Optional[str] = None
     soil_type: Optional[str] = None
     area_m2: Optional[float] = PField(default=None, ge=0)
+    orientation_degrees: Optional[float] = PField(default=None, ge=0, le=360)
+    length_m: Optional[float] = PField(default=None, ge=0)
+    width_m: Optional[float] = PField(default=None, ge=0)
+    obstacles: Optional[list[Obstacle]] = None
 
 
 class FieldRead(FieldBase, ORMModel):
@@ -56,6 +73,12 @@ class FieldRead(FieldBase, ORMModel):
     account_id: UUID
     created_at: datetime
     updated_at: datetime
+
+
+class SunExposureRead(BaseModel):
+    field_id: UUID
+    field_name: str
+    by_season: Dict[str, Dict[str, float]]  # season -> octant -> hours of direct sun
 
 
 # ---------- Crop masters ----------
@@ -69,6 +92,9 @@ class CropMasterBase(BaseModel):
     growth_period_days: Optional[int] = PField(default=None, ge=1, le=3650)
     planting_season: Optional[str] = None
     harvest_season: Optional[str] = None
+    kc_initial: Optional[float] = PField(default=None, ge=0, le=2, description="FAO-56 Kc, initial stage")
+    kc_mid: Optional[float] = PField(default=None, ge=0, le=2, description="FAO-56 Kc, mid-season stage")
+    kc_late: Optional[float] = PField(default=None, ge=0, le=2, description="FAO-56 Kc, late-season stage")
 
 
 class CropMasterCreate(CropMasterBase):

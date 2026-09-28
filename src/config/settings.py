@@ -76,6 +76,12 @@ DEFAULT_CONFIG = {
         # Server-side, not BYOK: web search is a shared service, independent of each user's Gemini quota.
         "tavily_api_key": "",
     },
+    "satellite": {
+        # Copernicus Data Space Ecosystem (free tier, 10k processing credits/month). Zone-level NDVI/NDWI
+        # signal degrades gracefully (feature reports "not configured") when these are unset.
+        "copernicus_client_id": "",
+        "copernicus_client_secret": "",
+    },
 }
 
 
@@ -157,6 +163,10 @@ def _apply_env_overrides(config: dict) -> None:
 
     search = config["search"]
     search["tavily_api_key"] = env("TAVILY_API_KEY", search["tavily_api_key"])
+
+    satellite = config["satellite"]
+    satellite["copernicus_client_id"] = env("COPERNICUS_CLIENT_ID", satellite["copernicus_client_id"])
+    satellite["copernicus_client_secret"] = env("COPERNICUS_CLIENT_SECRET", satellite["copernicus_client_secret"])
 
 
 def _validate(config: dict) -> None:

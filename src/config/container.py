@@ -24,6 +24,7 @@ class Container(containers.DeclarativeContainer):
         db_session_factory=db_session_factory,
         weather_service=data_providers.weather_service,
         user_repository=auth.user_repository,
+        copernicus=data_providers.copernicus,
     )
     agent = di.Container(
         AgentContainer,
@@ -34,4 +35,5 @@ class Container(containers.DeclarativeContainer):
         weather_service=data_providers.weather_service,
         profile_service=auth.profile_service,
         search_provider=data_providers.search,
+        nasa_power=data_providers.nasa_power,
     )

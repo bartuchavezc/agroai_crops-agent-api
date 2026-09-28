@@ -25,6 +25,30 @@ async def run_smn(container, force: bool = False) -> None:
     alerts_result = await container.application.forecast_alert_service().run()
     logger.info(f"Forecast alerts: {alerts_result}")
 
+    irrigation_result = await container.application.irrigation_service().run_proactive_alerts()
+    logger.info(f"Irrigation alerts: {irrigation_result}")
+
+    await _check_satellite_after_storms(container, fields)
+
+
+async def _check_satellite_after_storms(container, fields) -> None:
+    """Extra step of the same daily batch: a fresh satellite read only for fields where heavy rain was
+    just forecast, to verify post-storm zone status (flooding signal) — not a blanket daily pull."""
+    weather = container.data_providers.weather_service()
+    rules = container.application.rules_engine()
+    satellite = container.application.satellite_service()
+    checked = 0
+    for field in fields:
+        daily = await weather.daily_forecast(field.latitude, field.longitude, 1)
+        if not daily:
+            continue
+        context = {**daily[0].to_dict(), "date": daily[0].date.strftime("%d/%m")}
+        matches = rules.evaluate(context, categories=["forecast"])
+        if any(m.rule_id == "forecast_heavy_rain" for m in matches):
+            await satellite.check_after_storm(field.account_id, field)
+            checked += 1
+    logger.info(f"Post-storm satellite checks: {checked} field(s)")
+
 
 async def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m src.batch")

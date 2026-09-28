@@ -29,8 +29,11 @@ from .schemas import (
     FieldOverview,
     FieldRead,
     FieldUpdate,
+    SunExposureRead,
 )
 from .repository import FarmRepository
+from .solar import Obstacle as SolarObstacle
+from .solar import compute_sun_exposure
 
 
 def _require_manager(actor: Actor) -> None:
@@ -252,5 +255,45 @@ class FarmService:
     async def crop_families(self, actor: Actor) -> set[str]:
         """Botanical families the account has ever grown, for agent knowledge-module selection."""
         return await self.repo.used_crop_families(actor.account_id)
+
+    # ---------- sun exposure ----------
+
+    async def sun_exposure(self, actor: Actor, field_id: UUID) -> SunExposureRead:
+        field = await self.get_field(actor, field_id)
+        if field.latitude is None:
+            raise InvalidInputError(f"Field '{field.name}' has no coordinates; sun exposure needs a latitude.")
+        obstacles = [SolarObstacle(type=o.type, height_m=o.height_m, direction=o.direction) for o in field.obstacles]
+        result = compute_sun_exposure(field.latitude, obstacles)
+        return SunExposureRead(field_id=field.id, field_name=field.name, by_season=result.by_season)
+
+    # ---------- harvest totals ----------
+
+    async def harvest_totals(
+        self, actor: Actor, field_id: Optional[UUID] = None, crop_master_id: Optional[UUID] = None,
+        year: Optional[int] = None,
+    ) -> dict:
+        year = year or utcnow().year
+        since = datetime(year, 1, 1, tzinfo=utcnow().tzinfo)
+        until = datetime(year + 1, 1, 1, tzinfo=utcnow().tzinfo)
+        events = await self.repo.list_events(
+            actor.account_id, field_id=field_id, event_type="harvest", since=since, until=until, limit=1000
+        )
+        if crop_master_id:
+            cycle_ids = {
+                c.id for c in await self.repo.list_crop_cycles(actor.account_id, field_id=field_id)
+                if c.crop_master_id == crop_master_id
+            }
+            events = [e for e in events if e.crop_cycle_id in cycle_ids]
+        by_unit: dict[str, float] = {}
+        for e in events:
+            if e.quantity is None:
+                continue
+            unit = e.unit or "unidades"
+            by_unit[unit] = by_unit.get(unit, 0.0) + e.quantity
+        return {
+            "year": year,
+            "harvest_count": len(events),
+            "totals_by_unit": {k: round(v, 2) for k, v in by_unit.items()},
+        }
 
 __all__ = ["FarmService", "ACTIVE_CROP_CYCLE_STATUSES"]

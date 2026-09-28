@@ -7,7 +7,7 @@ from src.shared.database import Base
 from src.shared.domain.base import utcnow
 
 SEVERITIES = ("low", "medium", "high", "critical")
-ALERT_SOURCES = ("rule", "smn", "agent", "user")
+ALERT_SOURCES = ("rule", "smn", "agent", "user", "irrigation", "satellite")
 
 
 class AlertModel(Base):

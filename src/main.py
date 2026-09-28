@@ -17,8 +17,11 @@ from src.agent.providers.router import router as provider_credentials_router
 from src.agent.reasoning.router import router as analyze_router
 from src.application.alerts.router import router as alerts_router
 from src.application.farm.router import router as farm_router
+from src.application.inventory.router import router as inventory_router
+from src.application.management.router import router as management_router
 from src.application.notifications.router import router as notifications_router
 from src.application.reports.router import router as reports_router
+from src.application.satellite.router import router as satellite_router
 from src.application.storage.router import router as upload_router
 from src.auth.api.routes import router as auth_router
 from src.config.bootstrap import build_container
@@ -42,6 +45,9 @@ ROUTERS = [
     chat_router,
     memory_router,
     analyze_router,
+    inventory_router,
+    management_router,
+    satellite_router,
 ]
 WIRED_MODULES = [
     "src.auth.api.dependencies",
@@ -56,6 +62,9 @@ WIRED_MODULES = [
     "src.application.reports.router",
     "src.application.storage.router",
     "src.providers.weather.router",
+    "src.application.inventory.router",
+    "src.application.management.router",
+    "src.application.satellite.router",
 ]
 
 
