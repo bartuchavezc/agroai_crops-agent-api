@@ -18,6 +18,7 @@ from src.agent.reasoning.router import router as analyze_router
 from src.application.alerts.router import router as alerts_router
 from src.application.farm.router import router as farm_router
 from src.application.inventory.router import router as inventory_router
+from src.application.irrigation.router import router as irrigation_router
 from src.application.management.router import router as management_router
 from src.application.notifications.router import router as notifications_router
 from src.application.reports.router import router as reports_router
@@ -46,6 +47,7 @@ ROUTERS = [
     memory_router,
     analyze_router,
     inventory_router,
+    irrigation_router,
     management_router,
     satellite_router,
 ]
@@ -63,6 +65,7 @@ WIRED_MODULES = [
     "src.application.storage.router",
     "src.providers.weather.router",
     "src.application.inventory.router",
+    "src.application.irrigation.router",
     "src.application.management.router",
     "src.application.satellite.router",
 ]

@@ -26,3 +26,19 @@ async def analyze_image(
     diagnosis: DiagnosisService = Depends(Provide["agent.diagnosis_service"]),
 ):
     return await diagnosis.analyze(actor, body.report_id, body.image_identifier)
+
+
+class HarvestVerdictRequest(BaseModel):
+    field_id: UUID
+    crop_cycle_id: Optional[UUID] = None
+    image_identifier: Optional[str] = None
+
+
+@router.post("/harvest-verdict", summary="Is this field/cycle ready to harvest?")
+@inject
+async def harvest_verdict(
+    body: HarvestVerdictRequest,
+    actor: Actor = Depends(get_actor),
+    diagnosis: DiagnosisService = Depends(Provide["agent.diagnosis_service"]),
+):
+    return await diagnosis.harvest_verdict(actor, body.field_id, body.crop_cycle_id, body.image_identifier)
