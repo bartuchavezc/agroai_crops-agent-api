@@ -37,4 +37,5 @@ class MessageRead(BaseModel):
     image_identifier: Optional[str] = None
     sources: list[dict[str, Any]] = Field(default_factory=list)
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime

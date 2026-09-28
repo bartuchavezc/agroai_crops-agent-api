@@ -38,4 +38,5 @@ class ConversationMessage(Base):
     image_identifier = Column(String(255))
     sources = Column(JSONB, nullable=False, default=list)
     tool_calls = Column(JSONB, nullable=False, default=list)
+    attachments = Column(JSONB, nullable=False, default=list)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)

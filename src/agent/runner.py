@@ -40,7 +40,7 @@ from .prompts.chat import BASE_INSTRUCTION
 from .prompts.knowledge_ar import modules_for_account, style_for_profile
 from .prompts.title import auto_title_prompt
 from .providers.gemini import RETRY_OPTIONS, GeminiGateway, error_from_event, translate_provider_error
-from .schemas import ChatMetadata, ChatResponse, Source, ToolCallInfo
+from .schemas import Attachment, ChatMetadata, ChatResponse, Source, ToolCallInfo
 from .tools import ToolDeps, TurnContext, build_tools
 
 logger = logging.getLogger(__name__)
@@ -256,6 +256,7 @@ class AgentRunner:
             close_segment()
             text = "\n\n".join(segments) or "No pude generar una respuesta. ¿Podés reformular la consulta?"
             sources = list({s["uri"]: Source(**s) for s in turn.ctx.sources}.values())
+            attachments = list({a["image_identifier"]: Attachment(**a) for a in turn.ctx.attachments}.values())
             await self.conversations.add_turn(
                 turn.actor,
                 turn.conversation_id,
@@ -264,12 +265,14 @@ class AgentRunner:
                 image_identifier=turn.image_identifier,
                 sources=[s.model_dump() for s in sources],
                 tool_calls=[t.model_dump(mode="json") for t in tool_calls],
+                attachments=[a.model_dump(mode="json") for a in attachments],
             )
             if turn.is_new:
                 await self._auto_title(turn.actor, turn.conversation_id, turn.message)
             return ChatResponse(
                 response=text,
                 sources=sources,
+                attachments=attachments,
                 metadata=ChatMetadata(
                     conversation_id=turn.conversation_id,
                     tool_calls=tool_calls,

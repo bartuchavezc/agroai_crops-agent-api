@@ -104,6 +104,7 @@ class ConversationService:
         image_identifier: Optional[str],
         sources: list[dict],
         tool_calls: list[dict],
+        attachments: Optional[list[dict]] = None,
     ) -> tuple[MessageRead, MessageRead]:
         now = utcnow()
         user_msg = ConversationMessage(
@@ -119,6 +120,7 @@ class ConversationService:
             content=assistant_text,
             sources=sources,
             tool_calls=tool_calls,
+            attachments=attachments or [],
             created_at=utcnow(),
         )
         async with self.session_factory() as session:
