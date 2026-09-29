@@ -51,13 +51,46 @@ function evaluatePixel(s) {
 }
 """
 
-_TRUE_COLOR_EVALSCRIPT = """
+
+# Colorized NDVI map (the standard Sentinel Hub "NDVI" script: red/orange = bare soil or stressed
+# vegetation, yellow = moderate, green = dense healthy vegetation) — a readable field-health map instead
+# of a plain aerial photo, since that's what's actually useful for "how's the zone doing", not the raw
+# true-color image.
+_NDVI_COLORMAP_EVALSCRIPT = """
 //VERSION=3
 function setup() {
-  return { input: ["B02", "B03", "B04"], output: { bands: 3 } };
+  return { input: ["B04", "B08", "dataMask"], output: { bands: 4 } };
 }
-function evaluatePixel(s) {
-  return [2.5 * s.B04, 2.5 * s.B03, 2.5 * s.B02];
+
+const ramps = [
+  [-0.5, 0x0c0c0c],
+  [-0.2, 0xbfbfbf],
+  [-0.1, 0xdbdbdb],
+  [0, 0xeaeaea],
+  [0.025, 0xfff9cc],
+  [0.05, 0xede8b5],
+  [0.075, 0xddd89b],
+  [0.1, 0xccc682],
+  [0.125, 0xbcb76b],
+  [0.15, 0xafc160],
+  [0.175, 0xa3cc59],
+  [0.2, 0x91bf51],
+  [0.25, 0x7fb247],
+  [0.3, 0x70a33f],
+  [0.35, 0x609635],
+  [0.4, 0x4f892d],
+  [0.45, 0x3f7c23],
+  [0.5, 0x306d1c],
+  [0.55, 0x216011],
+  [0.6, 0x0f540a],
+  [1, 0x004400],
+];
+const visualizer = new ColorRampVisualizer(ramps);
+
+function evaluatePixel(samples) {
+  let ndvi = index(samples.B08, samples.B04);
+  let imgVals = visualizer.process(ndvi);
+  return imgVals.concat(samples.dataMask);
 }
 """
 
@@ -194,7 +227,7 @@ class CopernicusAdapter:
     async def render_map(
         self, latitude: float, longitude: float, time_from: str, time_to: str, size_px: int = 512
     ) -> Optional[bytes]:
-        """True-color PNG for the chat mini-map / field satellite view. Only called on demand (see
+        """Colorized NDVI PNG for the chat mini-map / field satellite view. Only called on demand (see
         application/satellite/service.py), never as part of a batch, to keep processing-credit use low.
 
         time_from/time_to must be a wide-enough window (see ZoneSatelliteService, currently 30 days):
@@ -223,7 +256,7 @@ class CopernicusAdapter:
                 "height": size_px,
                 "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
             },
-            "evalscript": _TRUE_COLOR_EVALSCRIPT,
+            "evalscript": _NDVI_COLORMAP_EVALSCRIPT,
         }
         headers = {"Authorization": f"Bearer {token}"}
         try:
