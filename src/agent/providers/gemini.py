@@ -10,7 +10,7 @@ from uuid import UUID
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.shared.utils.errors import (
     CropAnalysisError,
@@ -146,7 +146,11 @@ class GeminiGateway:
         )
         if isinstance(response.parsed, schema):
             return response.parsed
-        return schema.model_validate_json(response.text or "{}")
+        try:
+            return schema.model_validate_json(response.text or "{}")
+        except ValidationError as exc:
+            logger.error(f"Gemini returned an invalid {schema.__name__}: {exc.errors(include_input=False)}")
+            raise ProviderError("La IA devolvió una respuesta con formato inválido. Reintentá en un momento.") from None
 
     async def generate_text(self, user_id: UUID, prompt: str, model: Optional[str] = None) -> str:
         client = await self.client_for(user_id)

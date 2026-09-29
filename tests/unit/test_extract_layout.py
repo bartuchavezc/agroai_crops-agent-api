@@ -90,9 +90,9 @@ async def test_the_campo_comes_from_the_fields_own_measures_not_from_the_entorno
     field = _field(width_m=5, length_m=8)
     objects, _ = await extract_layout_from_photo(_deps(PLAN), _actor(), _photo(), field)
     campo = next(o for o in objects if o["type"] == "campo")
-    xs = [p[0] for p in campo["points"]]
-    ys = [p[1] for p in campo["points"]]
-    assert (max(xs) - min(xs), max(ys) - min(ys)) == pytest.approx((5, 8))
+    a, b, c, _ = campo["points"]
+    sides = sorted([((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5, ((c[0] - b[0]) ** 2 + (c[1] - b[1]) ** 2) ** 0.5])
+    assert sides == pytest.approx([5, 8], abs=0.02)  # the field's 5 x 8 (squared up with the photo), not 18 x 42
     no_measures, _ = await extract_layout_from_photo(_deps(PLAN), _actor(), _photo(), _field())
     assert not any(o["type"] == "campo" for o in no_measures)  # nothing invented when the field has no measures
 
