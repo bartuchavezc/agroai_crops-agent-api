@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field as PField
 
+from src.application.soil_data.schemas import SoilContext
+
 Octant = Literal["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
 CropCycleStatus = Literal["planned", "planted", "growing", "harvested", "failed"]
 EventType = Literal[
@@ -71,6 +73,7 @@ class FieldUpdate(BaseModel):
 class FieldRead(FieldBase, ORMModel):
     id: UUID
     account_id: UUID
+    soil_context: Optional[SoilContext] = None
     created_at: datetime
     updated_at: datetime
 

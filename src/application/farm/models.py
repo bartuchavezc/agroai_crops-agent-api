@@ -67,6 +67,7 @@ class Field(Base):
     length_m = Column(Float)
     width_m = Column(Float)
     obstacles = Column(JSONB, nullable=False, default=list, server_default="[]")
+    soil_context = Column(JSONB)  # cached INTA soil lookup (src/application/soil_data); None until computed
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True))

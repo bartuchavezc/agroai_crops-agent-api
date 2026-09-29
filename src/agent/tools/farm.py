@@ -66,6 +66,17 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return compact(result)
 
     @tool
+    async def get_field_soil_context(field: Optional[str] = None) -> dict:
+        """Official soil read for this field's location, from INTA's national datasets ("Suelos de la
+        República Argentina" 1:500.000 + pH raster) — a real geographic reference, not a guess: soil
+        order/subgroup, texture, drainage, depth, alkalinity, erosion, floodability, and estimated
+        topsoil pH. A zone signal (km-scale), not per-plant precision. Cross-reference against a
+        photo-based read (save_soil_sample) when both are available. None if the field has no
+        coordinates or falls outside the dataset's covered area."""
+        target = await resolve_field(deps, ctx, field)
+        return {"soil_context": compact(target.soil_context) if target.soil_context else None}
+
+    @tool
     async def get_harvest_totals(field: Optional[str] = None, year: Optional[int] = None) -> dict:
         """Total harvested quantity (by unit) for a field in a given year (default: current year), summed
         from registered harvest events. Answers "how much did we harvest this year"."""
@@ -122,6 +133,7 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         list_recent_events,
         find_crop_in_catalog,
         get_field_sun_exposure,
+        get_field_soil_context,
         get_harvest_totals,
         get_harvest_verdict,
         log_event,

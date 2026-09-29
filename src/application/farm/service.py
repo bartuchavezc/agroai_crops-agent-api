@@ -2,6 +2,7 @@
 Farm service: the single write path for fields, crop catalog, crop cycles and events.
 Used by both the HTTP routers and the agent tools.
 """
+import logging
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -13,6 +14,7 @@ from src.shared.domain.base import utcnow
 from src.shared.utils.errors import InvalidInputError, NotFoundError, PermissionDeniedError
 
 from src.application.notifications.service import NotificationService
+from src.application.soil_data.service import SoilContextService
 
 from .models import ACTIVE_CROP_CYCLE_STATUSES, CropCycle, CropMaster, Field, FieldEvent
 from .schemas import (
@@ -35,6 +37,8 @@ from .repository import FarmRepository
 from .solar import Obstacle as SolarObstacle
 from .solar import compute_sun_exposure
 
+logger = logging.getLogger(__name__)
+
 
 def _require_manager(actor: Actor) -> None:
     if not actor.is_manager:
@@ -42,9 +46,27 @@ def _require_manager(actor: Actor) -> None:
 
 
 class FarmService:
-    def __init__(self, repository: FarmRepository, notification_service: NotificationService):
+    def __init__(
+        self,
+        repository: FarmRepository,
+        notification_service: NotificationService,
+        soil_context_service: SoilContextService,
+    ):
         self.repo = repository
         self.notifications = notification_service
+        self.soil_context = soil_context_service
+
+    async def _soil_context_payload(self, latitude: Optional[float], longitude: Optional[float]) -> Optional[dict]:
+        """Best-effort: a field without coordinates (or a lookup failure) just gets no cached soil
+        context — never blocks creating/editing the field."""
+        if latitude is None or longitude is None:
+            return None
+        try:
+            context = await self.soil_context.lookup(latitude, longitude)
+        except Exception:
+            logger.exception("Soil context lookup failed")
+            return None
+        return context.model_dump(mode="json") if context else None
 
     # ---------- fields ----------
 
@@ -62,16 +84,26 @@ class FarmService:
 
     async def create_field(self, actor: Actor, data: FieldCreate) -> FieldRead:
         _require_manager(actor)
+        payload = data.model_dump()
+        payload["soil_context"] = await self._soil_context_payload(data.latitude, data.longitude)
         try:
-            field = await self.repo.create_field(Field(account_id=actor.account_id, **data.model_dump()))
+            field = await self.repo.create_field(Field(account_id=actor.account_id, **payload))
         except IntegrityError:
             raise InvalidInputError(f"A field named '{data.name}' already exists.") from None
         return FieldRead.model_validate(field)
 
     async def update_field(self, actor: Actor, field_id: UUID, data: FieldUpdate) -> FieldRead:
         _require_manager(actor)
+        values = data.model_dump(exclude_unset=True)
+        if "latitude" in values or "longitude" in values:
+            current = await self.repo.get_field(actor.account_id, field_id)
+            if current is None:
+                raise NotFoundError(f"Field {field_id} not found.")
+            latitude = values.get("latitude", current.latitude)
+            longitude = values.get("longitude", current.longitude)
+            values["soil_context"] = await self._soil_context_payload(latitude, longitude)
         try:
-            field = await self.repo.update_field(actor.account_id, field_id, data.model_dump(exclude_unset=True))
+            field = await self.repo.update_field(actor.account_id, field_id, values)
         except IntegrityError:
             raise InvalidInputError("A field with that name already exists.") from None
         if field is None:
