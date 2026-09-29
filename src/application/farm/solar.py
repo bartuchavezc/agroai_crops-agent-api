@@ -94,3 +94,25 @@ def compute_sun_exposure(
 ) -> SunExposureResult:
     by_season = {season: sun_hours_by_octant(latitude, obstacles, season) for season in seasons}
     return SunExposureResult(by_season=by_season)
+
+
+@dataclass(frozen=True)
+class SunPosition:
+    hour: float  # true solar time, 0-24 (12 = the sun due north/south)
+    altitude_deg: float
+    azimuth_deg: float  # 0 = N, clockwise
+
+
+def solar_positions(latitude: float, season: str, step_minutes: int = 15) -> list[SunPosition]:
+    """Sun positions while it is above the horizon, on the representative day of the season. Same astronomy as
+    sun_hours_by_octant, exposed with the actual altitude/azimuth so shadows can be cast geometrically."""
+    decl = _declination_deg(SEASON_DATES[season].timetuple().tm_yday)
+    step_ha = step_minutes / 4.0  # 1 minute of time = 0.25 degrees of hour angle
+    positions = []
+    hour_angle = -180.0
+    while hour_angle < 180.0:
+        altitude, azimuth = _solar_position(latitude, decl, hour_angle)
+        if altitude > 0:
+            positions.append(SunPosition(12.0 + hour_angle / 15.0, altitude, azimuth))
+        hour_angle += step_ha
+    return positions

@@ -140,10 +140,48 @@ class FieldRead(FieldBase, ORMModel):
     updated_at: datetime
 
 
+class TerrainSunSummary(BaseModel):
+    """How the terrain itself fares in one season, from the geometric shadow model (not the octant estimate)."""
+
+    mean_hours: float
+    max_hours: float  # the day's length
+    full_sun_percent: float  # share of the terrain with 6+ hours of direct sun
+    part_shade_percent: float  # 3 to 6 hours
+    shade_percent: float  # under 3 hours
+    sunniest_zone: str  # e.g. "sector NE (a 8 m del centro)"
+    shadiest_zone: str
+
+
 class SunExposureRead(BaseModel):
     field_id: UUID
     field_name: str
     by_season: Dict[str, Dict[str, float]]  # season -> octant -> hours of direct sun
+    # season -> summary; only with a terrain shape and at least one shade-casting element
+    terrain: Optional[Dict[str, TerrainSunSummary]] = None
+
+
+class SunCellRead(BaseModel):
+    x: float
+    y: float
+    hours: float
+
+
+class SunMomentRead(BaseModel):
+    hour: float
+    altitude_deg: float
+    azimuth_deg: float
+    shadows: list[list[tuple[float, float]]]
+
+
+class SunMapRead(BaseModel):
+    field_id: UUID
+    season: str
+    cell_size_m: float
+    cells: list[SunCellRead]
+    max_hours: float
+    mean_hours: float
+    site_area_m2: float
+    timeline: list[SunMomentRead]
 
 
 # ---------- Crop masters ----------

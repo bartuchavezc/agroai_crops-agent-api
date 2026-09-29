@@ -30,6 +30,7 @@ from .schemas import (
     FieldRead,
     FieldUpdate,
     SunExposureRead,
+    SunMapRead,
 )
 from .service import FarmService
 
@@ -97,6 +98,17 @@ async def delete_field(field_id: UUID, actor: Actor = Depends(get_actor), farm: 
 @inject
 async def field_sun_exposure(field_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
     return await farm.sun_exposure(actor, field_id)
+
+
+@router.get("/fields/{field_id}/sun-map", response_model=SunMapRead, summary="Field Sun/Shade Map")
+@inject
+async def field_sun_map(
+    field_id: UUID,
+    season: str = Query("verano", description="verano | invierno | equinoccio"),
+    actor: Actor = Depends(get_actor),
+    farm: FarmService = Depends(FARM),
+):
+    return await farm.sun_map(actor, field_id, season)
 
 
 @router.get("/harvest-totals", summary="Harvest Totals")

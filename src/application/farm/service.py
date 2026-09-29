@@ -33,10 +33,16 @@ from .schemas import (
     FieldRead,
     FieldUpdate,
     LayoutPhoto,
+    SunCellRead,
     SunExposureRead,
+    SunMapRead,
+    SunMomentRead,
+    TerrainSunSummary,
 )
 from .repository import FarmRepository
-from .solar import OCTANTS
+from .shadows import SunMap, shadow_casters, sun_map
+from .site import site_polygon_m
+from .solar import OCTANTS, SEASON_DATES
 from .solar import Obstacle as SolarObstacle
 from .solar import compute_sun_exposure
 
@@ -57,6 +63,46 @@ def _is_stale(updated_at: Optional[str]) -> bool:
     if not updated_at:
         return True
     return (utcnow() - datetime.fromisoformat(updated_at)).total_seconds() > LAYOUT_PHOTO_STALE_SECONDS
+
+
+def _summarize_sun_map(result: SunMap, site: list[tuple[float, float]]) -> TerrainSunSummary:
+    """Percent of the terrain in full sun / part shade / shade, and where the sunniest and shadiest spots are."""
+    cells = result.cells
+    if not cells:
+        return TerrainSunSummary(
+            mean_hours=0, max_hours=result.max_hours, full_sun_percent=0, part_shade_percent=0, shade_percent=0,
+            sunniest_zone="sin datos", shadiest_zone="sin datos",
+        )
+    n = len(cells)
+    full = sum(1 for _, _, h in cells if h >= 6) / n * 100
+    shade = sum(1 for _, _, h in cells if h < 3) / n * 100
+    cx = sum(p[0] for p in site) / len(site)
+    cy = sum(p[1] for p in site) / len(site)
+
+    def zone(selected: list[tuple[float, float, float]]) -> str:
+        dx = sum(c[0] for c in selected) / len(selected) - cx
+        dy = sum(c[1] for c in selected) / len(selected) - cy
+        distance = math.hypot(dx, dy)
+        if distance < 2:
+            return "centro del terreno"
+        return f"sector {_octant_from_xy(dx, dy)} (a {distance:.0f} m del centro)"
+
+    hours = sorted(c[2] for c in cells)
+    if hours[-1] - hours[0] < 0.25:  # no meaningful difference across the terrain
+        sunniest = shadiest = "todo el terreno por igual"
+    else:
+        cut = max(1, n // 10)
+        sunniest = zone([c for c in cells if c[2] >= hours[-cut]])
+        shadiest = zone([c for c in cells if c[2] <= hours[cut - 1]])
+    return TerrainSunSummary(
+        mean_hours=result.mean_hours,
+        max_hours=result.max_hours,
+        full_sun_percent=round(full, 1),
+        part_shade_percent=round(100 - full - shade, 1),
+        shade_percent=round(shade, 1),
+        sunniest_zone=sunniest,
+        shadiest_zone=shadiest,
+    )
 
 
 def _require_manager(actor: Actor) -> None:
@@ -381,7 +427,52 @@ class FarmService:
             for o in field.layout_objects
         ]
         result = compute_sun_exposure(field.latitude, obstacles)
-        return SunExposureRead(field_id=field.id, field_name=field.name, by_season=result.by_season)
+        return SunExposureRead(
+            field_id=field.id,
+            field_name=field.name,
+            by_season=result.by_season,
+            terrain=self._terrain_summaries(field),
+        )
+
+    def _terrain_summaries(self, field: FieldRead) -> Optional[dict[str, TerrainSunSummary]]:
+        """Geometric sun/shade of the terrain per season; None when there is no terrain or nothing casts shade."""
+        site = site_polygon_m(field)
+        if not site or len(site) < 3 or field.latitude is None or not shadow_casters(field.layout_objects):
+            return None
+        try:
+            maps = {s: sun_map(field.layout_objects, site, field.latitude, s, target_cells=600) for s in SEASON_DATES}
+            return {season: _summarize_sun_map(result, site) for season, result in maps.items()}
+        except Exception:  # noqa: BLE001 - a geometry hiccup must not take down the octant estimate
+            logger.exception("Terrain sun summary failed")
+            return None
+
+    async def sun_map(self, actor: Actor, field_id: UUID, season: str) -> SunMapRead:
+        """Hours of direct sun for every spot of the terrain + the shadows through the day."""
+        field = await self.get_field(actor, field_id)
+        if field.latitude is None:
+            raise InvalidInputError(f"Field '{field.name}' has no coordinates; the sun map needs a latitude.")
+        if season not in SEASON_DATES:
+            raise InvalidInputError(f"Unknown season '{season}'. Use one of: {', '.join(SEASON_DATES)}.")
+        site = site_polygon_m(field)
+        if not site or len(site) < 3:
+            raise InvalidInputError(
+                f"Field '{field.name}' has no terrain shape yet: trace its boundary over the satellite image, "
+                "type its length and width, or draw it on the plan."
+            )
+        result = sun_map(field.layout_objects, site, field.latitude, season)
+        return SunMapRead(
+            field_id=field.id,
+            season=result.season,
+            cell_size_m=result.cell_size_m,
+            cells=[SunCellRead(x=x, y=y, hours=h) for x, y, h in result.cells],
+            max_hours=result.max_hours,
+            mean_hours=result.mean_hours,
+            site_area_m2=result.site_area_m2,
+            timeline=[
+                SunMomentRead(hour=m.hour, altitude_deg=m.altitude_deg, azimuth_deg=m.azimuth_deg, shadows=m.shadows)
+                for m in result.timeline
+            ],
+        )
 
     # ---------- harvest totals ----------
 
