@@ -51,6 +51,11 @@ class LayoutPhoto(BaseModel):
     image_identifier: str
     camera_bearing_degrees: float = PField(ge=0, le=360, description="TRUE-north direction the camera faced")
     reference_note: Optional[str] = PField(default=None, description="The user's own distance/height note")
+    # The photo is processed in the background (like a diagnosis report): the upload returns immediately as
+    # "processing"; the detected objects are merged into the field's layout when it finishes.
+    status: Literal["processing", "done", "failed"] = "done"
+    error: Optional[str] = None
+    updated_at: Optional[str] = PField(default=None, description="ISO timestamp of the last status change")
 
 
 def _check_boundary(v: Optional[list[tuple[float, float]]]) -> Optional[list[tuple[float, float]]]:

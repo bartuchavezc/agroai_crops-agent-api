@@ -32,6 +32,7 @@ from .schemas import (
     FieldOverview,
     FieldRead,
     FieldUpdate,
+    LayoutPhoto,
     SunExposureRead,
 )
 from .repository import FarmRepository
@@ -47,6 +48,15 @@ def _octant_from_xy(x_m: float, y_m: float) -> str:
     directions with no distance, so exact positions are rounded to the nearest one on purpose."""
     bearing = math.degrees(math.atan2(x_m, y_m)) % 360  # 0=N, clockwise
     return OCTANTS[round(bearing / 45) % 8]
+
+
+LAYOUT_PHOTO_STALE_SECONDS = 120  # a background extraction normally takes well under this
+
+
+def _is_stale(updated_at: Optional[str]) -> bool:
+    if not updated_at:
+        return True
+    return (utcnow() - datetime.fromisoformat(updated_at)).total_seconds() > LAYOUT_PHOTO_STALE_SECONDS
 
 
 def _require_manager(actor: Actor) -> None:
@@ -118,6 +128,61 @@ class FarmService:
         if field is None:
             raise NotFoundError(f"Field {field_id} not found.")
         return FieldRead.model_validate(field)
+
+    # ---------- layout photos (processed in the background) ----------
+
+    async def _save_layout(self, actor: Actor, field_id: UUID, **values) -> FieldRead:
+        field = await self.repo.update_field(actor.account_id, field_id, values)
+        if field is None:
+            raise NotFoundError(f"Field {field_id} not found.")
+        return FieldRead.model_validate(field)
+
+    async def add_layout_photo(self, actor: Actor, field_id: UUID, photo: LayoutPhoto) -> LayoutPhoto:
+        _require_manager(actor)
+        field = await self.get_field(actor, field_id)
+        photos = [p.model_dump() for p in field.layout_photos] + [photo.model_dump()]
+        await self._save_layout(actor, field_id, layout_photos=photos)
+        return photo
+
+    async def finish_layout_photo(
+        self, actor: Actor, field_id: UUID, photo_id: str, objects: Optional[list[dict]], error: Optional[str]
+    ) -> None:
+        """Background job result: merge detected objects into the layout and mark the photo done, or mark it
+        failed. Re-reads the field right before writing, and skips silently if the photo was deleted or
+        already finished meanwhile (a retry racing an earlier attempt must not duplicate objects)."""
+        field = await self.get_field(actor, field_id)
+        photos = [p.model_dump() for p in field.layout_photos]
+        target = next((p for p in photos if p["id"] == photo_id), None)
+        if target is None or target["status"] != "processing":
+            return
+        target.update(status="failed" if error else "done", error=error, updated_at=utcnow().isoformat())
+        values: dict = {"layout_photos": photos}
+        if not error and objects:
+            values["layout_objects"] = [o.model_dump() for o in field.layout_objects] + objects
+        await self._save_layout(actor, field_id, **values)
+
+    async def restart_layout_photo(self, actor: Actor, field_id: UUID, photo_id: str) -> LayoutPhoto:
+        """Retry: allowed for a failed photo, or one stuck in 'processing' long enough that its background
+        task must have died (e.g. the server restarted mid-way)."""
+        _require_manager(actor)
+        field = await self.get_field(actor, field_id)
+        photos = [p.model_dump() for p in field.layout_photos]
+        target = next((p for p in photos if p["id"] == photo_id), None)
+        if target is None:
+            raise NotFoundError("Layout photo not found.")
+        if target["status"] == "done":
+            raise InvalidInputError("This photo was already processed.")
+        if target["status"] == "processing" and not _is_stale(target.get("updated_at")):
+            raise InvalidInputError("This photo is still being processed.")
+        target.update(status="processing", error=None, updated_at=utcnow().isoformat())
+        await self._save_layout(actor, field_id, layout_photos=photos)
+        return LayoutPhoto.model_validate(target)
+
+    async def remove_layout_photo(self, actor: Actor, field_id: UUID, photo_id: str) -> None:
+        _require_manager(actor)
+        field = await self.get_field(actor, field_id)
+        photos = [p.model_dump() for p in field.layout_photos if p.id != photo_id]
+        await self._save_layout(actor, field_id, layout_photos=photos)
 
     async def delete_field(self, actor: Actor, field_id: UUID) -> None:
         _require_manager(actor)
