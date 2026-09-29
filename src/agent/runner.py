@@ -41,6 +41,7 @@ from .conversations.service import ConversationService
 from .prompts.chat import BASE_INSTRUCTION
 from .prompts.knowledge_ar import modules_for_account, style_for_profile
 from .prompts.knowledge_base import core_knowledge_base
+from .prompts.knowledge_skills import specific_manuals_toolset
 from .prompts.title import auto_title_prompt
 from .providers.gemini import RETRY_OPTIONS, GeminiGateway, error_from_event, translate_provider_error
 from .schemas import Attachment, ChatMetadata, ChatResponse, Source, ToolCallInfo
@@ -253,7 +254,7 @@ class AgentRunner:
             name="agroai_assistant",
             model=self._model(api_key),
             instruction=lambda _ctx: instruction,
-            tools=build_tools(self.tool_deps, ctx),
+            tools=[*build_tools(self.tool_deps, ctx), specific_manuals_toolset()],
             generate_content_config=types.GenerateContentConfig(temperature=0.4),
         )
         app = App(name=APP_NAME, root_agent=agent, context_cache_config=CONTEXT_CACHE_CONFIG)

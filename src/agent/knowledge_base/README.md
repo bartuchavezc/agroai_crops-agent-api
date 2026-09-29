@@ -29,10 +29,24 @@ Archivos:
 ## specific/
 
 Guías técnicas de manejo por cultivo (solanáceas, frutilla, hoja hidropónica, etc.) — el "Manual
-Variable 1" de la base de conocimiento. **Todavía sin wireo** — falta decidir, a medida que se sumen
-más manuales, si entran completos (mismo criterio que `core/`, mientras el total no pase el
-presupuesto de ~100-150k tokens) o seleccionados por cultivo del lote (como ya hace
-`FAMILY_TO_MODULE` en `src/agent/prompts/knowledge_ar.py` para los módulos cortos de Argentina).
+Variable 1" de la base de conocimiento. A diferencia de `core/`, no se cargan siempre: son
+demasiado grandes (100k+ tokens cada uno) para sumarlos todos al system prompt sin quemar el
+presupuesto de contexto apenas entren un par más.
+
+Wireados como **ADK Skills** en `src/agent/prompts/knowledge_skills.py::specific_manuals_toolset()`,
+agregado a los `tools` del `LlmAgent` en `AgentRunner.prepare_turn()` (`src/agent/runner.py`). Cada
+manual es un `Skill` (nombre + descripción corta, que es lo que el modelo lee para decidir) cuyo
+`instructions` es el markdown completo del archivo. El catálogo (solo las descripciones, no el
+contenido) va inyectado en el system prompt vía `SkillDiscoveryMode.EAGER` — barato, cachea igual
+que el resto de `_static_instruction` — y el modelo llama a la tool `load_skill` con el manual que
+le parezca más relevante a la pregunta del usuario, recién ahí trayendo el texto completo.
+
+`SkillLifecycleConfig(default_mode=BOUNDED, max_active_skills=1)` hace que cargar un manual
+nuevo desaloje automáticamente al anterior — no hace falta que el agente se acuerde de
+descargarlo. El desalojo no borra nada de la conversación persistida (queda para el historial),
+pero el propio request-processor de ADK reescribe, en cada turno posterior, la respuesta vieja de
+`load_skill` por un aviso corto ("este manual ya no está cargado") antes de mandarla al modelo —
+así el manual no queda pesando en cada turno siguiente solo porque se cargó una vez.
 
 Archivos:
 - `00_manual_horticultura.md` — Manual de Horticultura, 1er año (INTA / Ministerio de
