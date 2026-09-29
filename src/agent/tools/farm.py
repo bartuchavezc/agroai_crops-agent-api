@@ -158,11 +158,12 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         layout_objects: Optional[list[dict]] = None,
     ) -> dict:
         """Create a field (plot, garden bed, greenhouse...). Coordinates enable weather forecasts and alerts.
-        length_m/width_m: typed dimensions. layout_objects: things around the plot that cast shade, each
-        {id, type: pared|arbol|estructura|pileta|cantero|otro, label, x_m (meters East+/West- of the field
-        center), y_m (meters North+/South-), height_m, source: manual} — declaring these enables
-        get_field_sun_exposure (real sol/sombra, not a guess). Users normally build this from a photo in
-        the web app; only fill it here if the user states positions explicitly."""
+        length_m/width_m: typed dimensions. layout_objects: the plan of things around the plot that cast
+        shade, in meters from the field center (x East+, y North+), each {id, type: pared|cerco|arbol|
+        estructura|pileta|cantero|terreno|otro, label, height_m, source: manual, kind: polygon|polyline|
+        circle} plus its geometry: points [[x, y], ...] for polygon/polyline (polyline also thickness_m), or
+        x_m/y_m/radius_m for a circle. Users normally draw this in the web app or build it from a photo; only
+        fill it here if the user states positions explicitly."""
         created = await deps.farm.create_field(
             ctx.actor,
             FieldCreate(
