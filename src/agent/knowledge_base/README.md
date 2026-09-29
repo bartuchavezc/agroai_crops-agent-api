@@ -29,10 +29,24 @@ Archivos:
 ## specific/
 
 Guías técnicas de manejo por cultivo (solanáceas, frutilla, hoja hidropónica, etc.) — el "Manual
-Variable 1" de la base de conocimiento. **Todavía sin contenido ni wireo** — falta decidir, cuando
-haya manuales para sumar, si entran completos (mismo criterio que `core/`, mientras el total no pase
-el presupuesto de ~100-150k tokens) o seleccionados por cultivo del lote (como ya hace
+Variable 1" de la base de conocimiento. **Todavía sin wireo** — falta decidir, a medida que se sumen
+más manuales, si entran completos (mismo criterio que `core/`, mientras el total no pase el
+presupuesto de ~100-150k tokens) o seleccionados por cultivo del lote (como ya hace
 `FAMILY_TO_MODULE` en `src/agent/prompts/knowledge_ar.py` para los módulos cortos de Argentina).
+
+Archivos:
+- `00_manual_horticultura.md` — Manual de Horticultura, 1er año (INTA / Ministerio de
+  Agroindustria de la Provincia de Buenos Aires): estructura vegetal, tipos de huerta, construcción
+  y diseño de la huerta, herramientas, requerimientos de clima/suelo/agua, siembra y trasplante,
+  abonos y fertilización, riego, labores culturales, plagas y malezas (con preparados caseros),
+  cosecha, valor nutricional de las hortalizas, producción de semillas, plantas aromáticas y
+  planificación de la huerta familiar (incluye tabla de rendimientos aproximados por cultivo).
+- `01_huerta_organica.md` — "La Huerta Orgánica Familiar" (Programa PRO-HUERTA, INTA): las 8
+  cartillas del programa — la chacra (asociación maíz/poroto/zapallo), huerta orgánica intensiva,
+  tierra orgánica y rotaciones, abono orgánico (compuesto/verde/de superficie), planificación de
+  siembra, manejo orgánico (riego, labores culturales, control de plagas, preparados naturales
+  como purines e infusiones), huerta saludable (aromáticas y medicinales) y de la huerta a la mesa
+  (nutrición, seguridad alimentaria, recetario).
 
 ## inputs/ (pendiente, no existe todavía como carpeta de manuales)
 
