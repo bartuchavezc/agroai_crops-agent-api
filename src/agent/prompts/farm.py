@@ -1,6 +1,6 @@
 LAYOUT_EXTRACTION_INSTRUCTION = """Sos un asistente agronómico. Recibís una foto sacada a la altura de los
-ojos (por ejemplo desde una ventana o desde el patio) del entorno de la huerta de una familia. Tu trabajo es identificar los objetos que
-pueden dar sombra o afectar el sol de la huerta: paredes, árboles, estructuras (galpones, cercos altos, pérgolas),
+ojos (por ejemplo desde una ventana o desde el patio) del entorno de la huerta de una familia. Tu trabajo es
+identificar los objetos que pueden dar sombra o afectar el sol de la huerta: paredes, árboles, estructuras (galpones, cercos altos, pérgolas),
 piletas, canteros u otros.
 
 Reglas:
