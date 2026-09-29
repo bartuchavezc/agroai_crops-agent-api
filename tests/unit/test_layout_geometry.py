@@ -3,7 +3,14 @@ from pydantic import ValidationError
 
 from src.application.farm.schemas import LayoutObject
 from src.application.farm.service import _octant_from_xy
-from src.application.farm.site import latlon_to_local_m, polygon_area, site_polygon_m
+from src.application.farm.site import (
+    campo_polygon_m,
+    campo_shape_from_field,
+    environment_polygon_m,
+    latlon_to_local_m,
+    polygon_area,
+    sun_area_polygon_m,
+)
 
 
 def _field(**overrides):
@@ -45,14 +52,33 @@ def test_latlon_projection_is_in_meters_with_north_up():
     assert east == pytest.approx(111.32 * 0.8231, abs=0.5)  # cos(34.6deg) ~ 0.8231
 
 
-def test_site_polygon_prefers_drawn_terrain_then_boundary_then_rectangle():
-    rect = _field(length_m=40, width_m=18)
-    assert polygon_area(site_polygon_m(rect)) == pytest.approx(720)
-    boundary = [(-34.6, -58.4), (-34.6, -58.399), (-34.599, -58.399), (-34.599, -58.4)]
-    with_boundary = _field(length_m=40, width_m=18, boundary=boundary)
-    assert polygon_area(site_polygon_m(with_boundary)) == pytest.approx(110.54 * 91.6, rel=0.02)
-    drawn = LayoutObject(
-        id="t", type="terreno", label="Terreno", kind="polygon", points=[(0, 0), (10, 0), (10, 10), (0, 10)]
+def test_legacy_terreno_type_reads_as_entorno():
+    legacy = LayoutObject.model_validate(
+        {"id": "t", "type": "terreno", "label": "Terreno", "kind": "polygon", "points": [[0, 0], [10, 0], [10, 10]]}
     )
-    assert polygon_area(site_polygon_m(_field(boundary=boundary, layout_objects=[drawn]))) == pytest.approx(100)
-    assert site_polygon_m(_field()) is None
+    assert legacy.type == "entorno"
+
+
+def test_entorno_and_campo_are_separate_and_the_sun_area_prefers_the_entorno():
+    entorno = LayoutObject(
+        id="e", type="entorno", label="Entorno", kind="polygon", points=[(0, 0), (18, 0), (18, 42), (0, 42)]
+    )
+    campo = LayoutObject(id="c", type="campo", label="Campo", kind="polygon", points=[(2, 2), (7, 2), (7, 10), (2, 10)])
+    both = _field(layout_objects=[campo, entorno])
+    assert polygon_area(environment_polygon_m(both)) == pytest.approx(756)
+    assert polygon_area(campo_polygon_m(both)) == pytest.approx(40)
+    assert polygon_area(sun_area_polygon_m(both)) == pytest.approx(756)
+    only_campo = _field(layout_objects=[campo])
+    assert environment_polygon_m(only_campo) is None
+    assert polygon_area(sun_area_polygon_m(only_campo)) == pytest.approx(40)  # falls back to the campo alone
+    assert sun_area_polygon_m(_field()) is None
+
+
+def test_the_campo_shape_comes_from_the_fields_own_boundary_or_measures():
+    rect = campo_shape_from_field(_field(length_m=40, width_m=18))
+    assert polygon_area(rect) == pytest.approx(720)
+    boundary = [(-34.6, -58.4), (-34.6, -58.399), (-34.599, -58.399), (-34.599, -58.4)]
+    traced = campo_shape_from_field(_field(length_m=40, width_m=18, boundary=boundary))
+    assert polygon_area(traced) == pytest.approx(110.54 * 91.6, rel=0.02)  # the traced boundary wins
+    assert sum(p[0] for p in traced) == pytest.approx(0, abs=1e-6)  # ...re-centered: it is a shape, not a place
+    assert campo_shape_from_field(_field()) is None

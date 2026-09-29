@@ -105,10 +105,11 @@ async def field_sun_exposure(field_id: UUID, actor: Actor = Depends(get_actor), 
 async def field_sun_map(
     field_id: UUID,
     season: str = Query("verano", description="verano | invierno | equinoccio"),
+    shadows: bool = Query(False, description="also return the shadow polygons every 30 minutes"),
     actor: Actor = Depends(get_actor),
     farm: FarmService = Depends(FARM),
 ):
-    return await farm.sun_map(actor, field_id, season)
+    return await farm.sun_map(actor, field_id, season, include_shadows=shadows)
 
 
 @router.get("/harvest-totals", summary="Harvest Totals")

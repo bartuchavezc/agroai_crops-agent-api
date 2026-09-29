@@ -162,7 +162,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         """Create a field (plot, garden bed, greenhouse...). Coordinates enable weather forecasts and alerts.
         length_m/width_m: typed dimensions. layout_objects: the plan of things around the plot that cast
         shade, in meters from the field center (x East+, y North+), each {id, type: pared|cerco|arbol|
-        estructura|pileta|cantero|terreno|otro, label, height_m, source: manual, kind: polygon|polyline|
+        estructura|pileta|cantero|entorno|campo|otro, label, height_m, source: manual, kind: polygon|polyline|
         circle} plus its geometry: points [[x, y], ...] for polygon/polyline (polyline also thickness_m), or
         x_m/y_m/radius_m for a circle. Users normally draw this in the web app or build it from a photo; only
         fill it here if the user states positions explicitly."""

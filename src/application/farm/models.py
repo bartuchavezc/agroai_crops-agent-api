@@ -60,6 +60,7 @@ class Field(Base):
     city = Column(String(255))
     latitude = Column(Float)
     longitude = Column(Float)
+    layout_view_bearing = Column(Float)  # compass bearing drawn upward on the plan; null = automatic
     boundary = Column(JSONB)  # list[[lat, lon], ...] — the field's own drawn boundary, not the ~500m zone
     description = Column(Text)
     soil_type = Column(String(100))

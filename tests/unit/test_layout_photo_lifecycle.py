@@ -95,3 +95,44 @@ async def test_result_for_a_deleted_photo_is_ignored():
     await service.remove_layout_photo(actor, repo.field.id, "p1")
     await service.finish_layout_photo(actor, repo.field.id, "p1", [OBJECT], None)
     assert repo.field.layout_objects == [] and repo.field.layout_photos == []
+
+
+@pytest.mark.asyncio
+async def test_reprocessing_a_finished_photo_replaces_its_objects_instead_of_duplicating_them():
+    service, repo, actor = _service()
+    await service.add_layout_photo(actor, repo.field.id, _photo())
+    await service.finish_layout_photo(actor, repo.field.id, "p1", [{**OBJECT, "photo_id": "p1"}], None, (1.0, 2.0))
+    assert [o["id"] for o in repo.field.layout_objects] == ["o1"]
+    restarted = await service.restart_layout_photo(
+        actor, repo.field.id, "p1", entorno_ancho_m=18, entorno_largo_m=42, camera_height_m=1.6
+    )
+    assert (restarted.status, restarted.entorno_ancho_m, restarted.entorno_largo_m) == ("processing", 18, 42)
+    assert repo.field.layout_objects == []  # the old result is gone; the new one will be added when it finishes
+    await service.finish_layout_photo(actor, repo.field.id, "p1", [{**OBJECT, "id": "o2", "photo_id": "p1"}], None)
+    assert [o["id"] for o in repo.field.layout_objects] == ["o2"]
+
+
+@pytest.mark.asyncio
+async def test_reprocessing_a_legacy_photo_also_clears_the_untagged_ai_objects_of_the_old_method():
+    service, repo, actor = _service()
+    legacy_photo = _photo(status="done")  # processed by the old method: no camera position recorded
+    await service.add_layout_photo(actor, repo.field.id, legacy_photo)
+    repo.field.layout_objects = [
+        dict(OBJECT, id="old-ai"),  # AI, no photo_id: from the old bucket method
+        dict(OBJECT, id="mine", source="manual", label="Mi reja"),  # the user's own: must stay
+    ]
+    await service.restart_layout_photo(actor, repo.field.id, "p1")
+    assert [o["id"] for o in repo.field.layout_objects] == ["mine"]
+
+
+@pytest.mark.asyncio
+async def test_a_plan_keeps_a_single_entorno_and_a_single_campo_even_if_photos_finish_in_parallel():
+    service, repo, actor = _service()
+    entorno = {"id": "e1", "type": "entorno", "label": "Entorno", "kind": "polygon", "height_m": 0,
+               "points": [[0, 0], [18, 0], [18, 42], [0, 42]], "source": "manual"}
+    await service.add_layout_photo(actor, repo.field.id, _photo(id="a"))
+    await service.add_layout_photo(actor, repo.field.id, _photo(id="b"))
+    await service.finish_layout_photo(actor, repo.field.id, "a", [entorno, OBJECT], None)
+    second = [{**entorno, "id": "e2"}, {**OBJECT, "id": "o9"}]
+    await service.finish_layout_photo(actor, repo.field.id, "b", second, None)
+    assert sorted(o["id"] for o in repo.field.layout_objects) == ["e1", "o1", "o9"]  # the second entorno is dropped

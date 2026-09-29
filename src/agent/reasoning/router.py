@@ -4,7 +4,7 @@ from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.application.farm.declination import magnetic_to_true_bearing
 from src.application.farm.schemas import LayoutPhoto
@@ -20,6 +20,14 @@ from .layout_jobs import process_layout_photo
 
 router = APIRouter(prefix="/analyze", tags=["Analysis"])
 layout_router = APIRouter(prefix="/farm-management", tags=["Farm Management"])
+
+
+class RetryLayoutPhotoRequest(BaseModel):
+    """Measures to (re)use when reprocessing — needed for photos uploaded before the entorno's size was asked."""
+
+    entorno_ancho_m: Optional[float] = Field(default=None, gt=0, le=500)
+    entorno_largo_m: Optional[float] = Field(default=None, gt=0, le=500)
+    camera_height_m: Optional[float] = Field(default=None, gt=0, le=20)
 
 
 class ImageAnalysisRequest(BaseModel):
@@ -71,6 +79,10 @@ async def add_layout_photo(
     reference_note: Optional[str] = Form(None, max_length=500),
     pitch_degrees: Optional[float] = Form(None, ge=-90, le=90, description="Phone tilt at the shot, + = looking up"),
     camera_height_m: Optional[float] = Form(None, gt=0, le=20, description="Camera height above the ground"),
+    entorno_ancho_m: float = Form(..., gt=0, le=500, description="Width of the surroundings, across the photo"),
+    entorno_largo_m: float = Form(
+        ..., gt=0, le=500, description="Length of the surroundings: from where the photo was taken to the far wall"
+    ),
     actor: Actor = Depends(get_actor),
     deps: ToolDeps = Depends(Provide["agent.tool_deps"]),
 ):
@@ -101,6 +113,8 @@ async def add_layout_photo(
             reference_note=(reference_note or "").strip() or None,
             pitch_degrees=pitch_degrees,
             camera_height_m=camera_height_m,
+            entorno_ancho_m=entorno_ancho_m,
+            entorno_largo_m=entorno_largo_m,
             status="processing",
             updated_at=utcnow().isoformat(),
         ),
@@ -112,17 +126,21 @@ async def add_layout_photo(
 @layout_router.post(
     "/fields/{field_id}/layout/photos/{photo_id}/retry",
     response_model=LayoutPhoto,
-    summary="Retry a failed (or stuck) layout photo without re-uploading it",
+    summary="Retry a failed or stuck layout photo, or reprocess a finished one, without re-uploading it",
 )
 @inject
 async def retry_layout_photo(
     field_id: UUID,
     photo_id: str,
     background_tasks: BackgroundTasks,
+    body: Optional[RetryLayoutPhotoRequest] = None,
     actor: Actor = Depends(get_actor),
     deps: ToolDeps = Depends(Provide["agent.tool_deps"]),
 ):
-    photo = await deps.farm.restart_layout_photo(actor, field_id, photo_id)
+    body = body or RetryLayoutPhotoRequest()
+    photo = await deps.farm.restart_layout_photo(
+        actor, field_id, photo_id, body.entorno_ancho_m, body.entorno_largo_m, body.camera_height_m
+    )
     background_tasks.add_task(process_layout_photo, deps, actor, field_id, photo_id)
     return photo
 

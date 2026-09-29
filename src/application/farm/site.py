@@ -1,5 +1,12 @@
-"""The field's terrain as a polygon in the plan's local meters (origin = the field's coordinates, x = East,
-y = North). Shared by the photo->plan conversion (where the camera stands) and the sun/shade maps."""
+"""
+The two areas on the plan, kept apart on purpose (they may coincide or not):
+
+- ENTORNO: the surroundings seen in the photo — the yard, its walls, hedges, the pool... — with the measures the
+  user gave when uploading it (e.g. 18 m across x 42 m from where the photo was taken to the far wall).
+- CAMPO: the growing plot, with the FIELD's own measures (length x width, or its traced satellite boundary).
+
+Plan frame: meters, x = East, y = North, origin at the field's coordinates.
+"""
 import math
 from typing import Optional
 
@@ -18,15 +25,35 @@ def latlon_to_local_m(latitude: float, longitude: float, origin_lat: float, orig
     return x, y
 
 
-def site_polygon_m(field: FieldRead) -> Optional[list[Point]]:
-    """Terrain outline, in order of preference: a "terreno" element drawn on the plan, the boundary traced
-    over the satellite image, or a length x width rectangle centered on the field. None if there is nothing
-    to build one from."""
+def _drawn(field: FieldRead, element_type: str) -> Optional[list[Point]]:
     for obj in field.layout_objects:
-        if obj.type == "terreno" and obj.kind == "polygon" and obj.points:
+        if obj.type == element_type and obj.kind == "polygon" and obj.points:
             return list(obj.points)
-    if field.boundary and field.latitude is not None and field.longitude is not None:
-        return [latlon_to_local_m(lat, lon, field.latitude, field.longitude) for lat, lon in field.boundary]
+    return None
+
+
+def environment_polygon_m(field: FieldRead) -> Optional[list[Point]]:
+    """The entorno outline, if the plan has one."""
+    return _drawn(field, "entorno")
+
+
+def campo_polygon_m(field: FieldRead) -> Optional[list[Point]]:
+    """The campo outline as drawn on the plan, if the plan has one."""
+    return _drawn(field, "campo")
+
+
+def sun_area_polygon_m(field: FieldRead) -> Optional[list[Point]]:
+    """Area the sun map is computed over: the entorno, or — for a plan that only has the plot — the campo."""
+    return environment_polygon_m(field) or campo_polygon_m(field)
+
+
+def campo_shape_from_field(field: FieldRead) -> Optional[list[Point]]:
+    """Shape of the campo from the FIELD's own measures, centered on (0, 0): its traced satellite boundary, else
+    a rectangle of width_m (across) x length_m (along). None if the field has neither."""
+    if field.boundary and len(field.boundary) >= 3 and field.latitude is not None and field.longitude is not None:
+        pts = [latlon_to_local_m(lat, lon, field.latitude, field.longitude) for lat, lon in field.boundary]
+        cx, cy = polygon_centroid(pts)
+        return [(x - cx, y - cy) for x, y in pts]
     if field.length_m and field.width_m:
         half_w, half_l = field.width_m / 2, field.length_m / 2
         return [(-half_w, -half_l), (half_w, -half_l), (half_w, half_l), (-half_w, half_l)]

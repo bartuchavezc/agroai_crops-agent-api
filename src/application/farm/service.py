@@ -40,8 +40,8 @@ from .schemas import (
     TerrainSunSummary,
 )
 from .repository import FarmRepository
-from .shadows import SunMap, shadow_casters, sun_map
-from .site import site_polygon_m
+from .shadows import SunMap, cells_inside, shadow_casters, sun_map
+from .site import campo_polygon_m, environment_polygon_m, sun_area_polygon_m
 from .solar import OCTANTS, SEASON_DATES
 from .solar import Obstacle as SolarObstacle
 from .solar import compute_sun_exposure
@@ -65,6 +65,14 @@ def _is_stale(updated_at: Optional[str]) -> bool:
     return (utcnow() - datetime.fromisoformat(updated_at)).total_seconds() > LAYOUT_PHOTO_STALE_SECONDS
 
 
+def _only_cells(result: SunMap, cells: list[tuple[float, float, float]]) -> SunMap:
+    """The same sun map restricted to some cells (e.g. those inside the campo), with its own mean."""
+    return SunMap(
+        season=result.season, cell_size_m=result.cell_size_m, cells=cells, max_hours=result.max_hours,
+        mean_hours=round(sum(c[2] for c in cells) / len(cells), 2), site_area_m2=len(cells) * result.cell_size_m**2,
+    )
+
+
 def _summarize_sun_map(result: SunMap, site: list[tuple[float, float]]) -> TerrainSunSummary:
     """Percent of the terrain in full sun / part shade / shade, and where the sunniest and shadiest spots are."""
     cells = result.cells
@@ -84,12 +92,12 @@ def _summarize_sun_map(result: SunMap, site: list[tuple[float, float]]) -> Terra
         dy = sum(c[1] for c in selected) / len(selected) - cy
         distance = math.hypot(dx, dy)
         if distance < 2:
-            return "centro del terreno"
+            return "centro del área"
         return f"sector {_octant_from_xy(dx, dy)} (a {distance:.0f} m del centro)"
 
     hours = sorted(c[2] for c in cells)
     if hours[-1] - hours[0] < 0.25:  # no meaningful difference across the terrain
-        sunniest = shadiest = "todo el terreno por igual"
+        sunniest = shadiest = "toda el área por igual"
     else:
         cut = max(1, n // 10)
         sunniest = zone([c for c in cells if c[2] >= hours[-cut]])
@@ -103,6 +111,16 @@ def _summarize_sun_map(result: SunMap, site: list[tuple[float, float]]) -> Terra
         sunniest_zone=sunniest,
         shadiest_zone=shadiest,
     )
+
+
+_SINGLE_ELEMENTS = {"entorno", "campo"}
+_AREA_ELEMENTS = _SINGLE_ELEMENTS  # areas, not obstacles: they cast no shade
+
+
+def _has_entorno(field: FieldRead, objects: Optional[list[dict]] = None) -> bool:
+    if objects is not None:
+        return any(o["type"] == "entorno" for o in objects)
+    return any(o.type == "entorno" for o in field.layout_objects)
 
 
 def _require_manager(actor: Actor) -> None:
@@ -212,24 +230,55 @@ class FarmService:
             target.update(camera_x_m=camera_xy[0], camera_y_m=camera_xy[1])
         values: dict = {"layout_photos": photos}
         if not error and objects:
-            values["layout_objects"] = [o.model_dump() for o in field.layout_objects] + objects
+            existing = [o.model_dump() for o in field.layout_objects]
+            have_single = {o["type"] for o in existing if o["type"] in _SINGLE_ELEMENTS}
+            # a plan has one entorno and one campo; a photo processed in parallel must not add a second one
+            objects = [o for o in objects if o.get("type") not in have_single]
+            values["layout_objects"] = existing + objects
         await self._save_layout(actor, field_id, **values)
 
-    async def restart_layout_photo(self, actor: Actor, field_id: UUID, photo_id: str) -> LayoutPhoto:
-        """Retry: allowed for a failed photo, or one stuck in 'processing' long enough that its background
-        task must have died (e.g. the server restarted mid-way)."""
+    async def restart_layout_photo(
+        self,
+        actor: Actor,
+        field_id: UUID,
+        photo_id: str,
+        entorno_ancho_m: Optional[float] = None,
+        entorno_largo_m: Optional[float] = None,
+        camera_height_m: Optional[float] = None,
+    ) -> LayoutPhoto:
+        """Retry / reprocess. Allowed for a failed photo, one stuck in 'processing' long enough that its background
+        task must have died, or an already processed one ("Reprocesar"): in that case the objects it produced are
+        removed first so they are regenerated instead of duplicated. The entorno's measures can be (re)given here,
+        for photos uploaded before they were asked for."""
         _require_manager(actor)
         field = await self.get_field(actor, field_id)
         photos = [p.model_dump() for p in field.layout_photos]
         target = next((p for p in photos if p["id"] == photo_id), None)
         if target is None:
             raise NotFoundError("Layout photo not found.")
-        if target["status"] == "done":
-            raise InvalidInputError("This photo was already processed.")
         if target["status"] == "processing" and not _is_stale(target.get("updated_at")):
             raise InvalidInputError("This photo is still being processed.")
+        values: dict = {}
+        if target["status"] == "done":
+            # objects from this photo — and, for photos processed before elements carried a photo_id, the
+            # untagged AI ones (they were placed by the old method and would sit on top of the new result)
+            legacy = target.get("camera_x_m") is None
+            values["layout_objects"] = [
+                o.model_dump()
+                for o in field.layout_objects
+                if o.photo_id != photo_id and not (legacy and o.source == "photo_ai" and o.photo_id is None)
+            ]
         target.update(status="processing", error=None, updated_at=utcnow().isoformat())
-        await self._save_layout(actor, field_id, layout_photos=photos)
+        if entorno_ancho_m:
+            target["entorno_ancho_m"] = entorno_ancho_m
+        if entorno_largo_m:
+            target["entorno_largo_m"] = entorno_largo_m
+        if camera_height_m:
+            target["camera_height_m"] = camera_height_m
+        if target.get("camera_x_m") is not None and not _has_entorno(field, values.get("layout_objects")):
+            target["camera_x_m"] = target["camera_y_m"] = None  # the camera spot came from an entorno that is gone
+        values["layout_photos"] = photos
+        await self._save_layout(actor, field_id, **values)
         return LayoutPhoto.model_validate(target)
 
     async def remove_layout_photo(self, actor: Actor, field_id: UUID, photo_id: str) -> None:
@@ -425,41 +474,56 @@ class FarmService:
         obstacles = [
             SolarObstacle(type=o.type, height_m=o.height_m, direction=_octant_from_xy(o.x_m, o.y_m))
             for o in field.layout_objects
+            if o.type not in _AREA_ELEMENTS
         ]
         result = compute_sun_exposure(field.latitude, obstacles)
+        environment, plot = self._area_summaries(field)
         return SunExposureRead(
-            field_id=field.id,
-            field_name=field.name,
-            by_season=result.by_season,
-            terrain=self._terrain_summaries(field),
+            field_id=field.id, field_name=field.name, by_season=result.by_season, environment=environment, plot=plot
         )
 
-    def _terrain_summaries(self, field: FieldRead) -> Optional[dict[str, TerrainSunSummary]]:
-        """Geometric sun/shade of the terrain per season; None when there is no terrain or nothing casts shade."""
-        site = site_polygon_m(field)
-        if not site or len(site) < 3 or field.latitude is None or not shadow_casters(field.layout_objects):
-            return None
+    def _area_summaries(
+        self, field: FieldRead
+    ) -> tuple[Optional[dict[str, TerrainSunSummary]], Optional[dict[str, TerrainSunSummary]]]:
+        """Geometric sun/shade per season over the entorno and, separately, over the campo. (None, None) when
+        there is no area or nothing casts shade."""
+        area = sun_area_polygon_m(field)
+        if not area or len(area) < 3 or field.latitude is None or not shadow_casters(field.layout_objects):
+            return None, None
         try:
-            maps = {s: sun_map(field.layout_objects, site, field.latitude, s, target_cells=600) for s in SEASON_DATES}
-            return {season: _summarize_sun_map(result, site) for season, result in maps.items()}
+            maps = {s: sun_map(field.layout_objects, area, field.latitude, s) for s in SEASON_DATES}
+            environment = {season: _summarize_sun_map(result, area) for season, result in maps.items()}
+            campo = campo_polygon_m(field)
+            plot = None
+            if campo and len(campo) >= 3 and environment_polygon_m(field):
+                plot = {}
+                for season, result in maps.items():
+                    inside = cells_inside(result.cells, campo)
+                    if inside:
+                        plot[season] = _summarize_sun_map(_only_cells(result, inside), campo)
+                plot = plot or None
+            return environment, plot
         except Exception:  # noqa: BLE001 - a geometry hiccup must not take down the octant estimate
-            logger.exception("Terrain sun summary failed")
-            return None
+            logger.exception("Area sun summary failed")
+            return None, None
 
-    async def sun_map(self, actor: Actor, field_id: UUID, season: str) -> SunMapRead:
-        """Hours of direct sun for every spot of the terrain + the shadows through the day."""
+    async def sun_map(self, actor: Actor, field_id: UUID, season: str, include_shadows: bool = False) -> SunMapRead:
+        """Hours of direct sun for every 1 m x 1 m cell of the entorno (or of the campo, if that is all the plan
+        has). The campo's own average is reported apart, never mixed into the entorno's."""
         field = await self.get_field(actor, field_id)
         if field.latitude is None:
             raise InvalidInputError(f"Field '{field.name}' has no coordinates; the sun map needs a latitude.")
         if season not in SEASON_DATES:
             raise InvalidInputError(f"Unknown season '{season}'. Use one of: {', '.join(SEASON_DATES)}.")
-        site = site_polygon_m(field)
-        if not site or len(site) < 3:
+        area = sun_area_polygon_m(field)
+        if not area or len(area) < 3:
             raise InvalidInputError(
-                f"Field '{field.name}' has no terrain shape yet: trace its boundary over the satellite image, "
-                "type its length and width, or draw it on the plan."
+                f"Field '{field.name}' has no entorno on the plan yet: upload a photo of its surroundings with the "
+                "entorno's width and length, or draw it on the plan."
             )
-        result = sun_map(field.layout_objects, site, field.latitude, season)
+        result = sun_map(field.layout_objects, area, field.latitude, season, include_shadows=include_shadows)
+        campo = campo_polygon_m(field) if environment_polygon_m(field) else None
+        plot_cells = cells_inside(result.cells, campo) if campo else []
         return SunMapRead(
             field_id=field.id,
             season=result.season,
@@ -468,6 +532,7 @@ class FarmService:
             max_hours=result.max_hours,
             mean_hours=result.mean_hours,
             site_area_m2=result.site_area_m2,
+            plot_mean_hours=round(sum(c[2] for c in plot_cells) / len(plot_cells), 2) if plot_cells else None,
             timeline=[
                 SunMomentRead(hour=m.hour, altitude_deg=m.altitude_deg, azimuth_deg=m.azimuth_deg, shadows=m.shadows)
                 for m in result.timeline
