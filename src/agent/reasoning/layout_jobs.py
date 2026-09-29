@@ -5,7 +5,6 @@ import asyncio
 import logging
 from uuid import UUID
 
-from src.application.farm.site import site_polygon_m
 from src.shared.domain.actor import Actor
 from src.shared.utils.errors import CropAnalysisError
 
@@ -26,7 +25,7 @@ async def process_layout_photo(deps: ToolDeps, actor: Actor, field_id: UUID, pho
         if photo is None:
             return  # deleted while queued
         objects, camera_xy = await asyncio.wait_for(
-            extract_layout_from_photo(deps, actor, photo, site_polygon_m(field)),
+            extract_layout_from_photo(deps, actor, photo, field),
             timeout=EXTRACTION_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:

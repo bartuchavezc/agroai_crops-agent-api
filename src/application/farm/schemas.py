@@ -30,7 +30,9 @@ class ORMModel(BaseModel):
 
 # ---------- Fields ----------
 
-LayoutObjectType = Literal["pared", "cerco", "arbol", "estructura", "pileta", "cantero", "terreno", "otro"]
+# "entorno" = the surroundings seen in the photo (its own measures, given by the user); "campo" = the growing plot
+# with the field's own measures. They may coincide or not, so they are separate elements.
+LayoutObjectType = Literal["pared", "cerco", "arbol", "estructura", "pileta", "cantero", "entorno", "campo", "otro"]
 LayoutKind = Literal["polygon", "polyline", "circle"]
 
 
@@ -56,6 +58,14 @@ class LayoutObject(BaseModel):
     confidence: Optional[float] = PField(default=None, ge=0, le=1)
     photo_id: Optional[str] = PField(default=None, description="Reference photo this element was detected in")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _rename_legacy_type(cls, data):
+        # "terreno" (first version of the plan editor) is the surroundings outline, now called "entorno".
+        if isinstance(data, dict) and data.get("type") == "terreno":
+            return {**data, "type": "entorno"}
+        return data
+
     @model_validator(mode="after")
     def _check_geometry(self):
         if self.kind == "circle":
@@ -79,6 +89,9 @@ class LayoutPhoto(BaseModel):
     camera_y_m: Optional[float] = PField(default=None, description="Where the photo was taken, on the plan (North +)")
     pitch_degrees: Optional[float] = PField(default=None, ge=-90, le=90, description="Phone tilt (+ = looking up)")
     camera_height_m: Optional[float] = PField(default=None, gt=0, le=20, description="Camera height above ground")
+    # The surroundings as the user measured them: across the photo, and from where it was taken to the far wall.
+    entorno_ancho_m: Optional[float] = PField(default=None, gt=0, le=500)
+    entorno_largo_m: Optional[float] = PField(default=None, gt=0, le=500)
     # The photo is processed in the background (like a diagnosis report): the upload returns immediately as
     # "processing"; the detected objects are merged into the field's layout when it finishes.
     status: Literal["processing", "done", "failed"] = "done"
@@ -107,6 +120,9 @@ class FieldBase(BaseModel):
     width_m: Optional[float] = PField(default=None, ge=0)
     layout_objects: list[LayoutObject] = PField(default_factory=list)
     layout_photos: list[LayoutPhoto] = PField(default_factory=list)
+    layout_view_bearing: Optional[float] = PField(
+        default=None, ge=0, le=360, description="Compass bearing drawn upward on the plan; null = automatic"
+    )
 
     _check_boundary = field_validator("boundary")(_check_boundary)
 
@@ -128,6 +144,7 @@ class FieldUpdate(BaseModel):
     width_m: Optional[float] = PField(default=None, ge=0)
     layout_objects: Optional[list[LayoutObject]] = None
     layout_photos: Optional[list[LayoutPhoto]] = None
+    layout_view_bearing: Optional[float] = PField(default=None, ge=0, le=360)
 
     _check_boundary = field_validator("boundary")(_check_boundary)
 
@@ -156,8 +173,10 @@ class SunExposureRead(BaseModel):
     field_id: UUID
     field_name: str
     by_season: Dict[str, Dict[str, float]]  # season -> octant -> hours of direct sun
-    # season -> summary; only with a terrain shape and at least one shade-casting element
-    terrain: Optional[Dict[str, TerrainSunSummary]] = None
+    # season -> summary over the ENTORNO (the surroundings); only with an entorno shape and shade-casting elements
+    environment: Optional[Dict[str, TerrainSunSummary]] = None
+    # season -> summary over the CAMPO (the growing plot) alone, when the plan has one
+    plot: Optional[Dict[str, TerrainSunSummary]] = None
 
 
 class SunCellRead(BaseModel):
@@ -181,7 +200,8 @@ class SunMapRead(BaseModel):
     max_hours: float
     mean_hours: float
     site_area_m2: float
-    timeline: list[SunMomentRead]
+    plot_mean_hours: Optional[float] = None  # mean over the campo alone, when the plan has one
+    timeline: list[SunMomentRead] = []
 
 
 # ---------- Crop masters ----------

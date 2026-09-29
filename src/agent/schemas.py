@@ -71,65 +71,39 @@ class SatelliteImageAnalysis(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
-class ImagePoint(BaseModel):
-    x: float = Field(ge=0, le=1, description="0 = left edge of the photo, 1 = right edge")
-    y: float = Field(ge=0, le=1, description="0 = top edge of the photo, 1 = bottom edge")
+class PlanPoint(BaseModel):
+    """A point on the plan, in meters, in the photo's frame: x to the right of the photo, y forward (away from the
+    camera). The camera itself is at (0, 0)."""
+
+    x: float
+    y: float
 
 
-class SceneElementGuess(BaseModel):
-    """One thing around the plot, described in IMAGE coordinates only — meters are computed from the geometry
-    afterwards (a photo gives no reliable metric depth, so the model is never asked for distances)."""
+class PlanElement(BaseModel):
+    """One thing around the plot, as it would be drawn on a top-down plan (a real footprint, in meters)."""
 
-    label: str
+    label: str = Field(description="Short name in Spanish, e.g. 'Pared del fondo', 'Pileta', 'Pino'")
     type: Literal["pared", "cerco", "arbol", "estructura", "pileta", "cantero", "otro"]
     kind: Literal["polygon", "polyline", "circle"] = Field(
-        description="polygon: closed footprint (pool, planter, building); polyline: a wall or hedge, traced along "
-        "its base; circle: a tree, a single point at the base of its trunk"
+        description="polygon: closed footprint (pool, planter, building); polyline: a wall or hedge, drawn as a "
+        "line with thickness_m; circle: a tree crown (center + radius_m)"
     )
-    ground_points: list[ImagePoint] = Field(
-        description="Where the element touches the GROUND in the photo. polygon: its corners in order (at least 3); "
-        "polyline: points along the base of the wall/hedge, left to right (at least 2); circle: exactly one, the "
-        "base of the trunk. Estimate hidden parts sensibly."
-    )
-    top_y: Optional[float] = Field(
+    points: Optional[list[PlanPoint]] = Field(
         default=None,
-        ge=0,
-        le=1,
-        description="Image row (0 top .. 1 bottom) of the element's top edge, straight above its FIRST ground point. "
-        "Null for flat things (pool, lawn) or if the top is not visible.",
+        description="polygon: its corners in order (at least 3); polyline: points along the wall/hedge (at least 2). "
+        "Omit for circle.",
     )
-    crown_width: Optional[float] = Field(
-        default=None, ge=0, le=1, description="Trees only: canopy width as a fraction of the photo's width"
-    )
-    estimated_height_m: float = Field(ge=0, le=100, description="Rough height in meters, judged from context")
+    center: Optional[PlanPoint] = Field(default=None, description="circle only: the trunk position")
+    radius_m: Optional[float] = Field(default=None, gt=0, le=15, description="circle only: crown radius in meters")
+    thickness_m: Optional[float] = Field(default=None, gt=0, le=20, description="polyline only: width in meters")
+    height_m: float = Field(ge=0, le=60, description="Height in meters (0 for flat things such as a pool)")
     confidence: float = Field(ge=0, le=1)
 
 
-class ReferenceMatch(BaseModel):
-    """The user's own measurement of ONE element in the photo, matched to the detected list."""
+class PlanExtraction(BaseModel):
+    """The whole answer: the plan's elements. No prose."""
 
-    object_index: int = Field(ge=0, description="0-based index into `elements` of the element the user measured")
-    distance_m: Optional[float] = Field(default=None, ge=0, le=200, description="Stated distance from the camera")
-    height_m: Optional[float] = Field(default=None, ge=0, le=100, description="Stated height")
-
-
-class PhotoSceneExtraction(BaseModel):
-    scene_description: str = Field(
-        description="What is actually visible in the photo BEFORE listing elements — facts, not a verdict."
-    )
-    horizon_y: Optional[float] = Field(
-        default=None,
-        ge=0,
-        le=1,
-        description="Image row (0 top .. 1 bottom) of the true horizon line, if it can be judged (where far flat "
-        "ground meets the sky level). Null if it cannot.",
-    )
-    elements: list[SceneElementGuess] = Field(default_factory=list)
-    reference: Optional[ReferenceMatch] = Field(
-        default=None,
-        description="Only when the user supplied a reference note: which detected element it refers to and the "
-        "distance/height they stated, in meters. Null if there is no note or it matches nothing in `elements`.",
-    )
+    elements: list[PlanElement] = Field(default_factory=list)
 
 
 class Source(BaseModel):

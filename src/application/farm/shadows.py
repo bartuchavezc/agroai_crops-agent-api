@@ -107,19 +107,37 @@ class SunMoment:
 class SunMap:
     season: str
     cell_size_m: float
-    cells: list[tuple[float, float, float]]  # x, y, hours of direct sun
+    cells: list[tuple[float, float, float]]  # x, y (cell center), hours of direct sun
     max_hours: float  # the day's length: what a cell in permanent sun would get
     mean_hours: float
     site_area_m2: float
     timeline: list[SunMoment] = field(default_factory=list)
 
 
-def _cell_size(area_m2: float, target_cells: int) -> float:
-    raw = math.sqrt(max(area_m2, 1.0) / target_cells)
-    for nice in (0.5, 1.0, 2.0, 5.0, 10.0):
-        if raw <= nice:
-            return nice
-    return 20.0
+CELL_SIZE_M = 1.0  # the grid the sun hours are counted on: one square meter per cell
+MAX_CELLS = 6000  # a huge area gets coarser cells (2 m, 4 m...) instead of an unbounded computation
+
+
+def _cell_size(area_m2: float, max_cells: int) -> float:
+    cell = CELL_SIZE_M
+    while area_m2 / (cell * cell) > max_cells:
+        cell *= 2
+    return cell
+
+
+Cell = tuple[float, float, float]
+
+
+def cells_inside(cells: list[Cell], polygon: list[tuple[float, float]]) -> list[Cell]:
+    """The cells whose center falls inside `polygon` (e.g. the campo, inside a sun map of the entorno)."""
+    if not cells or len(polygon) < 3:
+        return []
+    shape = Polygon(polygon)
+    shape = shape if shape.is_valid else shapely.make_valid(shape)
+    xs = np.array([c[0] for c in cells])
+    ys = np.array([c[1] for c in cells])
+    mask = shapely.contains_xy(shape, xs, ys)
+    return [c for c, inside in zip(cells, mask, strict=True) if inside]
 
 
 def sun_map(
@@ -127,14 +145,16 @@ def sun_map(
     site_points: list[tuple[float, float]],
     latitude: float,
     season: str,
-    target_cells: int = 1500,
+    max_cells: int = MAX_CELLS,
     step_minutes: int = 15,
+    include_shadows: bool = False,
 ) -> SunMap:
-    """Hours of direct sun for every cell of the terrain on the season's representative day, plus the shadows
-    (every 30 minutes) to draw on the plan."""
+    """Hours of direct sun for every 1 m x 1 m cell of the area on the season's representative day: every
+    `step_minutes` the shadow of each element is cast over the grid, and a cell earns that step's time if its
+    center is not in shadow. `include_shadows` also returns the shadow polygons every 30 minutes."""
     site = Polygon(site_points)
     site = site if site.is_valid else shapely.make_valid(site)
-    cell = _cell_size(site.area, target_cells)
+    cell = _cell_size(site.area, max_cells)
     minx, miny, maxx, maxy = site.bounds
     xs = np.arange(minx + cell / 2, maxx, cell)
     ys = np.arange(miny + cell / 2, maxy, cell)
@@ -158,7 +178,7 @@ def sun_map(
             shaded = np.zeros(len(gx), dtype=bool)
         if sun.altitude_deg >= _MIN_ALTITUDE_DEG:
             sun_hours += np.where(shaded, 0.0, step_hours)
-        if i % every == 0:
+        if include_shadows and i % every == 0:
             visible = shadow.intersection(site.buffer(MAX_SHADOW_M)) if shadow is not None else None
             timeline.append(
                 SunMoment(

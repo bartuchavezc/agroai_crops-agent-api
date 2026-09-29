@@ -3,7 +3,7 @@ import math
 import pytest
 
 from src.application.farm.schemas import LayoutObject
-from src.application.farm.shadows import footprint, shadow_of, sun_map
+from src.application.farm.shadows import cells_inside, footprint, shadow_of, sun_map
 from src.application.farm.solar import solar_positions
 
 
@@ -71,7 +71,9 @@ def test_a_wall_to_the_north_shades_the_terrain_side_that_faces_it_in_winter():
     north = [h for _, y, h in shaded.cells if y > 5]
     south = [h for _, y, h in shaded.cells if y < -5]
     assert sum(north) / len(north) < sum(south) / len(south)  # nearest the wall loses the most sun
-    assert shaded.timeline and any(m.shadows for m in shaded.timeline)
+    assert shaded.timeline == []  # shadows are only returned when asked for
+    with_shadows = sun_map([wall], site, -34.6, "invierno", include_shadows=True)
+    assert with_shadows.timeline and any(m.shadows for m in with_shadows.timeline)
 
 
 def test_the_same_wall_barely_matters_in_summer_when_the_sun_is_high():
@@ -92,4 +94,42 @@ def test_terrain_summary_reports_shade_percentages_and_zones():
     assert summary.full_sun_percent + summary.part_shade_percent + summary.shade_percent == pytest.approx(100, abs=0.2)
     assert "N" in summary.shadiest_zone  # the wall is to the north
     open_summary = _summarize_sun_map(sun_map([], site, -34.6, "verano"), site)
-    assert open_summary.sunniest_zone == "todo el terreno por igual"
+    assert open_summary.sunniest_zone == "toda el área por igual"
+
+
+def test_the_sun_grid_is_one_square_meter_per_cell():
+    site = [(0, 0), (18, 0), (18, 42), (0, 42)]  # the 18 x 42 m entorno
+    result = sun_map([], site, -34.6, "verano")
+    assert result.cell_size_m == 1.0
+    assert len(result.cells) == 18 * 42  # one cell per square meter
+    xs = sorted({x for x, _, _ in result.cells})
+    assert xs[0] == 0.5 and xs[-1] == 17.5  # cell centers, 1 m apart
+    assert all(h == pytest.approx(result.max_hours, abs=0.01) for _, _, h in result.cells)  # no obstacles: full day
+
+
+def test_a_huge_area_gets_coarser_cells_instead_of_an_unbounded_grid():
+    big = [(0, 0), (500, 0), (500, 500), (0, 500)]
+    result = sun_map([], big, -34.6, "verano", max_cells=6000)
+    assert result.cell_size_m > 1 and len(result.cells) <= 6000
+
+
+def test_each_cell_gets_its_own_hours_from_the_shadows_cast_over_the_grid():
+    site = [(0, 0), (20, 0), (20, 20), (0, 20)]
+    wall = _wall(height=6, points=((0, 22), (20, 22)))  # north of the area: in winter its shade reaches the north cells
+    result = sun_map([wall], site, -34.6, "invierno")
+    by_row = {}
+    for _, y, h in result.cells:
+        by_row.setdefault(y, []).append(h)
+    assert len({round(h, 2) for hs in by_row.values() for h in hs}) > 3  # a gradient of hours, not one number
+    assert sum(by_row[19.5]) / 20 < sum(by_row[0.5]) / 20  # the row next to the wall gets less sun than the far one
+
+
+def test_the_campo_average_is_computed_apart_from_the_entornos():
+    entorno = [(0, 0), (20, 0), (20, 20), (0, 20)]
+    wall = _wall(height=6, points=((0, 22), (20, 22)))
+    result = sun_map([wall], entorno, -34.6, "invierno")
+    near_wall = cells_inside(result.cells, [(2, 15), (18, 15), (18, 19), (2, 19)])
+    far_side = cells_inside(result.cells, [(2, 1), (18, 1), (18, 5), (2, 5)])
+    assert len(near_wall) == 16 * 4 and len(far_side) == 16 * 4
+    assert sum(c[2] for c in near_wall) / 64 < sum(c[2] for c in far_side) / 64
+    assert cells_inside(result.cells, [(1, 1)]) == []
