@@ -57,11 +57,13 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def get_field_sun_exposure(field: Optional[str] = None) -> dict:
-        """Direct-sun hours per compass octant (N/NE/E/SE/S/SO/O/NO) for a field, in summer/winter/equinox,
-        computed from real solar astronomy and the field's layout objects (walls, trees...) — not a guess.
-        Use this to reason about
-        what to plant where (sun-loving crops toward the octants with the most hours, shade-tolerant ones
-        toward the least)."""
+        """Direct-sun hours for a field in summer/winter/equinox, computed from real solar astronomy and the
+        field's plan (walls, trees, buildings with real shapes and heights) — not a guess. Two views: `by_season`
+        (hours per compass octant N/NE/E/SE/S/SO/O/NO, an approximation) and, when the field has a terrain shape
+        and shade-casting elements, `terrain`: per season, the mean hours of direct sun, the percent of the
+        terrain in full sun (6+ h), part shade (3-6 h) and shade (<3 h), and where the sunniest and shadiest
+        zones are. Use it to reason about what to plant where (sun-loving crops in the sunniest zone,
+        shade-tolerant ones in the shadiest)."""
         target = await resolve_field(deps, ctx, field)
         result = await deps.farm.sun_exposure(ctx.actor, target.id)
         return compact(result)
@@ -158,11 +160,12 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         layout_objects: Optional[list[dict]] = None,
     ) -> dict:
         """Create a field (plot, garden bed, greenhouse...). Coordinates enable weather forecasts and alerts.
-        length_m/width_m: typed dimensions. layout_objects: things around the plot that cast shade, each
-        {id, type: pared|arbol|estructura|pileta|cantero|otro, label, x_m (meters East+/West- of the field
-        center), y_m (meters North+/South-), height_m, source: manual} — declaring these enables
-        get_field_sun_exposure (real sol/sombra, not a guess). Users normally build this from a photo in
-        the web app; only fill it here if the user states positions explicitly."""
+        length_m/width_m: typed dimensions. layout_objects: the plan of things around the plot that cast
+        shade, in meters from the field center (x East+, y North+), each {id, type: pared|cerco|arbol|
+        estructura|pileta|cantero|terreno|otro, label, height_m, source: manual, kind: polygon|polyline|
+        circle} plus its geometry: points [[x, y], ...] for polygon/polyline (polyline also thickness_m), or
+        x_m/y_m/radius_m for a circle. Users normally draw this in the web app or build it from a photo; only
+        fill it here if the user states positions explicitly."""
         created = await deps.farm.create_field(
             ctx.actor,
             FieldCreate(

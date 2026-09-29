@@ -32,6 +32,7 @@ dependencies = [
     "pyshp>=3.1.6",
     "tifffile>=2026.9.20",
     "pygeomag>=1.1.0",
+    "shapely>=2.1.2",
 ]
 
 [dependency-groups]

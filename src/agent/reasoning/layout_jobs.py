@@ -5,6 +5,7 @@ import asyncio
 import logging
 from uuid import UUID
 
+from src.application.farm.site import site_polygon_m
 from src.shared.domain.actor import Actor
 from src.shared.utils.errors import CropAnalysisError
 
@@ -18,16 +19,14 @@ EXTRACTION_TIMEOUT_SECONDS = 150
 
 async def process_layout_photo(deps: ToolDeps, actor: Actor, field_id: UUID, photo_id: str) -> None:
     """Never raises: there is no caller to return an error to, so every failure ends up on the photo itself."""
-    objects, error = None, None
+    objects, camera_xy, error = None, None, None
     try:
         field = await deps.farm.get_field(actor, field_id)
         photo = next((p for p in field.layout_photos if p.id == photo_id), None)
         if photo is None:
             return  # deleted while queued
-        objects = await asyncio.wait_for(
-            extract_layout_from_photo(
-                deps, actor, photo.image_identifier, photo.camera_bearing_degrees, photo.reference_note
-            ),
+        objects, camera_xy = await asyncio.wait_for(
+            extract_layout_from_photo(deps, actor, photo, site_polygon_m(field)),
             timeout=EXTRACTION_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -38,6 +37,6 @@ async def process_layout_photo(deps: ToolDeps, actor: Actor, field_id: UUID, pho
         logger.exception(f"Layout photo {photo_id} processing failed")
         error = "No se pudo analizar la foto."
     try:
-        await deps.farm.finish_layout_photo(actor, field_id, photo_id, objects, error)
+        await deps.farm.finish_layout_photo(actor, field_id, photo_id, objects, error, camera_xy)
     except Exception:  # noqa: BLE001
         logger.exception(f"Could not record the result of layout photo {photo_id}")

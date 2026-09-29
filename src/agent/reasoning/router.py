@@ -69,6 +69,8 @@ async def add_layout_photo(
     camera_bearing_degrees: float = Form(..., ge=0, le=360),
     bearing_is_magnetic: bool = Form(False, description="True when the bearing came from a phone compass"),
     reference_note: Optional[str] = Form(None, max_length=500),
+    pitch_degrees: Optional[float] = Form(None, ge=-90, le=90, description="Phone tilt at the shot, + = looking up"),
+    camera_height_m: Optional[float] = Form(None, gt=0, le=20, description="Camera height above the ground"),
     actor: Actor = Depends(get_actor),
     deps: ToolDeps = Depends(Provide["agent.tool_deps"]),
 ):
@@ -97,6 +99,8 @@ async def add_layout_photo(
             image_identifier=image_identifier,
             camera_bearing_degrees=round(true_bearing, 1),
             reference_note=(reference_note or "").strip() or None,
+            pitch_degrees=pitch_degrees,
+            camera_height_m=camera_height_m,
             status="processing",
             updated_at=utcnow().isoformat(),
         ),
