@@ -5,7 +5,7 @@ DiagnosisResult matches the `llm_structured_diagnosis` shape the web result page
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Treatment(BaseModel):
@@ -94,10 +94,27 @@ class PlanElement(BaseModel):
         "Omit for circle.",
     )
     center: Optional[PlanPoint] = Field(default=None, description="circle only: the trunk position")
-    radius_m: Optional[float] = Field(default=None, gt=0, le=15, description="circle only: crown radius in meters")
-    thickness_m: Optional[float] = Field(default=None, gt=0, le=20, description="polyline only: width in meters")
-    height_m: float = Field(ge=0, le=60, description="Height in meters (0 for flat things such as a pool)")
-    confidence: float = Field(ge=0, le=1)
+    radius_m: Optional[float] = Field(default=None, description="circle only: crown radius in meters")
+    thickness_m: Optional[float] = Field(default=None, description="polyline only: width in meters")
+    height_m: float = Field(default=0.0, description="Height in meters (0 for flat things such as a pool)")
+    confidence: float = Field(default=0.5, description="0 to 1")
+
+    # No range constraints here: one out-of-range number must not discard the whole plan. The conversion clamps.
+    @field_validator("type", mode="before")
+    @classmethod
+    def _unknown_type(cls, v):
+        allowed = {"pared", "cerco", "arbol", "estructura", "pileta", "cantero", "otro"}
+        return v if v in allowed else "otro"
+
+    @field_validator("height_m", "confidence", mode="before")
+    @classmethod
+    def _null_number(cls, v):
+        return 0.0 if v is None else v
+
+    @field_validator("confidence", mode="after")
+    @classmethod
+    def _clamp_confidence(cls, v):
+        return max(0.0, min(1.0, v))
 
 
 class PlanExtraction(BaseModel):

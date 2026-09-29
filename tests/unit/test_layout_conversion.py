@@ -125,6 +125,10 @@ def test_campo_is_drawn_from_the_fields_own_measures_never_the_entornos():
     assert campo.type == "campo"
     xs, ys = [p[0] for p in campo.points], [p[1] for p in campo.points]
     assert (max(xs) - min(xs), max(ys) - min(ys)) == pytest.approx((5, 8))  # the field's 5 x 8, not 18 x 42
+    # squared up with the photo: with the camera looking east, the 8 m length runs east-west
+    turned = campo_element(field, entorno=None, bearing_deg=90)
+    txs, tys = [p[0] for p in turned.points], [p[1] for p in turned.points]
+    assert (max(txs) - min(txs), max(tys) - min(tys)) == pytest.approx((8, 5))
     assert campo_element(_field(), entorno=None) is None  # no measures -> nothing drawn
     assert campo_element(_field(width_m=5, length_m=8, layout_objects=[campo]), None) is None  # only one campo
 
@@ -149,3 +153,17 @@ def test_magnetic_bearing_is_corrected_with_declination():
 
 def test_rotation_helpers_do_not_drift():
     assert math.isclose(math.hypot(*frame_to_enu((3, 4), (0, 0), 123)), 5)
+
+
+def test_plan_element_tolerates_out_of_range_values():
+    from src.agent.schemas import PlanExtraction
+
+    extraction = PlanExtraction.model_validate_json(
+        '{"elements": [{"label": "Pino", "type": "muro", "kind": "circle", "center": {"x": 1, "y": 5},'
+        ' "radius_m": 0, "height_m": 80, "confidence": 1.4},'
+        ' {"label": "Cerco", "type": "cerco", "kind": "polyline", "points": [{"x": 0, "y": 1}, {"x": 3, "y": 1}],'
+        ' "thickness_m": 0, "height_m": null}]}'
+    )
+    assert extraction.elements[0].type == "otro"
+    assert extraction.elements[0].confidence == 1.0
+    assert extraction.elements[1].height_m == 0.0
