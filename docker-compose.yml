@@ -55,8 +55,10 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agroai}:${POSTGRES_PASSWORD:-agroai}@db:5432/${POSTGRES_DB:-agroai}
       SMN_GRID_CACHE_DIR: /data/smn_cache
+      BASE_DATA_PATH: /data/uploads
     volumes:
       - smn_cache:/data/smn_cache
+      - uploads:/data/uploads
     depends_on:
       migrate:
         condition: service_completed_successfully
