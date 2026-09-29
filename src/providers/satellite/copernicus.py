@@ -191,16 +191,32 @@ class CopernicusAdapter:
                 return stats
         return stats_for(intervals[-1])
 
-    async def render_map(self, latitude: float, longitude: float, size_px: int = 512) -> Optional[bytes]:
+    async def render_map(
+        self, latitude: float, longitude: float, time_from: str, time_to: str, size_px: int = 512
+    ) -> Optional[bytes]:
         """True-color PNG for the chat mini-map / field satellite view. Only called on demand (see
-        application/satellite/service.py), never as part of a batch, to keep processing-credit use low."""
+        application/satellite/service.py), never as part of a batch, to keep processing-credit use low.
+
+        time_from/time_to must be a wide-enough window (see ZoneSatelliteService, currently 30 days):
+        without an explicit timeRange the Process API only searches a narrow default window, and when
+        there's no clear Sentinel-2 pass in it, it silently renders an all-black no-data image instead of
+        erroring — this bit us in testing with the default (no timeRange at all)."""
         token = await self._access_token()
         if not token:
             return None
         body = {
             "input": {
                 "bounds": {"bbox": self._bbox(latitude, longitude), "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"}},
-                "data": [{"type": _COLLECTION, "dataFilter": {"maxCloudCoverage": 40, "mosaickingOrder": "leastCC"}}],
+                "data": [
+                    {
+                        "type": _COLLECTION,
+                        "dataFilter": {
+                            "timeRange": {"from": f"{time_from}T00:00:00Z", "to": f"{time_to}T23:59:59Z"},
+                            "maxCloudCoverage": 40,
+                            "mosaickingOrder": "leastCC",
+                        },
+                    }
+                ],
             },
             "output": {
                 "width": size_px,

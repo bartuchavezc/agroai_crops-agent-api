@@ -26,6 +26,18 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_USER_ID = UUID(int=0)  # batch jobs act on behalf of no real user; user_id is inert for these reads
 
+# 30 days, not ~10: real testing against Copernicus showed consecutive Sentinel-2 passes can be entirely
+# cloud-masked for a given point, so a short window risks "no data" (stats) or a black no-data image
+# (render) even when a clear, still-recent pass exists a bit further back. Shared by check_field and
+# render_map_image so both queries always look at the same period.
+_LOOKBACK_DAYS = 30
+
+
+def _lookback_window() -> tuple[str, str]:
+    end = utcnow().date()
+    start = end - timedelta(days=_LOOKBACK_DAYS)
+    return start.isoformat(), end.isoformat()
+
 
 def _baseline_ndvi(recent: list[ZoneSatelliteReading]) -> Optional[float]:
     values = [r.ndvi_mean for r in recent if r.ndvi_mean is not None]
@@ -68,12 +80,8 @@ class ZoneSatelliteService:
                 alerts=[],
             )
 
-        end = utcnow().date()
-        # 30 days, not ~10: real testing against Copernicus showed consecutive Sentinel-2 passes can be
-        # entirely cloud-masked for a given point, so a short window risks "no data" even when a clear,
-        # still-recent pass exists a bit further back.
-        start = end - timedelta(days=30)
-        stats = await self.copernicus.ndvi_stats(field.latitude, field.longitude, start.isoformat(), end.isoformat())
+        start, end = _lookback_window()
+        stats = await self.copernicus.ndvi_stats(field.latitude, field.longitude, start, end)
         if stats is None:
             return ZoneSatelliteStatus(
                 field_id=field.id,
@@ -112,7 +120,7 @@ class ZoneSatelliteService:
                 rule_id=match.rule_id,
                 recommendations=match.recommendations,
                 metadata=rule_ctx,
-                dedupe_key=f"{field.id}:{match.rule_id}:{end.isoformat()}",
+                dedupe_key=f"{field.id}:{match.rule_id}:{end}",
             )
         assessment = " ".join(m.message for m in matches) or (
             "Sin señales de estrés generalizado en la zona (NDVI/NDWI en rango habitual)."
@@ -134,7 +142,8 @@ class ZoneSatelliteService:
             raise InvalidInputError(f"Field '{field.name}' has no coordinates.")
         if not self.copernicus.configured:
             return None
-        png = await self.copernicus.render_map(field.latitude, field.longitude)
+        start, end = _lookback_window()
+        png = await self.copernicus.render_map(field.latitude, field.longitude, start, end)
         if not png:
             return None
         return await self.storage.save_image(actor, f"satellite-{field.id}.png", png, "image/png")
