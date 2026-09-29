@@ -165,6 +165,11 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 obstacles=[Obstacle(**o) for o in (obstacles or [])],
             ),
         )
+        if created.latitude is not None:
+            try:
+                await deps.satellite.check_field(ctx.actor, created.id)
+            except Exception:
+                pass  # best-effort context; a field is still successfully created without it
         return {"created_field": compact(created)}
 
     @tool

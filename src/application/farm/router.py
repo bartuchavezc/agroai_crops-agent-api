@@ -9,6 +9,7 @@ from uuid import UUID
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from src.application.satellite.service import ZoneSatelliteService
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 from src.shared.utils.routing import route_with_and_without_slash as _both
@@ -35,6 +36,7 @@ from .service import FarmService
 router = APIRouter(prefix="/farm-management", tags=["Farm Management"])
 
 FARM = Provide["application.farm_service"]
+SATELLITE = Provide["application.satellite_service"]
 
 
 # ---------- overview ----------
@@ -59,8 +61,15 @@ async def create_field(
     body: FieldCreate,
     actor: Actor = Depends(get_actor),
     farm: FarmService = Depends(FARM),
+    satellite: ZoneSatelliteService = Depends(SATELLITE),
 ):
-    return await farm.create_field(actor, body)
+    created = await farm.create_field(actor, body)
+    if created.latitude is not None:
+        try:
+            await satellite.check_field(actor, created.id)
+        except Exception:
+            pass  # best-effort context; the field is still successfully created without it
+    return created
 
 
 @router.get("/fields/{field_id}", response_model=FieldRead, summary="Get Field")
