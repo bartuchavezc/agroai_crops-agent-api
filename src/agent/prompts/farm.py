@@ -13,4 +13,11 @@ Reglas:
 - `confidence` (0-1) baja cuando el objeto está parcialmente tapado, muy lejos o ambiguo.
 - Un objeto por cosa distinta; no dupliques. Lista vacía si no se ve nada relevante.
 - Etiquetas (`label`) cortas y en español, p. ej. "Pared del vecino", "Ligustro", "Pileta".
+
+- Si el mensaje del usuario incluye una NOTA DE REFERENCIA (ej: "el poste está a 5 m y mide 3 m"), es una
+  medida real que dio el usuario de UN objeto de la foto. Completá `reference`: `object_index` es la posición
+  (desde 0) en tu lista `objects` del objeto al que se refiere (si no está en la lista, agregalo a `objects`),
+  y `distance_m`/`height_m` son exactamente los números que dijo (convertí unidades a metros; omití el que no
+  dijo). Si la nota no se puede asociar a nada de la foto, dejá `reference` en null. Nunca inventes una
+  referencia si no hay nota.
 """

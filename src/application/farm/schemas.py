@@ -44,6 +44,15 @@ class LayoutObject(BaseModel):
     confidence: Optional[float] = PField(default=None, ge=0, le=1)
 
 
+class LayoutPhoto(BaseModel):
+    """A reference photo used to build the layout, kept so the plan can show where it was taken from."""
+
+    id: str
+    image_identifier: str
+    camera_bearing_degrees: float = PField(ge=0, le=360, description="TRUE-north direction the camera faced")
+    reference_note: Optional[str] = PField(default=None, description="The user's own distance/height note")
+
+
 def _check_boundary(v: Optional[list[tuple[float, float]]]) -> Optional[list[tuple[float, float]]]:
     if v is not None and 0 < len(v) < 3:
         raise ValueError("A boundary needs at least 3 points to form a shape.")
@@ -64,6 +73,7 @@ class FieldBase(BaseModel):
     length_m: Optional[float] = PField(default=None, ge=0)
     width_m: Optional[float] = PField(default=None, ge=0)
     layout_objects: list[LayoutObject] = PField(default_factory=list)
+    layout_photos: list[LayoutPhoto] = PField(default_factory=list)
 
     _check_boundary = field_validator("boundary")(_check_boundary)
 
@@ -84,6 +94,7 @@ class FieldUpdate(BaseModel):
     length_m: Optional[float] = PField(default=None, ge=0)
     width_m: Optional[float] = PField(default=None, ge=0)
     layout_objects: Optional[list[LayoutObject]] = None
+    layout_photos: Optional[list[LayoutPhoto]] = None
 
     _check_boundary = field_validator("boundary")(_check_boundary)
 

@@ -5,6 +5,7 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
+from src.application.farm.declination import magnetic_to_true_bearing
 from src.application.storage.router import MAX_IMAGE_SIZE_BYTES, validate_image_size, validate_image_type
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
@@ -53,13 +54,18 @@ async def harvest_verdict(
     "/fields/layout/extract",
     summary="Extract sun/shade layout objects (walls, trees...) from an eye-level photo",
     description="Not tied to a field or a diagnosis report: the photo is stored (so the UI can show it as a "
-    "reference thumbnail) and the guessed objects are returned; the client merges them into the field's "
+    "reference thumbnail) and the guessed objects are returned (bearing corrected from magnetic to true north when "
+    "flagged, and calibrated by the optional free-text reference_note); the client merges them into the field's "
     "layout and saves with the normal PUT /fields/{id}.",
 )
 @inject
 async def extract_layout(
     image_file: UploadFile = File(..., description="Photo of the surroundings (JPEG, PNG or WEBP)."),
     camera_bearing_degrees: float = Form(..., ge=0, le=360),
+    bearing_is_magnetic: bool = Form(False, description="True when the bearing came from a phone compass"),
+    latitude: Optional[float] = Form(None, ge=-90, le=90),
+    longitude: Optional[float] = Form(None, ge=-180, le=180),
+    reference_note: Optional[str] = Form(None, max_length=500),
     actor: Actor = Depends(get_actor),
     deps: ToolDeps = Depends(Provide["agent.tool_deps"]),
 ):
@@ -74,5 +80,10 @@ async def extract_layout(
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=e.message) from None
 
     image_identifier = await deps.storage.save_image(actor, image_file.filename, image_data, image_file.content_type)
-    objects = await extract_layout_from_photo(deps, actor, image_identifier, camera_bearing_degrees)
-    return {"image_identifier": image_identifier, "objects": objects}
+    true_bearing = (
+        magnetic_to_true_bearing(camera_bearing_degrees, latitude, longitude)
+        if bearing_is_magnetic
+        else camera_bearing_degrees
+    )
+    objects = await extract_layout_from_photo(deps, actor, image_identifier, true_bearing, reference_note)
+    return {"image_identifier": image_identifier, "camera_bearing_degrees": round(true_bearing, 1), "objects": objects}

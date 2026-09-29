@@ -57,3 +57,38 @@ def test_octant_from_xy_follows_compass_axes(x, y, octant):
 
 def test_octant_wraps_around_north():
     assert _octant_from_xy(-0.5, 5) == "N"  # just west of due north still rounds to N
+
+
+def test_reference_note_calibrates_distance_and_height_of_the_whole_scene():
+    from src.agent.schemas import PhotoLayoutExtraction, ReferenceMatch
+    from src.application.farm.layout_conversion import layout_objects_from_extraction
+
+    pole = _guess(depth="medio", type_="estructura", height=2.0)  # assumed 8 m away, ~2 m tall
+    tree = _guess(depth="fondo", height=6.0)  # assumed 15 m away
+    extraction = PhotoLayoutExtraction(
+        scene_description="patio",
+        objects=[pole, tree],
+        reference=ReferenceMatch(object_index=0, distance_m=4.0, height_m=3.0),
+    )
+    pole_obj, tree_obj = layout_objects_from_extraction(extraction, camera_bearing_degrees=0)
+    assert (pole_obj.y_m, pole_obj.height_m) == (pytest.approx(4.0), 3.0)  # the anchor gets the exact numbers
+    assert tree_obj.y_m == pytest.approx(15.0 * 0.5, abs=0.01)  # distances halve (4 m stated vs 8 m assumed)
+    assert tree_obj.height_m == pytest.approx(9.0)  # heights x1.5 (3 m stated vs 2 m guessed)
+
+
+def test_missing_or_invalid_reference_leaves_the_default_scale():
+    from src.agent.schemas import PhotoLayoutExtraction, ReferenceMatch
+    from src.application.farm.layout_conversion import layout_objects_from_extraction
+
+    bad = PhotoLayoutExtraction(
+        scene_description="x", objects=[_guess()], reference=ReferenceMatch(object_index=5, distance_m=1.0)
+    )
+    assert layout_objects_from_extraction(bad, 0)[0].y_m == pytest.approx(DEPTH_METERS["medio"])
+
+
+def test_magnetic_bearing_is_corrected_with_declination():
+    from src.application.farm.declination import magnetic_to_true_bearing
+
+    # Buenos Aires: true north is ~10 degrees west of magnetic, so a magnetic 90 reads ~80 true.
+    assert magnetic_to_true_bearing(90, -34.6, -58.4) == pytest.approx(80, abs=3)
+    assert magnetic_to_true_bearing(90, None, None) == 90

@@ -20,6 +20,7 @@ def upgrade() -> None:
     # Old obstacles were compass-octant rows with no position; there is no faithful way to turn them into
     # x/y meters, so they are dropped (pre-launch, a handful of test fields) rather than migrated.
     op.add_column('fields', sa.Column('layout_objects', postgresql.JSONB(astext_type=sa.Text()), server_default='[]', nullable=False))
+    op.add_column('fields', sa.Column('layout_photos', postgresql.JSONB(astext_type=sa.Text()), server_default='[]', nullable=False))
     op.drop_column('fields', 'obstacles')
     op.drop_column('fields', 'orientation_degrees')
 
@@ -27,4 +28,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.add_column('fields', sa.Column('orientation_degrees', sa.Float(), nullable=True))
     op.add_column('fields', sa.Column('obstacles', postgresql.JSONB(astext_type=sa.Text()), server_default='[]', nullable=False))
+    op.drop_column('fields', 'layout_photos')
     op.drop_column('fields', 'layout_objects')
