@@ -71,36 +71,64 @@ class SatelliteImageAnalysis(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
-class LayoutObjectGuess(BaseModel):
+class ImagePoint(BaseModel):
+    x: float = Field(ge=0, le=1, description="0 = left edge of the photo, 1 = right edge")
+    y: float = Field(ge=0, le=1, description="0 = top edge of the photo, 1 = bottom edge")
+
+
+class SceneElementGuess(BaseModel):
+    """One thing around the plot, described in IMAGE coordinates only — meters are computed from the geometry
+    afterwards (a photo gives no reliable metric depth, so the model is never asked for distances)."""
+
     label: str
-    type: Literal["pared", "arbol", "estructura", "pileta", "cantero", "otro"]
-    horizontal_position: Literal["izquierda", "centro-izquierda", "centro", "centro-derecha", "derecha"] = Field(
-        description="Where it sits across the frame of the photo, left to right"
+    type: Literal["pared", "cerco", "arbol", "estructura", "pileta", "cantero", "otro"]
+    kind: Literal["polygon", "polyline", "circle"] = Field(
+        description="polygon: closed footprint (pool, planter, building); polyline: a wall or hedge, traced along "
+        "its base; circle: a tree, a single point at the base of its trunk"
     )
-    depth_position: Literal["primer_plano", "medio", "fondo"] = Field(
-        description="How far from the camera it looks: close, middle or far"
+    ground_points: list[ImagePoint] = Field(
+        description="Where the element touches the GROUND in the photo. polygon: its corners in order (at least 3); "
+        "polyline: points along the base of the wall/hedge, left to right (at least 2); circle: exactly one, the "
+        "base of the trunk. Estimate hidden parts sensibly."
+    )
+    top_y: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Image row (0 top .. 1 bottom) of the element's top edge, straight above its FIRST ground point. "
+        "Null for flat things (pool, lawn) or if the top is not visible.",
+    )
+    crown_width: Optional[float] = Field(
+        default=None, ge=0, le=1, description="Trees only: canopy width as a fraction of the photo's width"
     )
     estimated_height_m: float = Field(ge=0, le=100, description="Rough height in meters, judged from context")
     confidence: float = Field(ge=0, le=1)
 
 
 class ReferenceMatch(BaseModel):
-    """The user's own measurement of ONE object in the photo, matched to the detected list."""
+    """The user's own measurement of ONE element in the photo, matched to the detected list."""
 
-    object_index: int = Field(ge=0, description="0-based index into `objects` of the object the user measured")
+    object_index: int = Field(ge=0, description="0-based index into `elements` of the element the user measured")
     distance_m: Optional[float] = Field(default=None, ge=0, le=200, description="Stated distance from the camera")
     height_m: Optional[float] = Field(default=None, ge=0, le=100, description="Stated height")
 
 
-class PhotoLayoutExtraction(BaseModel):
+class PhotoSceneExtraction(BaseModel):
     scene_description: str = Field(
-        description="What is actually visible in the photo BEFORE listing objects — facts, not a verdict."
+        description="What is actually visible in the photo BEFORE listing elements — facts, not a verdict."
     )
-    objects: list[LayoutObjectGuess] = Field(default_factory=list)
+    horizon_y: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Image row (0 top .. 1 bottom) of the true horizon line, if it can be judged (where far flat "
+        "ground meets the sky level). Null if it cannot.",
+    )
+    elements: list[SceneElementGuess] = Field(default_factory=list)
     reference: Optional[ReferenceMatch] = Field(
         default=None,
-        description="Only when the user supplied a reference note: which detected object it refers to and the "
-        "distance/height they stated, in meters. Null if there is no note or it matches nothing in `objects`.",
+        description="Only when the user supplied a reference note: which detected element it refers to and the "
+        "distance/height they stated, in meters. Null if there is no note or it matches nothing in `elements`.",
     )
 
 

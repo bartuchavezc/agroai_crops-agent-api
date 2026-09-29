@@ -145,7 +145,13 @@ class FarmService:
         return photo
 
     async def finish_layout_photo(
-        self, actor: Actor, field_id: UUID, photo_id: str, objects: Optional[list[dict]], error: Optional[str]
+        self,
+        actor: Actor,
+        field_id: UUID,
+        photo_id: str,
+        objects: Optional[list[dict]],
+        error: Optional[str],
+        camera_xy: Optional[tuple[float, float]] = None,
     ) -> None:
         """Background job result: merge detected objects into the layout and mark the photo done, or mark it
         failed. Re-reads the field right before writing, and skips silently if the photo was deleted or
@@ -156,6 +162,8 @@ class FarmService:
         if target is None or target["status"] != "processing":
             return
         target.update(status="failed" if error else "done", error=error, updated_at=utcnow().isoformat())
+        if camera_xy is not None and not error:
+            target.update(camera_x_m=camera_xy[0], camera_y_m=camera_xy[1])
         values: dict = {"layout_photos": photos}
         if not error and objects:
             values["layout_objects"] = [o.model_dump() for o in field.layout_objects] + objects
