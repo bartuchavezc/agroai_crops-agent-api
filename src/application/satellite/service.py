@@ -24,8 +24,6 @@ from .schemas import ZoneSatelliteReadingRead, ZoneSatelliteStatus
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_USER_ID = UUID(int=0)  # batch jobs act on behalf of no real user; user_id is inert for these reads
-
 # 30 days, not ~10: real testing against Copernicus showed consecutive Sentinel-2 passes can be entirely
 # cloud-masked for a given point, so a short window risks "no data" (stats) or a black no-data image
 # (render) even when a clear, still-recent pass exists a bit further back. Shared by check_field and
@@ -167,12 +165,3 @@ class ZoneSatelliteService:
         """Passthrough to StorageService, kept here so callers outside the application layer (agent tools)
         don't need StorageService wired in just for this one read."""
         return await self.storage.get_image_for_model(actor, image_identifier, max_side)
-
-    async def check_after_storm(self, account_id: UUID, field) -> None:
-        """Best-effort proactive check for the daily batch (src/batch.py), called only when a heavy-rain
-        rule already fired for this field — not a blanket daily pull for every field."""
-        try:
-            actor = Actor(user_id=_SYSTEM_USER_ID, account_id=account_id, role="system", via="system")
-            await self.check_field(actor, field.id)
-        except Exception:
-            logger.exception(f"Post-storm satellite check failed for field {field.id}")
