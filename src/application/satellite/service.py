@@ -29,7 +29,7 @@ _SYSTEM_USER_ID = UUID(int=0)  # batch jobs act on behalf of no real user; user_
 # 30 days, not ~10: real testing against Copernicus showed consecutive Sentinel-2 passes can be entirely
 # cloud-masked for a given point, so a short window risks "no data" (stats) or a black no-data image
 # (render) even when a clear, still-recent pass exists a bit further back. Shared by check_field and
-# render_map_image so both queries always look at the same period.
+# get_or_render_image so both queries always look at the same period.
 _LOOKBACK_DAYS = 30
 
 
@@ -134,19 +134,39 @@ class ZoneSatelliteService:
             alerts=[m.message for m in matches],
         )
 
-    async def render_map_image(self, actor: Actor, field_id: UUID) -> Optional[str]:
-        """Renders and stores a small true-color PNG of the field's zone; returns its image_identifier, or
-        None if Copernicus isn't configured or the call fails (caller decides how to degrade)."""
+    async def get_or_render_image(self, actor: Actor, field_id: UUID, force: bool = False) -> Optional[str]:
+        """The field's latest saved NDVI map; renders and persists a new one only if none exists yet (or
+        `force=True` for an explicit "Regenerar imagen"). Every successful render is saved as its own
+        zone_satellite_readings row (image_identifier set, ndvi/ndwi left null — those come from
+        check_field's separate Statistical API call), so "the latest image" survives across requests
+        instead of being regenerated — and re-billed a processing credit — on every page view."""
         field = await self.farm.get_field(actor, field_id)
         if field.latitude is None or field.longitude is None:
             raise InvalidInputError(f"Field '{field.name}' has no coordinates.")
+        if not force:
+            existing = await self.repo.latest_image(actor.account_id, field_id)
+            if existing:
+                return existing
         if not self.copernicus.configured:
             return None
         start, end = _lookback_window()
         png = await self.copernicus.render_map(field.latitude, field.longitude, start, end)
         if not png:
             return None
-        return await self.storage.save_image(actor, f"satellite-{field.id}.png", png, "image/png")
+        image_identifier = await self.storage.save_image(actor, f"satellite-{field.id}.png", png, "image/png")
+        await self.repo.create(
+            ZoneSatelliteReading(
+                account_id=actor.account_id, field_id=field.id, captured_at=utcnow(), image_identifier=image_identifier
+            )
+        )
+        return image_identifier
+
+    async def image_bytes_for_model(
+        self, actor: Actor, image_identifier: str, max_side: int = 1024
+    ) -> tuple[bytes, str]:
+        """Passthrough to StorageService, kept here so callers outside the application layer (agent tools)
+        don't need StorageService wired in just for this one read."""
+        return await self.storage.get_image_for_model(actor, image_identifier, max_side)
 
     async def check_after_storm(self, account_id: UUID, field) -> None:
         """Best-effort proactive check for the daily batch (src/batch.py), called only when a heavy-rain

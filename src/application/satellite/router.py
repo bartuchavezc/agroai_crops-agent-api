@@ -22,12 +22,23 @@ async def field_satellite_status(
     return await satellite.check_field(actor, field_id)
 
 
-@router.post("/fields/{field_id}/render-map", summary="Render Zone Satellite Map")
+@router.get("/fields/{field_id}/image", summary="Latest Zone Satellite Image (cached, renders one if none exists)")
+@inject
+async def field_satellite_image(
+    field_id: UUID, actor: Actor = Depends(get_actor), satellite: ZoneSatelliteService = Depends(SATELLITE)
+):
+    image_identifier = await satellite.get_or_render_image(actor, field_id)
+    if not image_identifier:
+        return {"image_identifier": None, "message": "Satellite imagery unavailable right now."}
+    return {"image_identifier": image_identifier}
+
+
+@router.post("/fields/{field_id}/render-map", summary="Force-Regenerate Zone Satellite Map")
 @inject
 async def render_field_map(
     field_id: UUID, actor: Actor = Depends(get_actor), satellite: ZoneSatelliteService = Depends(SATELLITE)
 ):
-    image_identifier = await satellite.render_map_image(actor, field_id)
+    image_identifier = await satellite.get_or_render_image(actor, field_id, force=True)
     if not image_identifier:
         return {"image_identifier": None, "message": "Satellite imagery unavailable right now."}
     return {"image_identifier": image_identifier}

@@ -61,6 +61,16 @@ class HarvestVerdictResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class SatelliteImageAnalysis(BaseModel):
+    visual_pattern: str = Field(
+        description="What's actually visible in the color pattern (distribution, uniformity, patches) "
+        "BEFORE interpreting it — facts, not a verdict."
+    )
+    zone_assessment: str = Field(description="What that pattern implies for zone health, justified by visual_pattern")
+    notable_areas: list[str] = Field(default_factory=list, description="Specific things worth flagging, if any")
+    confidence: float = Field(ge=0, le=1)
+
+
 class Source(BaseModel):
     title: Optional[str] = None
     uri: str

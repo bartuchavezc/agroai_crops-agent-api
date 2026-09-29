@@ -29,6 +29,23 @@ class ZoneSatelliteRepository:
                 )
             ).scalar_one_or_none()
 
+    async def latest_image(self, account_id: UUID, field_id: UUID) -> Optional[str]:
+        """The most recent reading that actually has a saved image — not necessarily the most recent
+        reading overall, since a stats-only check_field() row has none."""
+        async with self.session_factory() as session:
+            return (
+                await session.execute(
+                    select(ZoneSatelliteReading.image_identifier)
+                    .where(
+                        ZoneSatelliteReading.account_id == account_id,
+                        ZoneSatelliteReading.field_id == field_id,
+                        ZoneSatelliteReading.image_identifier.is_not(None),
+                    )
+                    .order_by(ZoneSatelliteReading.captured_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
     async def recent(self, account_id: UUID, field_id: UUID, limit: int = 10) -> Sequence[ZoneSatelliteReading]:
         async with self.session_factory() as session:
             return (
