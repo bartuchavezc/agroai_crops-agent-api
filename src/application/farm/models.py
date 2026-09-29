@@ -60,13 +60,14 @@ class Field(Base):
     city = Column(String(255))
     latitude = Column(Float)
     longitude = Column(Float)
+    boundary = Column(JSONB)  # list[[lat, lon], ...] — the field's own drawn boundary, not the ~500m zone
     description = Column(Text)
     soil_type = Column(String(100))
     area_m2 = Column(Float)
-    orientation_degrees = Column(Float)
     length_m = Column(Float)
     width_m = Column(Float)
-    obstacles = Column(JSONB, nullable=False, default=list, server_default="[]")
+    layout_objects = Column(JSONB, nullable=False, default=list, server_default="[]")
+    layout_photos = Column(JSONB, nullable=False, default=list, server_default="[]")
     soil_context = Column(JSONB)  # cached INTA soil lookup (src/application/soil_data); None until computed
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

@@ -4,7 +4,7 @@ tile — low volume, so a plain (non-hypertable) table with an index on (field_i
 """
 import uuid
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from src.shared.database import Base
@@ -23,6 +23,7 @@ class ZoneSatelliteReading(Base):
     ndvi_min = Column(Float)
     ndvi_max = Column(Float)
     ndwi_mean = Column(Float)
+    pixel_count = Column(Integer)  # only set when the reading was scoped to the field's drawn boundary
     source = Column(String(20), nullable=False, default="sentinel2")
     image_identifier = Column(String(255))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)

@@ -31,6 +31,7 @@ dependencies = [
     "s3fs>=2025.5",
     "pyshp>=3.1.6",
     "tifffile>=2026.9.20",
+    "pygeomag>=1.1.0",
 ]
 
 [dependency-groups]

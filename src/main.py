@@ -14,6 +14,7 @@ from sqlalchemy import text
 from src.agent.conversations.router import router as chat_router
 from src.agent.memory.router import router as memory_router
 from src.agent.providers.router import router as provider_credentials_router
+from src.agent.reasoning.router import layout_router
 from src.agent.reasoning.router import router as analyze_router
 from src.application.alerts.router import router as alerts_router
 from src.application.farm.router import router as farm_router
@@ -37,6 +38,7 @@ API_PREFIX = "/api/v1"
 ROUTERS = [
     auth_router,
     provider_credentials_router,
+    layout_router,  # before farm_router: /fields/layout/extract must not be shadowed by /fields/{field_id}
     farm_router,
     reports_router,
     alerts_router,

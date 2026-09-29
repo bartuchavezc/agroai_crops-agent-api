@@ -9,7 +9,7 @@ from src.application.farm.schemas import (
     FieldCreate,
     FieldEventCreate,
     FieldUpdate,
-    Obstacle,
+    LayoutObject,
 )
 from src.shared.domain.base import utcnow
 from src.shared.utils.errors import InvalidInputError
@@ -58,7 +58,8 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     @tool
     async def get_field_sun_exposure(field: Optional[str] = None) -> dict:
         """Direct-sun hours per compass octant (N/NE/E/SE/S/SO/O/NO) for a field, in summer/winter/equinox,
-        computed from real solar astronomy and declared obstacles — not a guess. Use this to reason about
+        computed from real solar astronomy and the field's layout objects (walls, trees...) — not a guess.
+        Use this to reason about
         what to plant where (sun-loving crops toward the octants with the most hours, shade-tolerant ones
         toward the least)."""
         target = await resolve_field(deps, ctx, field)
@@ -152,15 +153,16 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         area_m2: Optional[float] = None,
         soil_type: Optional[str] = None,
         description: Optional[str] = None,
-        orientation_degrees: Optional[float] = None,
         length_m: Optional[float] = None,
         width_m: Optional[float] = None,
-        obstacles: Optional[list[dict]] = None,
+        layout_objects: Optional[list[dict]] = None,
     ) -> dict:
         """Create a field (plot, garden bed, greenhouse...). Coordinates enable weather forecasts and alerts.
-        orientation_degrees: compass bearing the long side faces (0-360, 0=N). length_m/width_m: typed
-        dimensions. obstacles: list of {type: pared|arbol|estructura, height_m, direction: N|NE|E|SE|S|SO|O|NO}
-        — declaring these enables get_field_sun_exposure (real sol/sombra, not a guess)."""
+        length_m/width_m: typed dimensions. layout_objects: things around the plot that cast shade, each
+        {id, type: pared|arbol|estructura|pileta|cantero|otro, label, x_m (meters East+/West- of the field
+        center), y_m (meters North+/South-), height_m, source: manual} — declaring these enables
+        get_field_sun_exposure (real sol/sombra, not a guess). Users normally build this from a photo in
+        the web app; only fill it here if the user states positions explicitly."""
         created = await deps.farm.create_field(
             ctx.actor,
             FieldCreate(
@@ -171,10 +173,9 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 area_m2=area_m2,
                 soil_type=soil_type,
                 description=description,
-                orientation_degrees=orientation_degrees,
                 length_m=length_m,
                 width_m=width_m,
-                obstacles=[Obstacle(**o) for o in (obstacles or [])],
+                layout_objects=[LayoutObject(**o) for o in (layout_objects or [])],
             ),
         )
         if created.latitude is not None:
@@ -194,13 +195,13 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         area_m2: Optional[float] = None,
         soil_type: Optional[str] = None,
         description: Optional[str] = None,
-        orientation_degrees: Optional[float] = None,
         length_m: Optional[float] = None,
         width_m: Optional[float] = None,
-        obstacles: Optional[list[dict]] = None,
+        layout_objects: Optional[list[dict]] = None,
     ) -> dict:
-        """Update a field's data (any subset of fields). obstacles, if given, REPLACES the full list — pass
-        the complete set including any you want to keep, not just the new one."""
+        """Update a field's data (any subset of fields). layout_objects (same shape as in create_field), if
+        given, REPLACES the full list — pass the complete set including any you want to keep, not just the
+        new one."""
         target = await resolve_field(deps, ctx, field)
         values = {
             "name": name,
@@ -210,10 +211,9 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             "area_m2": area_m2,
             "soil_type": soil_type,
             "description": description,
-            "orientation_degrees": orientation_degrees,
             "length_m": length_m,
             "width_m": width_m,
-            "obstacles": [Obstacle(**o) for o in obstacles] if obstacles is not None else None,
+            "layout_objects": [LayoutObject(**o) for o in layout_objects] if layout_objects is not None else None,
         }
         update = FieldUpdate(**{k: v for k, v in values.items() if v is not None})
         updated = await deps.farm.update_field(ctx.actor, target.id, update)

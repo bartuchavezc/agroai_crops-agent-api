@@ -71,6 +71,39 @@ class SatelliteImageAnalysis(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class LayoutObjectGuess(BaseModel):
+    label: str
+    type: Literal["pared", "arbol", "estructura", "pileta", "cantero", "otro"]
+    horizontal_position: Literal["izquierda", "centro-izquierda", "centro", "centro-derecha", "derecha"] = Field(
+        description="Where it sits across the frame of the photo, left to right"
+    )
+    depth_position: Literal["primer_plano", "medio", "fondo"] = Field(
+        description="How far from the camera it looks: close, middle or far"
+    )
+    estimated_height_m: float = Field(ge=0, le=100, description="Rough height in meters, judged from context")
+    confidence: float = Field(ge=0, le=1)
+
+
+class ReferenceMatch(BaseModel):
+    """The user's own measurement of ONE object in the photo, matched to the detected list."""
+
+    object_index: int = Field(ge=0, description="0-based index into `objects` of the object the user measured")
+    distance_m: Optional[float] = Field(default=None, ge=0, le=200, description="Stated distance from the camera")
+    height_m: Optional[float] = Field(default=None, ge=0, le=100, description="Stated height")
+
+
+class PhotoLayoutExtraction(BaseModel):
+    scene_description: str = Field(
+        description="What is actually visible in the photo BEFORE listing objects — facts, not a verdict."
+    )
+    objects: list[LayoutObjectGuess] = Field(default_factory=list)
+    reference: Optional[ReferenceMatch] = Field(
+        default=None,
+        description="Only when the user supplied a reference note: which detected object it refers to and the "
+        "distance/height they stated, in meters. Null if there is no note or it matches nothing in `objects`.",
+    )
+
+
 class Source(BaseModel):
     title: Optional[str] = None
     uri: str

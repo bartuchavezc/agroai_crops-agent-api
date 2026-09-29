@@ -3,6 +3,7 @@ Farm service: the single write path for fields, crop catalog, crop cycles and ev
 Used by both the HTTP routers and the agent tools.
 """
 import logging
+import math
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -34,10 +35,18 @@ from .schemas import (
     SunExposureRead,
 )
 from .repository import FarmRepository
+from .solar import OCTANTS
 from .solar import Obstacle as SolarObstacle
 from .solar import compute_sun_exposure
 
 logger = logging.getLogger(__name__)
+
+
+def _octant_from_xy(x_m: float, y_m: float) -> str:
+    """Compass octant of a point on the top-down plan (x=East, y=North). The solar model only knows 8
+    directions with no distance, so exact positions are rounded to the nearest one on purpose."""
+    bearing = math.degrees(math.atan2(x_m, y_m)) % 360  # 0=N, clockwise
+    return OCTANTS[round(bearing / 45) % 8]
 
 
 def _require_manager(actor: Actor) -> None:
@@ -294,7 +303,10 @@ class FarmService:
         field = await self.get_field(actor, field_id)
         if field.latitude is None:
             raise InvalidInputError(f"Field '{field.name}' has no coordinates; sun exposure needs a latitude.")
-        obstacles = [SolarObstacle(type=o.type, height_m=o.height_m, direction=o.direction) for o in field.obstacles]
+        obstacles = [
+            SolarObstacle(type=o.type, height_m=o.height_m, direction=_octant_from_xy(o.x_m, o.y_m))
+            for o in field.layout_objects
+        ]
         result = compute_sun_exposure(field.latitude, obstacles)
         return SunExposureRead(field_id=field.id, field_name=field.name, by_season=result.by_season)
 

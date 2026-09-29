@@ -15,6 +15,7 @@ class ZoneSatelliteReadingRead(BaseModel):
     ndvi_min: Optional[float] = None
     ndvi_max: Optional[float] = None
     ndwi_mean: Optional[float] = None
+    pixel_count: Optional[int] = None
     source: str
     image_identifier: Optional[str] = None
 
@@ -26,3 +27,5 @@ class ZoneSatelliteStatus(BaseModel):
     baseline_ndvi_mean: Optional[float] = None
     assessment: str
     alerts: list[str] = []
+    boundary_scoped: bool = False
+    pixel_count_caveat: Optional[str] = None

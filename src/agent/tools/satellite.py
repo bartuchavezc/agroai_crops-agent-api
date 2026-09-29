@@ -39,7 +39,9 @@ def satellite_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 )
                 result["map_attached"] = True
                 try:
-                    image_bytes, mime = await deps.satellite.image_bytes_for_model(ctx.actor, image_identifier)
+                    image_bytes, mime = await deps.satellite.image_bytes_for_model(
+                        ctx.actor, image_identifier, field=target
+                    )
                     analysis: SatelliteImageAnalysis = await deps.gemini.generate_structured(
                         ctx.actor.user_id,
                         contents=[

@@ -30,7 +30,7 @@ async def field_satellite_image(
     image_identifier = await satellite.get_or_render_image(actor, field_id)
     if not image_identifier:
         return {"image_identifier": None, "message": "Satellite imagery unavailable right now."}
-    return {"image_identifier": image_identifier}
+    return {"image_identifier": image_identifier, "bbox": await satellite.zone_bbox(actor, field_id)}
 
 
 @router.post("/fields/{field_id}/render-map", summary="Force-Regenerate Zone Satellite Map")
@@ -41,4 +41,19 @@ async def render_field_map(
     image_identifier = await satellite.get_or_render_image(actor, field_id, force=True)
     if not image_identifier:
         return {"image_identifier": None, "message": "Satellite imagery unavailable right now."}
-    return {"image_identifier": image_identifier}
+    return {"image_identifier": image_identifier, "bbox": await satellite.zone_bbox(actor, field_id)}
+
+
+@router.get(
+    "/fields/{field_id}/boundary-base-image",
+    summary="True-Color Base Image For Drawing The Field's Boundary",
+)
+@inject
+async def field_boundary_base_image(
+    field_id: UUID, actor: Actor = Depends(get_actor), satellite: ZoneSatelliteService = Depends(SATELLITE)
+):
+    result = await satellite.render_delineation_base(actor, field_id)
+    if not result:
+        return {"image_identifier": None, "bbox": None, "message": "Satellite imagery unavailable right now."}
+    image_identifier, bbox = result
+    return {"image_identifier": image_identifier, "bbox": bbox}
