@@ -41,6 +41,12 @@ Archivos:
   abonos y fertilización, riego, labores culturales, plagas y malezas (con preparados caseros),
   cosecha, valor nutricional de las hortalizas, producción de semillas, plantas aromáticas y
   planificación de la huerta familiar (incluye tabla de rendimientos aproximados por cultivo).
+- `01_huerta_organica.md` — "La Huerta Orgánica Familiar" (Programa PRO-HUERTA, INTA): las 8
+  cartillas del programa — la chacra (asociación maíz/poroto/zapallo), huerta orgánica intensiva,
+  tierra orgánica y rotaciones, abono orgánico (compuesto/verde/de superficie), planificación de
+  siembra, manejo orgánico (riego, labores culturales, control de plagas, preparados naturales
+  como purines e infusiones), huerta saludable (aromáticas y medicinales) y de la huerta a la mesa
+  (nutrición, seguridad alimentaria, recetario).
 
 ## inputs/ (pendiente, no existe todavía como carpeta de manuales)
 
