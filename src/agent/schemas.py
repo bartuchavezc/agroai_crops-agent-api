@@ -71,6 +71,26 @@ class SatelliteImageAnalysis(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class LayoutObjectGuess(BaseModel):
+    label: str
+    type: Literal["pared", "arbol", "estructura", "pileta", "cantero", "otro"]
+    horizontal_position: Literal["izquierda", "centro-izquierda", "centro", "centro-derecha", "derecha"] = Field(
+        description="Where it sits across the frame of the photo, left to right"
+    )
+    depth_position: Literal["primer_plano", "medio", "fondo"] = Field(
+        description="How far from the camera it looks: close, middle or far"
+    )
+    estimated_height_m: float = Field(ge=0, le=100, description="Rough height in meters, judged from context")
+    confidence: float = Field(ge=0, le=1)
+
+
+class PhotoLayoutExtraction(BaseModel):
+    scene_description: str = Field(
+        description="What is actually visible in the photo BEFORE listing objects — facts, not a verdict."
+    )
+    objects: list[LayoutObjectGuess] = Field(default_factory=list)
+
+
 class Source(BaseModel):
     title: Optional[str] = None
     uri: str

@@ -21,6 +21,7 @@ from src.application.irrigation.service import EvapotranspirationService
 from src.application.management.service import ManagementService
 from src.application.reports.service import ReportsService
 from src.application.satellite.service import ZoneSatelliteService
+from src.application.storage.service import StorageService
 from src.providers.search.tavily import TavilyAdapter
 from src.providers.weather.nasa_power import NasaPowerAdapter
 from src.providers.weather.service import WeatherService
@@ -49,6 +50,7 @@ class ToolDeps:
     inventory: InventoryService
     management: ManagementService
     satellite: ZoneSatelliteService
+    storage: StorageService
     nasa_power: NasaPowerAdapter
 
 

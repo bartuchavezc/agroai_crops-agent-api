@@ -179,6 +179,14 @@ class ZoneSatelliteService:
         )
         return image_identifier
 
+    async def zone_bbox(self, actor: Actor, field_id: UUID) -> Optional[list[float]]:
+        """The lat/lon box [minlon, minlat, maxlon, maxlat] every zone image covers, so the frontend can
+        overlay the field's boundary on it."""
+        field = await self.farm.get_field(actor, field_id)
+        if field.latitude is None or field.longitude is None:
+            return None
+        return self.copernicus.bbox_for(field.latitude, field.longitude)
+
     async def render_delineation_base(self, actor: Actor, field_id: UUID) -> Optional[tuple[str, list[float]]]:
         """A fresh true-color image (not NDVI-colorized) for the user to draw their field's boundary over,
         plus the exact lat/lon box it covers (so the frontend can convert clicked points back to lat/lon).
