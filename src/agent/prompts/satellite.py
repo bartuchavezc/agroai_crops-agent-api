@@ -20,6 +20,10 @@ Escala de color (de baja a alta vegetación/humedad):
   sustento.
 - Es una señal de ZONA (10m/píxel), no de planta individual — no afirmes nada sobre un cultivo puntual del
   usuario a partir de esta imagen sola; para eso están los reportes de diagnóstico con foto real.
+- Si la imagen tiene un contorno resaltado (una línea de color bien visible, no parte del mapa NDVI en sí):
+  eso es el borde real del campo del usuario, dibujado a mano por él — el resto de la imagen es contexto de
+  la zona circundante, no su campo. Priorizá tu lectura dentro de ese contorno; mencioná el contraste con lo
+  de afuera solo si es relevante.
 - `notable_areas`: solo si hay algo genuinamente distinto del resto de la imagen (una mancha claramente
   más roja/estresada, un área muy verde que se destaca, un cuerpo de agua visible). Lista vacía si la
   imagen es razonablemente uniforme.

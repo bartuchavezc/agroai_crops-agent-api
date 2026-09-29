@@ -60,6 +60,7 @@ class Field(Base):
     city = Column(String(255))
     latitude = Column(Float)
     longitude = Column(Float)
+    boundary = Column(JSONB)  # list[[lat, lon], ...] — the field's own drawn boundary, not the ~500m zone
     description = Column(Text)
     soil_type = Column(String(100))
     area_m2 = Column(Float)

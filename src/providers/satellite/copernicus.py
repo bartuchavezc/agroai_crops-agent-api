@@ -1,11 +1,16 @@
 """
 Copernicus Data Space Ecosystem adapter (https://dataspace.copernicus.eu): OAuth2 client-credentials,
-free tier (10k processing credits/month). Two calls, both against Sentinel-2 L2A:
-  - `.ndvi_stats(bbox)` — the Statistical API returns the aggregated NDVI/NDWI (mean/min/max) for a bbox
-    directly as JSON; no tile download, no GDAL/rasterio. This is the zone-level "señal" future.md wants
-    (inundación/sequía generalizada), not per-plant precision (10m/pixel, explicitly out of scope).
+free tier (10k processing credits/month). Calls against Sentinel-2 L2A:
+  - `.ndvi_stats(bbox|polygon)` — the Statistical API returns the aggregated NDVI/NDWI (mean/min/max) for
+    a bbox directly as JSON; no tile download, no GDAL/rasterio. This is the zone-level "señal" future.md
+    wants (inundación/sequía generalizada), not per-plant precision (10m/pixel, explicitly out of scope).
+    When a `polygon` (the field's own drawn boundary) is passed, the same stats are scoped to just that
+    shape instead of the ~500m box, via the Statistics API's `bounds.geometry`.
   - `.render_map(bbox)` — the Process API, only called when an actual image is needed for the chat
-    mini-map/field-view attachment; returns a small PNG, never a raw tile.
+    mini-map/field-view attachment; returns a small colorized-NDVI PNG, never a raw tile.
+  - `.true_color_map(bbox)` — same Process API, true-color instead of NDVI-colorized, used only as the
+    base image a user draws their field boundary over (NDVI coloring would obscure the real visual
+    landmarks needed for that).
 
 Requires COPERNICUS_CLIENT_ID/COPERNICUS_CLIENT_SECRET (registered by the user for free at
 dataspace.copernicus.eu). Every method degrades gracefully (returns None) when credentials are missing
@@ -95,12 +100,26 @@ function evaluatePixel(samples) {
 """
 
 
+# Plain true-color RGB — used only as a base image for the user to draw their field boundary over, where
+# NDVI's color ramp would hide the real visual landmarks (fences, trees, structures) needed for that.
+_TRUE_COLOR_EVALSCRIPT = """
+//VERSION=3
+function setup() {
+  return { input: ["B02", "B03", "B04", "dataMask"], output: { bands: 4 } };
+}
+function evaluatePixel(s) {
+  return [2.5 * s.B04, 2.5 * s.B03, 2.5 * s.B02, s.dataMask];
+}
+"""
+
+
 @dataclass
 class NdviStats:
     ndvi_mean: Optional[float]
     ndvi_min: Optional[float]
     ndvi_max: Optional[float]
     ndwi_mean: Optional[float]
+    pixel_count: Optional[int] = None  # only set when scoped to a drawn polygon (see ndvi_stats)
 
 
 class CopernicusAdapter:
@@ -153,13 +172,43 @@ class CopernicusAdapter:
             latitude + half_side_deg,
         ]
 
-    async def ndvi_stats(self, latitude: float, longitude: float, time_from: str, time_to: str) -> Optional[NdviStats]:
+    @classmethod
+    def bbox_for(cls, latitude: float, longitude: float) -> list[float]:
+        """Public accessor for the same ~500m box every render/stats call uses — so a caller that just
+        rendered an image (e.g. the delineation base image) can tell the frontend exactly which box it
+        covers, for pixel<->lat/lon conversion when drawing a boundary over it."""
+        return cls._bbox(latitude, longitude)
+
+    @classmethod
+    def _bounds(
+        cls, latitude: float, longitude: float, polygon: Optional[list[tuple[float, float]]] = None
+    ) -> dict:
+        """`bounds` for a Statistics/Process API request body: a polygon (the field's own drawn boundary,
+        as (lat, lon) pairs matching how this codebase stores coordinates elsewhere) scopes the request to
+        that exact shape via `geometry`; otherwise falls back to the fixed ~500m `bbox` around the point.
+        The ring is closed here (first point repeated as last) so callers never have to remember to."""
+        properties = {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"}
+        if polygon and len(polygon) >= 3:
+            ring = [[lon, lat] for lat, lon in polygon]
+            if ring[0] != ring[-1]:
+                ring.append(ring[0])
+            return {"geometry": {"type": "Polygon", "coordinates": [ring]}, "properties": properties}
+        return {"bbox": cls._bbox(latitude, longitude), "properties": properties}
+
+    async def ndvi_stats(
+        self,
+        latitude: float,
+        longitude: float,
+        time_from: str,
+        time_to: str,
+        polygon: Optional[list[tuple[float, float]]] = None,
+    ) -> Optional[NdviStats]:
         token = await self._access_token()
         if not token:
             return None
         body = {
             "input": {
-                "bounds": {"bbox": self._bbox(latitude, longitude), "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"}},
+                "bounds": self._bounds(latitude, longitude, polygon),
                 "data": [{"type": _COLLECTION, "dataFilter": {"maxCloudCoverage": 60}}],
             },
             "aggregation": {
@@ -201,6 +250,14 @@ class CopernicusAdapter:
             return None
         return value if math.isfinite(value) else None
 
+    @staticmethod
+    def _band_int(outputs: dict, output_id: str, key: str) -> Optional[int]:
+        try:
+            value = outputs[output_id]["bands"]["B0"]["stats"][key]
+        except (KeyError, TypeError):
+            return None
+        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
     @classmethod
     def _parse_stats(cls, payload: dict) -> Optional[NdviStats]:
         intervals = (payload or {}).get("data") or []
@@ -209,11 +266,19 @@ class CopernicusAdapter:
 
         def stats_for(interval: dict) -> NdviStats:
             outputs = interval.get("outputs", {})
+            # geometryPixelCount/noDataCount only mean something meaningful when the request was scoped
+            # to a drawn polygon (see ndvi_stats' `polygon` param) — present in every response, but the
+            # caller (ZoneSatelliteService) decides whether to surface it based on whether a boundary was
+            # actually used, not on whether these happen to be non-null.
+            geometry_pixels = cls._band_int(outputs, "ndvi", "geometryPixelCount")
+            no_data = cls._band_int(outputs, "ndvi", "noDataCount")
+            pixel_count = geometry_pixels - no_data if geometry_pixels is not None and no_data is not None else None
             return NdviStats(
                 ndvi_mean=cls._band_stat(outputs, "ndvi", "mean"),
                 ndvi_min=cls._band_stat(outputs, "ndvi", "min"),
                 ndvi_max=cls._band_stat(outputs, "ndvi", "max"),
                 ndwi_mean=cls._band_stat(outputs, "ndwi", "mean"),
+                pixel_count=pixel_count,
             )
 
         # Most recent interval first; an all-cloud/no-data window has every stat as None, so fall back to
@@ -224,11 +289,11 @@ class CopernicusAdapter:
                 return stats
         return stats_for(intervals[-1])
 
-    async def render_map(
-        self, latitude: float, longitude: float, time_from: str, time_to: str, size_px: int = 512
+    async def _process_image(
+        self, latitude: float, longitude: float, time_from: str, time_to: str, evalscript: str, size_px: int
     ) -> Optional[bytes]:
-        """Colorized NDVI PNG for the chat mini-map / field satellite view. Only called on demand (see
-        application/satellite/service.py), never as part of a batch, to keep processing-credit use low.
+        """Shared Process API call for render_map/true_color_map — same bbox, timeRange and error
+        handling, only the evalscript (and therefore the image's styling) differs.
 
         time_from/time_to must be a wide-enough window (see ZoneSatelliteService, currently 30 days):
         without an explicit timeRange the Process API only searches a narrow default window, and when
@@ -256,7 +321,7 @@ class CopernicusAdapter:
                 "height": size_px,
                 "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
             },
-            "evalscript": _NDVI_COLORMAP_EVALSCRIPT,
+            "evalscript": evalscript,
         }
         headers = {"Authorization": f"Bearer {token}"}
         try:
@@ -271,6 +336,21 @@ class CopernicusAdapter:
         except aiohttp.ClientError as e:
             logger.error(f"Copernicus process HTTP error: {e}")
             return None
+
+    async def render_map(
+        self, latitude: float, longitude: float, time_from: str, time_to: str, size_px: int = 512
+    ) -> Optional[bytes]:
+        """Colorized NDVI PNG for the chat mini-map / field satellite view. Only called on demand (see
+        application/satellite/service.py), never as part of a batch, to keep processing-credit use low."""
+        return await self._process_image(latitude, longitude, time_from, time_to, _NDVI_COLORMAP_EVALSCRIPT, size_px)
+
+    async def true_color_map(
+        self, latitude: float, longitude: float, time_from: str, time_to: str, size_px: int = 512
+    ) -> Optional[bytes]:
+        """Plain true-color PNG of the same ~500m box — used only as the base image for a user to draw
+        their field's real boundary over (see ZoneSatelliteService.render_delineation_base); never cached
+        as a "reading" like render_map's NDVI image, it's a disposable working image."""
+        return await self._process_image(latitude, longitude, time_from, time_to, _TRUE_COLOR_EVALSCRIPT, size_px)
 
     async def health_check(self) -> dict:
         if not self.configured:

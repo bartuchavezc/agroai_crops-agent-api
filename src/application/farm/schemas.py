@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Any, Dict, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field as PField
+from pydantic import BaseModel, ConfigDict, Field as PField, field_validator
 
 from src.application.soil_data.schemas import SoilContext
 
@@ -36,11 +36,20 @@ class Obstacle(BaseModel):
     direction: Octant
 
 
+def _check_boundary(v: Optional[list[tuple[float, float]]]) -> Optional[list[tuple[float, float]]]:
+    if v is not None and 0 < len(v) < 3:
+        raise ValueError("A boundary needs at least 3 points to form a shape.")
+    return v
+
+
 class FieldBase(BaseModel):
     name: str = PField(min_length=1, max_length=255)
     city: Optional[str] = None
     latitude: Optional[float] = PField(default=None, ge=-90, le=90)
     longitude: Optional[float] = PField(default=None, ge=-180, le=180)
+    boundary: Optional[list[tuple[float, float]]] = PField(
+        default=None, description="The field's own drawn boundary as (lat, lon) points — not the ~500m zone box"
+    )
     description: Optional[str] = None
     soil_type: Optional[str] = None
     area_m2: Optional[float] = PField(default=None, ge=0)
@@ -50,6 +59,8 @@ class FieldBase(BaseModel):
     length_m: Optional[float] = PField(default=None, ge=0)
     width_m: Optional[float] = PField(default=None, ge=0)
     obstacles: list[Obstacle] = PField(default_factory=list)
+
+    _check_boundary = field_validator("boundary")(_check_boundary)
 
 
 class FieldCreate(FieldBase):
@@ -61,6 +72,7 @@ class FieldUpdate(BaseModel):
     city: Optional[str] = None
     latitude: Optional[float] = PField(default=None, ge=-90, le=90)
     longitude: Optional[float] = PField(default=None, ge=-180, le=180)
+    boundary: Optional[list[tuple[float, float]]] = None
     description: Optional[str] = None
     soil_type: Optional[str] = None
     area_m2: Optional[float] = PField(default=None, ge=0)
@@ -68,6 +80,8 @@ class FieldUpdate(BaseModel):
     length_m: Optional[float] = PField(default=None, ge=0)
     width_m: Optional[float] = PField(default=None, ge=0)
     obstacles: Optional[list[Obstacle]] = None
+
+    _check_boundary = field_validator("boundary")(_check_boundary)
 
 
 class FieldRead(FieldBase, ORMModel):
