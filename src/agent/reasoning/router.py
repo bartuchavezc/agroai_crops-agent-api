@@ -12,7 +12,7 @@ from src.application.storage.router import MAX_IMAGE_SIZE_BYTES, validate_image_
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
-from src.shared.utils.errors import InvalidInputError
+from src.shared.utils.errors import InvalidInputError, PermissionDeniedError
 
 from ..tools import ToolDeps
 from .diagnosis_service import DiagnosisService
@@ -86,6 +86,8 @@ async def add_layout_photo(
     actor: Actor = Depends(get_actor),
     deps: ToolDeps = Depends(Provide["agent.tool_deps"]),
 ):
+    if not actor.is_manager:  # checked before the photo is stored, not only when the layout is saved
+        raise PermissionDeniedError("Only owner or tecnico can do this.")
     field = await deps.farm.get_field(actor, field_id)
     image_data = await image_file.read()
     try:

@@ -58,6 +58,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      # access log on the host, where fail2ban reads it (deploy/fail2ban/README.md)
+      - /var/log/agroai-caddy:/var/log/caddy
     depends_on:
       - api
     restart: unless-stopped

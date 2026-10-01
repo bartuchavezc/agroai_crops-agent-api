@@ -2,7 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from src.shared.domain.actor import Actor
-from src.shared.utils.errors import NotFoundError
+from src.shared.utils.errors import NotFoundError, PermissionDeniedError
 
 from .repository import SQLAlchemyReportsRepository
 from .schemas import Report, ReportCreate, ReportUpdate
@@ -57,5 +57,8 @@ class ReportsService:
         return report
 
     async def delete_report(self, actor: Actor, report_id: UUID) -> None:
+        report = await self.get_report(actor, report_id)
+        if not actor.is_manager and report.created_by != actor.user_id:
+            raise PermissionDeniedError("You can only delete reports you created.")
         if not await self.repo.delete(actor.account_id, report_id):
             raise NotFoundError(f"Report {report_id} not found.")

@@ -167,5 +167,5 @@ async def get_image(
     return Response(
         content=data,
         media_type=metadata.get("content_type") or "image/jpeg",
-        headers={"Cache-Control": "private, max-age=86400"},
+        headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"},
     )

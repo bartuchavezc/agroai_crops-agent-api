@@ -84,7 +84,12 @@ def create_app() -> FastAPI:
     container.wire(modules=WIRED_MODULES)
     config = container.config
 
+    # The interactive docs and the schema map every endpoint; only served in development.
+    docs_enabled = bool(config.app.dev_mode())
     app = FastAPI(
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
         title=config.app.name(),
         version=config.app.version(),
         description="AgroAI - asistente agronómico con Gemini (BYOK), memoria de agente y alertas SMN.",

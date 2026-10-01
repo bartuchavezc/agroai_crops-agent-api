@@ -31,7 +31,9 @@ class AgentContainer(containers.DeclarativeContainer):
     )
     gemini = providers.Singleton(GeminiGateway, credentials_service=credentials_service, config=config.gemini)
 
-    conversation_service = providers.Singleton(ConversationService, session_factory=db_session_factory)
+    conversation_service = providers.Singleton(
+        ConversationService, session_factory=db_session_factory, farm_service=application.farm_service
+    )
     memory_service = providers.Singleton(MemoryService, session_factory=db_session_factory, gemini_gateway=gemini)
     session_service = providers.Singleton(DatabaseSessionService, db_engine=adk_engine)
 

@@ -17,7 +17,7 @@ from pgvector.sqlalchemy import Vector
 
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
-from src.shared.utils.errors import CropAnalysisError, NotFoundError
+from src.shared.utils.errors import CropAnalysisError, NotFoundError, PermissionDeniedError
 
 from .models import EMBEDDING_DIMENSIONS, AgentMemory
 
@@ -130,16 +130,17 @@ class MemoryService:
         return [MemoryRead.model_validate(m) for m in rows]
 
     async def forget(self, actor: Actor, memory_id: UUID) -> None:
+        """Memories are shared by the account: owner/tecnico can drop any, staff only the ones they created."""
+        conditions = [
+            AgentMemory.id == memory_id,
+            AgentMemory.account_id == actor.account_id,
+            AgentMemory.superseded_at.is_(None),
+        ]
         async with self.session_factory() as session:
-            result = await session.execute(
-                update(AgentMemory)
-                .where(
-                    AgentMemory.id == memory_id,
-                    AgentMemory.account_id == actor.account_id,
-                    AgentMemory.superseded_at.is_(None),
-                )
-                .values(superseded_at=utcnow())
-            )
+            memory = (await session.execute(select(AgentMemory).where(*conditions))).scalar_one_or_none()
+            if memory is None:
+                raise NotFoundError(f"Memory {memory_id} not found.")
+            if not actor.is_manager and memory.created_by != actor.user_id:
+                raise PermissionDeniedError("You can only delete facts you added.")
+            await session.execute(update(AgentMemory).where(*conditions).values(superseded_at=utcnow()))
             await session.commit()
-        if result.rowcount == 0:
-            raise NotFoundError(f"Memory {memory_id} not found.")

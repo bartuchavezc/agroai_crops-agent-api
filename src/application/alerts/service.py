@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
-from src.shared.utils.errors import NotFoundError
+from src.shared.utils.errors import NotFoundError, PermissionDeniedError
 
 from .models import AlertModel
 from .schemas import Alert, AlertCreate
@@ -23,10 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 class AlertService:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], farm_service=None):
         self.session_factory = session_factory
+        self.farm = farm_service
 
     async def create_alert(self, actor: Actor, data: AlertCreate, source: str = "user") -> Alert:
+        if data.field_id and self.farm is not None:
+            await self.farm.get_field(actor, data.field_id)  # must be one of the caller's own fields
         model = AlertModel(
             account_id=actor.account_id,
             field_id=data.field_id,
@@ -138,6 +141,8 @@ class AlertService:
         return await self.get_alert(actor, alert_id)
 
     async def delete_alert(self, actor: Actor, alert_id: UUID) -> None:
+        if not actor.is_manager:  # anyone can acknowledge an alert; only owner/tecnico remove it
+            raise PermissionDeniedError("Only owner or tecnico can delete alerts.")
         async with self.session_factory() as session:
             result = await session.execute(
                 delete(AlertModel).where(AlertModel.id == alert_id, AlertModel.account_id == actor.account_id)

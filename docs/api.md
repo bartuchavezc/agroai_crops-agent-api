@@ -14,12 +14,14 @@ Los errores de dominio responden `{"detail": "...", "error_code": "..."}`.
 ## Auth y cuenta
 | Método | Ruta | Notas |
 |---|---|---|
-| POST | `/auth/signup` | Crea cuenta + usuario `owner` |
-| POST | `/auth/login` | |
+| POST | `/auth/signup` | Crea cuenta + usuario `owner`. Desactivado salvo `ALLOW_PUBLIC_SIGNUP=true` |
+| POST | `/auth/login` | Email sin distinguir mayúsculas. Los 401 repetidos por IP los banea fail2ban (`deploy/fail2ban`) |
+| POST | `/auth/password` | Cambia la propia contraseña; invalida todos los tokens anteriores y devuelve uno nuevo |
 | GET | `/auth/me` | `{user, account}` |
 | GET / POST | `/auth/users` | Miembros de la cuenta / alta de `tecnico` o `staff` (solo owner) |
 | GET | `/auth/users/{id}` | Solo misma cuenta |
 | PATCH | `/auth/users/{id}/role` | Solo owner |
+| DELETE | `/auth/users/{id}` | Solo owner: da de baja al miembro (no puede loguearse, sus tokens dejan de valer) |
 | POST | `/auth/enroll` | Cuestionario q1..q10 → perfil del agente |
 | GET | `/auth/profile`, `/auth/profile/context` | |
 

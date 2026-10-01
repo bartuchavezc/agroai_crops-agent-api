@@ -60,7 +60,7 @@ cp .env.example .env        # completar AUTH_SECRET_KEY, CREDENTIALS_ENCRYPTION_
 docker compose up --build   # db → migrate → api (:8000) + worker
 ```
 
-Documentación interactiva: http://localhost:8000/docs · Resumen de endpoints: [docs/api.md](docs/api.md)
+Documentación interactiva (solo con `DEV_MODE=true`): http://localhost:8000/docs · Resumen de endpoints: [docs/api.md](docs/api.md)
 
 Flujo mínimo: `POST /auth/signup` → `PUT /me/provider-credentials/gemini` (la key de
 https://aistudio.google.com/apikey) → `POST /farm-management/fields` → `POST /chat`.
