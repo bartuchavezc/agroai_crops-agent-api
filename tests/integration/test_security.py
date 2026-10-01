@@ -1,4 +1,4 @@
-"""Security hardening: login throttling, token revocation, member removal, cross-account references,
+"""Security hardening: login, token revocation, member removal, cross-account references,
 role checks on deletes, BYOK ciphertext binding."""
 import io
 import uuid
@@ -19,14 +19,6 @@ def _actor(user) -> Actor:
     return Actor(UUID(u["id"]), UUID(u["account_id"]), u["role"])
 
 
-@pytest.fixture(autouse=True)
-def _reset_login_limits(container):
-    yield
-    auth = container.auth.auth_service()
-    auth.failures_by_email._hits.clear()
-    auth.failures_by_ip._hits.clear()
-
-
 async def _field(client, owner, name="Cantero"):
     response = await client.post(
         "/api/v1/farm-management/fields", headers=owner["headers"], json={"name": f"{name}-{uuid.uuid4().hex[:6]}"}
@@ -36,36 +28,6 @@ async def _field(client, owner, name="Cantero"):
 
 
 # ---------- login ----------
-
-async def test_login_locks_email_after_repeated_failures(client, signup):
-    user = await signup("brute")
-    for _ in range(5):
-        assert (await client.post(LOGIN, json={"email": user["email"], "password": "wrong-pass"})).status_code == 401
-    locked = await client.post(LOGIN, json={"email": user["email"], "password": "secret-pass-1"})
-    assert locked.status_code == 429
-    assert int(locked.headers["Retry-After"]) > 0
-    # the lock is per email: another user from the same IP still logs in
-    other = await signup("bystander")
-    assert (await client.post(LOGIN, json={"email": other["email"], "password": "secret-pass-1"})).status_code == 200
-
-
-async def test_login_locks_ip_after_many_failures(client, signup, container):
-    user = await signup("ip-lock")
-    for i in range(20):
-        await client.post(LOGIN, json={"email": f"nobody-{i}@example.com", "password": "x"})
-    response = await client.post(LOGIN, json={"email": user["email"], "password": "secret-pass-1"})
-    assert response.status_code == 429
-
-
-async def test_successful_login_resets_email_failures(client, signup):
-    user = await signup("reset")
-    for _ in range(4):
-        await client.post(LOGIN, json={"email": user["email"], "password": "wrong-pass"})
-    assert (await client.post(LOGIN, json={"email": user["email"], "password": "secret-pass-1"})).status_code == 200
-    for _ in range(4):
-        await client.post(LOGIN, json={"email": user["email"], "password": "wrong-pass"})
-    assert (await client.post(LOGIN, json={"email": user["email"], "password": "secret-pass-1"})).status_code == 200
-
 
 async def test_email_is_case_insensitive(client, signup):
     user = await signup("Case")

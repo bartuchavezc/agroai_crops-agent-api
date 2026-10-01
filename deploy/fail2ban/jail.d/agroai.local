@@ -1,0 +1,22 @@
+# Bans IPs that keep failing logins on the AgroAI API. See deploy/fail2ban/README.md.
+
+[agroai-login]
+enabled  = true
+filter   = agroai-login
+# Caddy's access log, bind-mounted from the caddy container (deploy/docker-compose.prod.yml).
+logpath  = /var/log/agroai-caddy/access.log
+backend  = polling
+
+# 10 failed logins within 10 minutes -> banned for 1 hour; repeat offenders get longer bans.
+maxretry = 10
+findtime = 10m
+bantime  = 1h
+bantime.increment = true
+bantime.maxtime   = 1w
+
+# Caddy runs in Docker. Traffic to published ports goes through the FORWARD chain, not INPUT, so a ban
+# in fail2ban's default INPUT chain would never apply. DOCKER-USER is the chain Docker reserves for
+# user rules and evaluates before its own. allports: the banned IP loses 80 and 443 (all container
+# traffic); SSH (INPUT) is unaffected.
+chain     = DOCKER-USER
+banaction = iptables-allports

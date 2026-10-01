@@ -19,6 +19,4 @@ COPY --chown=appuser:appuser alembic ./alembic
 COPY --chown=appuser:appuser src ./src
 USER appuser
 EXPOSE 8000
-# --proxy-headers: behind Caddy the client IP comes from X-Forwarded-For (login throttling is per IP). Which
-# proxies are trusted is FORWARDED_ALLOW_IPS (uvicorn's default: 127.0.0.1 only).
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]

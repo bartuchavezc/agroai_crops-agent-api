@@ -8,7 +8,6 @@ Los errores de dominio responden `{"detail": "...", "error_code": "..."}`.
 | `PROVIDER_KEY_MISSING` | 409 | Pedir al usuario su API key de Gemini |
 | `PROVIDER_KEY_INVALID` | 409 | La key fue rechazada: pedir una nueva |
 | `PROVIDER_QUOTA_EXCEEDED` | 429 | Cuota del free tier agotada: reintentar más tarde |
-| `rate_limited` | 429 | Demasiados intentos (login fallido, clima, satélite): esperar `Retry-After` segundos |
 | `permission_denied` | 403 | El rol no permite la operación |
 | `not_found` | 404 | No existe o es de otra cuenta |
 
@@ -16,7 +15,7 @@ Los errores de dominio responden `{"detail": "...", "error_code": "..."}`.
 | Método | Ruta | Notas |
 |---|---|---|
 | POST | `/auth/signup` | Crea cuenta + usuario `owner`. Desactivado salvo `ALLOW_PUBLIC_SIGNUP=true` |
-| POST | `/auth/login` | Email sin distinguir mayúsculas. 5 fallos por email / 20 por IP en 15 min → 429 |
+| POST | `/auth/login` | Email sin distinguir mayúsculas. Los 401 repetidos por IP los banea fail2ban (`deploy/fail2ban`) |
 | POST | `/auth/password` | Cambia la propia contraseña; invalida todos los tokens anteriores y devuelve uno nuevo |
 | GET | `/auth/me` | `{user, account}` |
 | GET / POST | `/auth/users` | Miembros de la cuenta / alta de `tecnico` o `staff` (solo owner) |

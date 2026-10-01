@@ -1,4 +1,13 @@
 api.167-172-135-217.nip.io {
+	# JSON access log, read by fail2ban on the host (deploy/fail2ban). Caddy redacts Authorization and
+	# Cookie headers in it by default. Rotated by Caddy itself: 5 files of 10 MiB at most.
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		format json
+	}
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"

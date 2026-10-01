@@ -40,16 +40,6 @@ class PermissionDeniedError(CropAnalysisError):
     error_code = "permission_denied"
 
 
-class RateLimitedError(CropAnalysisError):
-    """Too many requests. Try again in a few minutes."""
-    status_code = 429
-    error_code = "rate_limited"
-
-    def __init__(self, retry_after: int, message=None):
-        super().__init__(message)
-        self.retry_after = retry_after
-
-
 class UserAlreadyExistsError(CropAnalysisError):
     """User already exists."""
     status_code = 400

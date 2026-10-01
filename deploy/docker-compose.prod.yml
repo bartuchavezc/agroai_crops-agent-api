@@ -42,9 +42,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agroai}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agroai}
       BASE_DATA_PATH: /data/uploads
-      # Trust X-Forwarded-For from any peer: safe only because the api publishes no port — the one thing that
-      # can reach it is Caddy on the compose network. Never add a `ports:` entry here while this is set.
-      FORWARDED_ALLOW_IPS: "*"
     volumes:
       - uploads:/data/uploads
     depends_on:
@@ -61,6 +58,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      # access log on the host, where fail2ban reads it (deploy/fail2ban/README.md)
+      - /var/log/agroai-caddy:/var/log/caddy
     depends_on:
       - api
     restart: unless-stopped

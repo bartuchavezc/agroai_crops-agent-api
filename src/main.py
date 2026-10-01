@@ -30,7 +30,7 @@ from src.config.bootstrap import build_container
 from src.providers.weather.router import router as weather_router
 from src.shared.database import dispose_database_connections, get_engine
 from src.shared.utils import get_logger
-from src.shared.utils.errors import CropAnalysisError, RateLimitedError
+from src.shared.utils.errors import CropAnalysisError
 
 logger = get_logger(__name__)
 
@@ -108,11 +108,9 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(CropAnalysisError)
     async def domain_error_handler(request: Request, exc: CropAnalysisError):
-        headers = {"Retry-After": str(exc.retry_after)} if isinstance(exc, RateLimitedError) else None
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.message, "error_code": exc.error_code},
-            headers=headers,
         )
 
     @app.exception_handler(HTTPException)

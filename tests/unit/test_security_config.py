@@ -1,4 +1,4 @@
-"""Config guards: dev mode can't run with public origins, docs only in dev, rate limiter basics."""
+"""Config guards: dev mode can't run with public origins, docs only in dev."""
 import copy
 import os
 import subprocess
@@ -7,8 +7,6 @@ import sys
 import pytest
 
 from src.config import settings
-from src.shared.utils.errors import RateLimitedError
-from src.shared.utils.rate_limit import RateLimiter
 
 
 def _config(dev_mode: bool, origins: list[str]) -> dict:
@@ -55,22 +53,3 @@ def test_docs_are_hidden_outside_dev_mode():
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().splitlines()[-1] == "[404, 404, 404]"
-
-
-def test_rate_limiter_blocks_after_limit_and_resets():
-    limiter = RateLimiter(limit=2, window_seconds=60)
-    limiter.check_and_hit("k")
-    limiter.check_and_hit("k")
-    with pytest.raises(RateLimitedError) as exc:
-        limiter.check_and_hit("k")
-    assert exc.value.retry_after > 0
-    limiter.check_and_hit("other")
-    limiter.reset("k")
-    limiter.check_and_hit("k")
-
-
-def test_rate_limiter_memory_is_bounded():
-    limiter = RateLimiter(limit=1, window_seconds=60, max_keys=10)
-    for i in range(100):
-        limiter.hit(f"k{i}")
-    assert len(limiter._hits) <= 10

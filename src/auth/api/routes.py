@@ -5,11 +5,10 @@ from typing import List
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from ..services.account_service import AccountService
 from src.shared.utils.errors import UserAlreadyExistsError
-from src.shared.utils.rate_limit import client_ip
 
 from ..domain.models import ROLE_OWNER
 from ..domain.schemas import (
@@ -39,13 +38,10 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @inject
 async def login(
     login_req: LoginRequest,
-    request: Request,
     auth_service: AuthService = Depends(Provide["auth.auth_service"]),
 ):
-    ip = client_ip(request)
-    auth_service.check_login_allowed(login_req.email, ip)
+    # Brute force is stopped at the edge: fail2ban bans IPs with repeated 401s here (deploy/fail2ban).
     user = await auth_service.authenticate_user(login_req.email, login_req.password)
-    auth_service.record_login_result(login_req.email, ip, success=user is not None)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

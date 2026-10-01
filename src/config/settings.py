@@ -39,10 +39,6 @@ DEFAULT_CONFIG = {
         # Off unless ALLOW_PUBLIC_SIGNUP=true (local dev): the family account is created by hand once; every
         # other user is added via POST /auth/users (owner-only "add member").
         "allow_public_signup": False,
-        # Brute-force protection on POST /auth/login (failed attempts only).
-        "login_max_failures_per_email": 5,
-        "login_max_failures_per_ip": 20,
-        "login_failure_window_seconds": 15 * 60,
     },
     "security": {
         "credentials_encryption_key": "",
