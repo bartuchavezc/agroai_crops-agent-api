@@ -1,6 +1,7 @@
 from dependency_injector import containers
 from dependency_injector import providers as di
 
+from src.admin.service import AdminMetricsService
 from src.agent.container import AgentContainer
 from src.application.container import ApplicationContainer
 from src.auth.container import AuthLayerContainer
@@ -36,4 +37,8 @@ class Container(containers.DeclarativeContainer):
         profile_service=auth.profile_service,
         search_provider=data_providers.search,
         nasa_power=data_providers.nasa_power,
+    )
+
+    admin_metrics_service = di.Singleton(
+        AdminMetricsService, session_factory=db_session_factory, timezone_name=config.app.timezone
     )

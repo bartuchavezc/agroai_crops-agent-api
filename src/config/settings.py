@@ -39,6 +39,9 @@ DEFAULT_CONFIG = {
         # Off unless ALLOW_PUBLIC_SIGNUP=true (local dev): the family account is created by hand once; every
         # other user is added via POST /auth/users (owner-only "add member").
         "allow_public_signup": False,
+        # Platform admins (PLATFORM_ADMIN_EMAILS, comma-separated): the only users allowed on /admin/*, the
+        # read-only business metrics behind the agroai_admin panel. Unrelated to the per-account roles.
+        "platform_admin_emails": [],
     },
     "security": {
         "credentials_encryption_key": "",
@@ -133,6 +136,9 @@ def _apply_env_overrides(config: dict) -> None:
         env("AUTH_TOKEN_EXPIRE_MINUTES", auth["access_token_expire_minutes"])
     )
     auth["allow_public_signup"] = _env_bool("ALLOW_PUBLIC_SIGNUP", auth["allow_public_signup"])
+    if env("PLATFORM_ADMIN_EMAILS") is not None:
+        auth["platform_admin_emails"] = [e.strip() for e in env("PLATFORM_ADMIN_EMAILS").split(",") if e.strip()]
+    auth["platform_admin_emails"] = [e.lower() for e in auth["platform_admin_emails"]]
 
     security = config["security"]
     security["credentials_encryption_key"] = env(

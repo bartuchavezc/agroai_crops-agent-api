@@ -52,5 +52,16 @@ async def require_owner(current_user: UserRead = Depends(get_current_user)) -> U
     return current_user
 
 
+@inject
+async def require_platform_admin(
+    current_user: UserRead = Depends(get_current_user),
+    auth_service=Depends(Provide["auth.auth_service"]),
+) -> UserRead:
+    # 404, not 403: the admin surface is not advertised to regular users.
+    if not auth_service.is_platform_admin(current_user.email):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    return current_user
+
+
 async def get_actor(current_user: UserRead = Depends(get_current_user)) -> Actor:
     return Actor.from_user(current_user)

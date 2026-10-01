@@ -19,6 +19,7 @@ class AuthService:
         self.algorithm = config.get("algorithm")
         self.access_token_expire_minutes = config.get("access_token_expire_minutes")
         self.allow_public_signup = config.get("allow_public_signup", False)
+        self.platform_admin_emails = frozenset(e.lower() for e in config.get("platform_admin_emails") or ())
         self.user_service = user_service
 
     async def authenticate_user(self, email: str, password: str) -> User | None:
@@ -39,6 +40,10 @@ class AuthService:
         if not User.verify_password(password, user.password_hash) or not user.is_active:
             return None
         return user
+
+    def is_platform_admin(self, email: str | None) -> bool:
+        """Platform admin (the /admin/* metrics), configured by email. Never derived from the account role."""
+        return bool(email) and email.lower() in self.platform_admin_emails
 
     def create_token(self, user: User) -> str:
         """
