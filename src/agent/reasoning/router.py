@@ -3,16 +3,16 @@ from typing import Optional
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
 from src.application.farm.declination import magnetic_to_true_bearing
 from src.application.farm.schemas import LayoutPhoto
-from src.application.storage.router import MAX_IMAGE_SIZE_BYTES, validate_image_size, validate_image_type
+from src.application.storage.router import receive_photo, stored_name
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
-from src.shared.utils.errors import InvalidInputError, PermissionDeniedError
+from src.shared.utils.errors import PermissionDeniedError
 
 from ..tools import ToolDeps
 from .diagnosis_service import DiagnosisService
@@ -89,17 +89,8 @@ async def add_layout_photo(
     if not actor.is_manager:  # checked before the photo is stored, not only when the layout is saved
         raise PermissionDeniedError("Only owner or tecnico can do this.")
     field = await deps.farm.get_field(actor, field_id)
-    image_data = await image_file.read()
-    try:
-        validate_image_size(len(image_data), MAX_IMAGE_SIZE_BYTES, image_file.filename)
-    except InvalidInputError as e:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=e.message) from None
-    try:
-        validate_image_type(image_data, image_file.content_type, image_file.filename)
-    except InvalidInputError as e:
-        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=e.message) from None
-
-    image_identifier = await deps.storage.save_image(actor, image_file.filename, image_data, image_file.content_type)
+    image_data = await receive_photo(image_file)
+    image_identifier = await deps.storage.save_image(actor, stored_name(image_file.filename), image_data, "image/jpeg")
     true_bearing = (
         magnetic_to_true_bearing(camera_bearing_degrees, field.latitude, field.longitude)
         if bearing_is_magnetic

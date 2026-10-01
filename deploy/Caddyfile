@@ -18,5 +18,10 @@ api.167-172-135-217.nip.io {
 		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
 		-Server
 	}
+	# Largest accepted body: a photo upload (15 MB, src/application/storage/images.py) plus multipart overhead.
+	# Bigger requests are refused here (413) before reaching the API or its temp files.
+	request_body {
+		max_size 16MB
+	}
 	reverse_proxy api:8000
 }
