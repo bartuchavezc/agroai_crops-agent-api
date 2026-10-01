@@ -15,6 +15,8 @@ from src.shared.domain.actor import Actor
 from src.shared.utils import get_logger
 from src.shared.utils.errors import InvalidInputError
 
+from .images import ImageTooLargeError, read_upload, shrink_to_jpeg
+
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/upload", tags=["Uploads"])
@@ -29,8 +31,7 @@ class UploadImageResponse(BaseModel):
     message: str
 
 
-# Image validation constants
-MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
+# Image validation constants (size and pixel limits: see images.py)
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -83,18 +84,29 @@ async def _analyze_in_background(diagnosis_service, actor: Actor, report_id: UUI
         logger.exception(f"Background analysis failed for report {report_id}")
 
 
-def validate_image_size(image_data_length: int, max_size: int, filename: str) -> None:
-    """
-    Validate image size.
-    
-    Raises:
-        InvalidInputError: If image is too large
-    """
-    if image_data_length > max_size:
-        raise InvalidInputError(
-            f"Image '{filename}' is too large ({image_data_length / 1024 / 1024:.2f}MB). "
-            f"Maximum size is {max_size / 1024 / 1024:.2f}MB."
-        )
+async def receive_photo(image_file: UploadFile) -> bytes:
+    """Read an uploaded photo (size-capped), check it is a JPEG/PNG/WEBP, and return it normalized: at most
+    2048 px per side, JPEG, no metadata. Raises HTTP 413/415 with a message the app can show."""
+    try:
+        raw = await read_upload(image_file)
+    except ImageTooLargeError as e:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=e.message) from None
+    try:
+        validate_image_type(raw, image_file.content_type, image_file.filename)
+    except InvalidInputError as e:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=e.message) from None
+    try:
+        return await shrink_to_jpeg(raw)
+    except ImageTooLargeError as e:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=e.message) from None
+    except InvalidInputError as e:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=e.message) from None
+
+
+def stored_name(filename: Optional[str]) -> str:
+    """The upload's name with the .jpg extension it has after normalization."""
+    base = (filename or "image").rsplit(".", 1)[0] or "image"
+    return f"{base}.jpg"
 
 
 @router.post(
@@ -126,18 +138,9 @@ async def upload_crop_image(
             detail="crop_cycle_id is required for a periodic (tracking) report.",
         )
 
-    image_data = await image_file.read()
-    try:
-        validate_image_size(len(image_data), MAX_IMAGE_SIZE_BYTES, image_file.filename)
-    except InvalidInputError as e:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=e.message) from None
-    try:
-        validate_image_type(image_data, image_file.content_type, image_file.filename)
-    except InvalidInputError as e:
-        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=e.message) from None
-
+    image_data = await receive_photo(image_file)
     image_identifier = await storage_service.save_image(
-        actor, image_file.filename, image_data, image_file.content_type
+        actor, stored_name(image_file.filename), image_data, "image/jpeg"
     )
     report = await reports_service.create_report(
         actor,
