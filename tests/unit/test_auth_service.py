@@ -141,3 +141,21 @@ class TestPasswordVerification:
             result = User.verify_password("password2", password1_hash)
             
             assert result is False
+
+
+class TestChangePassword:
+    @pytest.mark.asyncio
+    async def test_change_password(self):
+        from src.auth.services.user_service import UserService
+
+        repo = AsyncMock()
+        user = MagicMock(password_hash="h")
+        repo.get_by_id.return_value = user
+        svc = UserService(user_repository=repo)
+        uid = uuid4()
+        with patch("src.auth.domain.models.User.verify_password", return_value=False):
+            assert await svc.change_password(uid, "bad", "newpassword") is False
+        repo.update_password.assert_not_called()
+        with patch("src.auth.domain.models.User.verify_password", return_value=True):
+            assert await svc.change_password(uid, "ok", "newpassword") is True
+        repo.update_password.assert_awaited_once()
