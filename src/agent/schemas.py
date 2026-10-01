@@ -75,18 +75,30 @@ class PlanPoint(BaseModel):
     """A point on the plan, in meters, in the photo's frame: x to the right of the photo, y forward (away from the
     camera). The camera itself is at (0, 0)."""
 
-    x: float
-    y: float
+    x: float = 0.0
+    y: float = 0.0
+
+    # Same tolerance as PlanElement below: a null or unparseable coordinate must not discard the whole plan.
+    @field_validator("x", "y", mode="before")
+    @classmethod
+    def _bad_coord(cls, v):
+        if v is None:
+            return 0.0
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
 
 
 class PlanElement(BaseModel):
     """One thing around the plot, as it would be drawn on a top-down plan (a real footprint, in meters)."""
 
-    label: str = Field(description="Short name in Spanish, e.g. 'Pared del fondo', 'Pileta', 'Pino'")
-    type: Literal["pared", "cerco", "arbol", "estructura", "pileta", "cantero", "otro"]
+    label: str = Field(default="", description="Short name in Spanish, e.g. 'Pared del fondo', 'Pileta', 'Pino'")
+    type: Literal["pared", "cerco", "arbol", "estructura", "pileta", "cantero", "otro"] = "otro"
     kind: Literal["polygon", "polyline", "circle"] = Field(
+        default="polygon",
         description="polygon: closed footprint (pool, planter, building); polyline: a wall or hedge, drawn as a "
-        "line with thickness_m; circle: a tree crown (center + radius_m)"
+        "line with thickness_m; circle: a tree crown (center + radius_m)",
     )
     points: Optional[list[PlanPoint]] = Field(
         default=None,
@@ -100,16 +112,57 @@ class PlanElement(BaseModel):
     confidence: float = Field(default=0.5, description="0 to 1")
 
     # No range constraints here: one out-of-range number must not discard the whole plan. The conversion clamps.
+    # Every one of these is a real failure seen in production ("Gemini request failed: ValidationError"
+    # repeating on retry too, since a schema miss is systematic for a given photo, not a one-off fluke):
+    # label missing, an unrecognized kind (e.g. "rectangulo", "linea" instead of our 3 options), or a
+    # non-numeric radius/thickness (e.g. "2m" with the unit attached). Each now degrades to something
+    # plan_to_layout_objects already knows how to handle, instead of discarding the whole photo's plan.
+    @field_validator("label", mode="before")
+    @classmethod
+    def _null_label(cls, v):
+        return v if isinstance(v, str) else ""
+
     @field_validator("type", mode="before")
     @classmethod
     def _unknown_type(cls, v):
         allowed = {"pared", "cerco", "arbol", "estructura", "pileta", "cantero", "otro"}
         return v if v in allowed else "otro"
 
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _unknown_kind(cls, v):
+        allowed = {"polygon", "polyline", "circle"}
+        return v if v in allowed else "polygon"
+
+    @field_validator("points", mode="before")
+    @classmethod
+    def _bad_points(cls, v):
+        return v if isinstance(v, list) else None
+
+    @field_validator("center", mode="before")
+    @classmethod
+    def _bad_center(cls, v):
+        return v if v is None or isinstance(v, (dict, PlanPoint)) else None
+
+    @field_validator("radius_m", "thickness_m", mode="before")
+    @classmethod
+    def _bad_optional_number(cls, v):
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
     @field_validator("height_m", "confidence", mode="before")
     @classmethod
     def _null_number(cls, v):
-        return 0.0 if v is None else v
+        if v is None:
+            return 0.0
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
 
     @field_validator("confidence", mode="after")
     @classmethod

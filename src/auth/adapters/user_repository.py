@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..domain.models import User
 from ..domain.schemas import UserCreate
@@ -45,6 +45,12 @@ class UserRepositoryInterface(ABC):
 
     @abstractmethod
     async def update_password(self, user_id: UUID, password_hash: str) -> Optional[User]:
+        """Store the new hash and bump token_version (revokes every token issued before)."""
+        ...
+
+    @abstractmethod
+    async def deactivate(self, user_id: UUID, account_id: UUID) -> Optional[User]:
+        """Mark a member of `account_id` inactive and revoke their tokens."""
         ...
 
 
@@ -63,13 +69,14 @@ class SQLAlchemyUserRepository(UserRepositoryInterface):
     async def get_by_email(self, email: str) -> Optional[User]:
         """Get user by email."""
         async with self.session_factory() as session:
-            result = await session.execute(select(User).filter(User.email == email))
+            result = await session.execute(select(User).filter(func.lower(User.email) == email.strip().lower()))
             return result.scalars().first()
 
     async def create(self, user_create_dto: UserCreate) -> User:
         """Create a new user with hashed password."""
         # Convert DTO to dict and exclude password
         user_data = user_create_dto.model_dump(exclude={'password'})
+        user_data['email'] = user_data['email'].strip().lower()
         
         # Hash the password and add it as password_hash
         user_data['password_hash'] = User.get_password_hash(user_create_dto.password)
@@ -101,14 +108,16 @@ class SQLAlchemyUserRepository(UserRepositoryInterface):
     async def list_by_account(self, account_id: UUID) -> List[User]:
         async with self.session_factory() as session:
             result = await session.execute(
-                select(User).filter(User.account_id == account_id).order_by(User.created_at)
+                select(User)
+                .filter(User.account_id == account_id, User.is_active.is_(True))
+                .order_by(User.created_at)
             )
             return list(result.scalars().all())
 
     async def update_role(self, user_id: UUID, account_id: UUID, role: str) -> Optional[User]:
         async with self.session_factory() as session:
             result = await session.execute(
-                select(User).filter(User.id == user_id, User.account_id == account_id)
+                select(User).filter(User.id == user_id, User.account_id == account_id, User.is_active.is_(True))
             )
             user = result.scalars().first()
             if not user:
@@ -125,6 +134,21 @@ class SQLAlchemyUserRepository(UserRepositoryInterface):
             if not user:
                 return None
             user.password_hash = password_hash
+            user.token_version = User.token_version + 1
+            await session.commit()
+            await session.refresh(user)
+        return user
+
+    async def deactivate(self, user_id: UUID, account_id: UUID) -> Optional[User]:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(User).filter(User.id == user_id, User.account_id == account_id, User.is_active.is_(True))
+            )
+            user = result.scalars().first()
+            if not user:
+                return None
+            user.is_active = False
+            user.token_version = User.token_version + 1
             await session.commit()
             await session.refresh(user)
         return user

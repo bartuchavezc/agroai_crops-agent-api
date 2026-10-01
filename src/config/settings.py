@@ -2,6 +2,7 @@
 Centralized configuration: defaults, then optional config.yml, then environment variables.
 """
 import copy
+import ipaddress
 import logging
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ SRC_DIR = CONFIG_DIR.parent
 PROJECT_ROOT = SRC_DIR.parent
 CONFIG_FILE_PATH = PROJECT_ROOT / "config.yml"
 
-DEV_SECRET_KEY = "dev-only-secret-key-change-me"
+DEV_SECRET_KEY = "dev-only-secret-key-change-me-not-for-production"
 # Valid Fernet key used only when DEV_MODE=true and none is configured.
 DEV_ENCRYPTION_KEY = "ZGV2LW9ubHktZW5jcnlwdGlvbi1rZXktMzJieXRlcyE="
 
@@ -35,9 +36,9 @@ DEFAULT_CONFIG = {
         "secret_key": "",
         "algorithm": "HS256",
         "access_token_expire_minutes": 60 * 24,
-        # Off in production (see .env.example / deploy/.env.example): the family account is created by
-        # hand once; every other user is added via POST /auth/users (owner-only "add member").
-        "allow_public_signup": True,
+        # Off unless ALLOW_PUBLIC_SIGNUP=true (local dev): the family account is created by hand once; every
+        # other user is added via POST /auth/users (owner-only "add member").
+        "allow_public_signup": False,
     },
     "security": {
         "credentials_encryption_key": "",
@@ -188,3 +189,25 @@ def _validate(config: dict) -> None:
 
     if not dev_mode and "*" in config["app"]["cors_origins"]:
         raise ValueError("CORS_ORIGINS cannot contain '*' when DEV_MODE is false.")
+
+    if dev_mode:
+        public = [o for o in config["app"]["cors_origins"] if not _is_local_origin(o)]
+        if public:
+            raise ValueError(
+                f"DEV_MODE=true uses public development keys and exposes /docs; refusing to run with "
+                f"non-local CORS_ORIGINS {public}. Set DEV_MODE=false for any deployed environment."
+            )
+
+
+def _is_local_origin(origin: str) -> bool:
+    """localhost, loopback, private LAN addresses (phones on the dev Wi-Fi) and *.local hosts."""
+    from urllib.parse import urlparse
+
+    host = urlparse(origin).hostname or ""
+    if host in {"localhost", ""} or host.endswith(".local") or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private

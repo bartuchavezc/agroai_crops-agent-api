@@ -6,10 +6,10 @@ from uuid import UUID
 from dependency_injector.wiring import Provide, inject
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError
 
 from src.shared.domain.actor import Actor
 
+from ..adapters.jwt_adapter import InvalidTokenError
 from ..domain.models import MANAGER_ROLES, ROLE_OWNER
 from ..domain.schemas import UserRead
 
@@ -30,10 +30,11 @@ async def get_current_user(
     try:
         payload = auth_service.decode_token(token)
         user_id = UUID(payload.get("sub"))
-    except (JWTError, ValueError, TypeError):
+        token_version = int(payload.get("tv", 0))  # tokens issued before revocation existed carry no "tv"
+    except (InvalidTokenError, ValueError, TypeError):
         raise credentials_exception from None
 
-    user = await user_service.get_user(user_id)
+    user = await user_service.get_user_for_token(user_id, token_version)
     if user is None:
         raise credentials_exception
     return user

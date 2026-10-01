@@ -5,7 +5,7 @@ from typing import List
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from ..services.account_service import AccountService
 from src.shared.utils.errors import UserAlreadyExistsError
@@ -40,6 +40,7 @@ async def login(
     login_req: LoginRequest,
     auth_service: AuthService = Depends(Provide["auth.auth_service"]),
 ):
+    # Brute force is stopped at the edge: fail2ban bans IPs with repeated 401s here (deploy/fail2ban).
     user = await auth_service.authenticate_user(login_req.email, login_req.password)
     if not user:
         raise HTTPException(
@@ -100,20 +101,25 @@ async def get_me(
     return MeResponse(user=current_user, account=AccountRead.model_validate(account))
 
 
-@router.post("/password", status_code=status.HTTP_204_NO_CONTENT, summary="Change Own Password")
+@router.post("/password", response_model=TokenResponse, summary="Change Own Password")
 @inject
 async def change_password(
     body: PasswordChangeRequest,
     current_user: UserRead = Depends(get_current_user),
     user_service: UserService = Depends(Provide["auth.user_service"]),
+    auth_service: AuthService = Depends(Provide["auth.auth_service"]),
 ):
+    """Every session opened before (other devices, a stolen token) is closed; the response carries a fresh
+    token for the caller so they stay logged in."""
     if body.new_password == body.current_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La nueva contraseña debe ser distinta de la actual.",
         )
-    if not await user_service.change_password(current_user.id, body.current_password, body.new_password):
+    user = await user_service.change_password(current_user.id, body.current_password, body.new_password)
+    if user is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La contraseña actual es incorrecta.")
+    return TokenResponse(access_token=auth_service.create_token(user))
 
 
 @router.get("/users", response_model=List[UserRead], summary="List Account Members")
@@ -156,7 +162,7 @@ async def read_member(
     user_service: UserService = Depends(Provide["auth.user_service"]),
 ):
     user = await user_service.get_user(user_id=user_id)
-    if user is None or user.account_id != current_user.account_id:
+    if user is None or user.account_id != current_user.account_id or not user.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
 
@@ -175,6 +181,22 @@ async def change_member_role(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Remove Account Member")
+@inject
+async def remove_member(
+    user_id: UUID,
+    owner: UserRead = Depends(require_owner),
+    user_service: UserService = Depends(Provide["auth.user_service"]),
+):
+    """The member can no longer log in and their open sessions stop working right away. Their events,
+    reports and other records stay (authorship is kept)."""
+    if user_id == owner.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The owner cannot remove themselves.")
+    if not await user_service.remove_member(user_id, owner.account_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/enroll", response_model=UserProfileRead, summary="Enroll User Profile")

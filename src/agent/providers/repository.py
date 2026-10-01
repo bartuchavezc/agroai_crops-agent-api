@@ -1,7 +1,7 @@
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -46,6 +46,15 @@ class ProviderCredentialRepository:
         )
         async with self.session_factory() as session:
             await session.execute(stmt)
+            await session.commit()
+
+    async def update_ciphertext(self, user_id: UUID, provider: str, ciphertext: bytes) -> None:
+        async with self.session_factory() as session:
+            await session.execute(
+                update(ProviderCredential)
+                .where(ProviderCredential.user_id == user_id, ProviderCredential.provider == provider)
+                .values(api_key_ciphertext=ciphertext)
+            )
             await session.commit()
 
     async def delete(self, user_id: UUID, provider: str) -> bool:

@@ -29,8 +29,14 @@ class ManagementService:
     fields/cycles/events. Read access for every role; write for staff too (they log purchases/expenses
     day to day), status/edit changes restricted to manager where noted."""
 
-    def __init__(self, repository: ManagementRepository):
+    def __init__(self, repository: ManagementRepository, farm_service=None):
         self.repo = repository
+        self.farm = farm_service
+
+    async def _check_field(self, actor: Actor, field_id: Optional[UUID]) -> None:
+        """A field_id from the client must be one of the caller's own fields (NotFound otherwise)."""
+        if field_id and self.farm is not None:
+            await self.farm.get_field(actor, field_id)
 
     # ---------- shopping list ----------
 
@@ -41,6 +47,7 @@ class ManagementService:
         return [ShoppingItemRead.model_validate(i) for i in items]
 
     async def add_shopping_item(self, actor: Actor, data: ShoppingItemCreate) -> ShoppingItemRead:
+        await self._check_field(actor, data.field_id)
         item = await self.repo.create_shopping_item(ShoppingListItem(account_id=actor.account_id, **data.model_dump()))
         return ShoppingItemRead.model_validate(item)
 
@@ -64,6 +71,9 @@ class ManagementService:
         return [BudgetEntryRead.model_validate(i) for i in items]
 
     async def add_budget_entry(self, actor: Actor, data: BudgetEntryCreate) -> BudgetEntryRead:
+        await self._check_field(actor, data.field_id)
+        if data.crop_cycle_id and self.farm is not None:
+            await self.farm.get_crop_cycle(actor, data.crop_cycle_id)
         entry = await self.repo.create_budget_entry(BudgetEntry(account_id=actor.account_id, **data.model_dump()))
         return BudgetEntryRead.model_validate(entry)
 
@@ -101,6 +111,7 @@ class ManagementService:
         return [RoadmapItemRead.model_validate(i) for i in items]
 
     async def add_roadmap_item(self, actor: Actor, data: RoadmapItemCreate) -> RoadmapItemRead:
+        await self._check_field(actor, data.field_id)
         item = await self.repo.create_roadmap_item(RoadmapItem(account_id=actor.account_id, **data.model_dump()))
         return RoadmapItemRead.model_validate(item)
 

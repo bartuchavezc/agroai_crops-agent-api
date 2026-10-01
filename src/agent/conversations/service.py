@@ -19,9 +19,15 @@ SessionDeleter = Callable[[Actor, UUID], Awaitable[None]]
 
 
 class ConversationService:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], farm_service=None):
         self.session_factory = session_factory
+        self.farm = farm_service
         self._session_deleter: Optional[SessionDeleter] = None
+
+    async def _check_field(self, actor: Actor, field_id: Optional[UUID]) -> None:
+        """A field_id from the client must be one of the caller's own fields (NotFound otherwise)."""
+        if field_id and self.farm is not None:
+            await self.farm.get_field(actor, field_id)
 
     def set_session_deleter(self, deleter: SessionDeleter) -> None:
         """Hook used to drop the agent framework's session when a conversation is deleted."""
@@ -40,6 +46,7 @@ class ConversationService:
         return conv
 
     async def create(self, actor: Actor, data: ConversationCreate) -> ConversationRead:
+        await self._check_field(actor, data.field_id)
         conv = Conversation(
             account_id=actor.account_id, user_id=actor.user_id, title=data.title, field_id=data.field_id
         )
@@ -64,6 +71,7 @@ class ConversationService:
             return [ConversationRead.model_validate(c) for c in (await session.execute(stmt)).scalars().all()]
 
     async def update(self, actor: Actor, conversation_id: UUID, data: ConversationUpdate) -> ConversationRead:
+        await self._check_field(actor, data.field_id)
         async with self.session_factory() as session:
             conv = await self._owned(session, actor, conversation_id)
             values = data.model_dump(exclude_unset=True)

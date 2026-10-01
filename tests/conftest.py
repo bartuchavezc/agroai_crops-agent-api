@@ -22,6 +22,7 @@ TEST_DATABASE_URL = ADMIN_URL.rsplit("/", 1)[0].replace("postgresql://", "postgr
 
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["DEV_MODE"] = "true"
+os.environ["ALLOW_PUBLIC_SIGNUP"] = "true"
 os.environ.setdefault("BASE_DATA_PATH", str(ROOT / "data" / "test_uploads"))
 os.environ.setdefault("OPENWEATHER_API_KEY", "")
 
@@ -184,7 +185,7 @@ def sample_user_data() -> Dict[str, Any]:
 def auth_config() -> Dict[str, Any]:
     """Sample auth configuration."""
     return {
-        "secret_key": "test-secret-key-for-testing-only",
+        "secret_key": "test-secret-key-for-testing-only-32+bytes",
         "algorithm": "HS256",
         "access_token_expire_minutes": 30,
     }
