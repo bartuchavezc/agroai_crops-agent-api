@@ -145,7 +145,9 @@ async def test_uploaded_images_are_account_scoped(client, signup):
     assert up.status_code == 200, up.text
     identifier = up.json()["image_identifier"]
     own = await client.get(f"/api/v1/upload/image/{identifier}", headers=a["headers"])
-    assert own.status_code == 200 and own.content == png and own.headers["content-type"] == "image/png"
+    # stored normalized: JPEG, same pixels size (see application/storage/images.py)
+    assert own.status_code == 200 and own.headers["content-type"] == "image/jpeg"
+    assert own.content.startswith(b"\xff\xd8\xff")
     assert (await client.get(f"/api/v1/upload/image/{identifier}", headers=b["headers"])).status_code == 404
     traversal = await client.get("/api/v1/upload/image/..%2F..%2Fetc%2Fpasswd", headers=a["headers"])
     assert traversal.status_code in (400, 404)
@@ -207,7 +209,7 @@ async def test_webp_upload_is_accepted(client, signup):
     assert up.status_code == 200, up.text
     identifier = up.json()["image_identifier"]
     got = await client.get(f"/api/v1/upload/image/{identifier}", headers=user["headers"])
-    assert got.status_code == 200 and got.content == buf.getvalue()
+    assert got.status_code == 200 and Image.open(io.BytesIO(got.content)).size == (10, 10)
 
 
 _TINY_PNG = (

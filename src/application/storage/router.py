@@ -86,11 +86,11 @@ async def _analyze_in_background(diagnosis_service, actor: Actor, report_id: UUI
 
 async def receive_photo(image_file: UploadFile) -> bytes:
     """Read an uploaded photo (size-capped), check it is a JPEG/PNG/WEBP, and return it normalized: at most
-    2048 px per side, JPEG, no metadata. Raises HTTP 413/415 with a message the app can show."""
+    1536 px per side, JPEG, no metadata. Raises HTTP 413/415 with a message the app can show."""
     try:
         raw = await read_upload(image_file)
     except ImageTooLargeError as e:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=e.message) from None
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=e.message) from None
     try:
         validate_image_type(raw, image_file.content_type, image_file.filename)
     except InvalidInputError as e:
@@ -98,7 +98,7 @@ async def receive_photo(image_file: UploadFile) -> bytes:
     try:
         return await shrink_to_jpeg(raw)
     except ImageTooLargeError as e:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=e.message) from None
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=e.message) from None
     except InvalidInputError as e:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=e.message) from None
 

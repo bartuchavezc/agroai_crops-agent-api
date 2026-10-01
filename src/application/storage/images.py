@@ -1,6 +1,7 @@
 """
-Uploaded photos are normalized once, on upload: decoded with a pixel cap, downscaled to STORED_MAX_SIDE and
-re-encoded as JPEG. Everything later (the model, the UI) reads that small file instead of the original.
+Uploaded photos are normalized once, on upload: decoded with a pixel cap, downscaled to STORED_MAX_SIDE
+(1536 px, the most any analysis feeds the model) and re-encoded as JPEG. Everything later (the model, the UI)
+reads that small file instead of the original.
 
 Why each limit:
 - MAX_UPLOAD_BYTES: generous on purpose. The web app already shrinks photos to ~1-2 MB before sending, but if
@@ -14,6 +15,7 @@ Re-encoding also drops the original's metadata (EXIF, including the GPS position
 """
 import asyncio
 import io
+import warnings
 
 from fastapi import UploadFile
 from PIL import Image, ImageOps
@@ -22,10 +24,11 @@ from src.shared.utils.errors import InvalidInputError
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_IMAGE_PIXELS = 50_000_000
-STORED_MAX_SIDE = 2048
+STORED_MAX_SIDE = 1536
 JPEG_QUALITY = 85
 
-# Pillow's own guard only raises above 2x its limit; keep it in line with ours as a backstop.
+# Pillow's own guard only raises above 2x its limit; keep it in line with ours as a backstop. Between 1x and 2x
+# it just warns, and our explicit check in _open_checked already refuses those.
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 _decode_slots = asyncio.Semaphore(2)
@@ -49,15 +52,18 @@ async def read_upload(upload: UploadFile, max_bytes: int = MAX_UPLOAD_BYTES) -> 
 
 
 def _open_checked(raw: bytes) -> Image.Image:
+    too_many = f"La imagen tiene demasiados píxeles; el máximo es {MAX_IMAGE_PIXELS // 1_000_000} MP."
     try:
-        image = Image.open(io.BytesIO(raw))  # reads the header only
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+            image = Image.open(io.BytesIO(raw))  # reads the header only
+    except Image.DecompressionBombError:  # Pillow's backstop, for anything over 2x the cap
+        raise ImageTooLargeError(too_many) from None
     except Exception as e:
         raise InvalidInputError(f"Image cannot be decoded: {e}") from None
     width, height = image.size
     if width * height > MAX_IMAGE_PIXELS:
-        raise ImageTooLargeError(
-            f"La imagen tiene demasiados píxeles ({width}x{height}); el máximo es {MAX_IMAGE_PIXELS // 1_000_000} MP."
-        )
+        raise ImageTooLargeError(too_many)
     return image
 
 
