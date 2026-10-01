@@ -1,4 +1,5 @@
-from .context import ToolDeps, TurnContext
+from .context import ToolDeps, TurnContext, tool
+from .guard import confirm_action_tool
 from .farm import farm_manager_tools, farm_read_tools
 from .inventory import inventory_manager_tools, inventory_read_tools
 from .irrigation import irrigation_tools
@@ -21,6 +22,7 @@ def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         *management_read_tools(deps, ctx),
         *satellite_tools(deps, ctx),
         *soil_tools(deps, ctx),
+        tool(confirm_action_tool(ctx, deps.pending_actions)),
     ]
     if ctx.actor.is_manager:
         tools += farm_manager_tools(deps, ctx)

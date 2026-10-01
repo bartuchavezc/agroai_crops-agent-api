@@ -4,6 +4,7 @@ and user they act on come from the authenticated request, never from model-provi
 """
 import functools
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Optional
@@ -31,6 +32,7 @@ from src.shared.utils.errors import CropAnalysisError, InvalidInputError
 from ..memory.service import MemoryService
 from ..providers.gemini import GeminiGateway
 from ..reasoning.diagnosis_service import DiagnosisService
+from .guard import PendingActionStore
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,8 @@ class ToolDeps:
     satellite: ZoneSatelliteService
     storage: StorageService
     nasa_power: NasaPowerAdapter
+    # deletions proposed by the agent, waiting for the user's yes (see guard.py); shared across turns
+    pending_actions: PendingActionStore = field(default_factory=PendingActionStore)
 
 
 @dataclass
@@ -63,6 +67,11 @@ class TurnContext:
     image_identifier: Optional[str] = None
     sources: list[dict] = field(default_factory=list)
     attachments: list[dict] = field(default_factory=list)
+    # the user's own message for this turn: the only text that can confirm a pending deletion
+    user_message: str = ""
+    turn_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # set once third-party text (web search results) entered the turn; blocks confirmations in it
+    untrusted_content_seen: bool = False
 
 
 def tool(func):
