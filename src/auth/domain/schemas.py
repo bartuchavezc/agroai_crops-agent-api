@@ -71,6 +71,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class PasswordChangeRequest(BaseModel):
+    """Schema for a self-service password change."""
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
 class TokenResponse(BaseModel):
     """Schema for token response."""
     access_token: str

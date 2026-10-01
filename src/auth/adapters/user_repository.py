@@ -43,6 +43,10 @@ class UserRepositoryInterface(ABC):
     async def update_role(self, user_id: UUID, account_id: UUID, role: str) -> Optional[User]:
         ...
 
+    @abstractmethod
+    async def update_password(self, user_id: UUID, password_hash: str) -> Optional[User]:
+        ...
+
 
 class SQLAlchemyUserRepository(UserRepositoryInterface):
     """SQLAlchemy implementation of user repository."""
@@ -110,6 +114,17 @@ class SQLAlchemyUserRepository(UserRepositoryInterface):
             if not user:
                 return None
             user.role = role
+            await session.commit()
+            await session.refresh(user)
+        return user
+
+    async def update_password(self, user_id: UUID, password_hash: str) -> Optional[User]:
+        async with self.session_factory() as session:
+            result = await session.execute(select(User).filter(User.id == user_id))
+            user = result.scalars().first()
+            if not user:
+                return None
+            user.password_hash = password_hash
             await session.commit()
             await session.refresh(user)
         return user

@@ -71,6 +71,14 @@ class UserService:
         user = await self.user_repository.update_role(user_id, account_id, role)
         return UserRead.model_validate(user) if user else None
 
+    async def change_password(self, user_id: UUID, current_password: str, new_password: str) -> bool:
+        """Change a user's password after verifying the current one. False if the current one is wrong."""
+        user = await self.user_repository.get_by_id(user_id)
+        if not user or not User.verify_password(current_password, user.password_hash):
+            return False
+        await self.user_repository.update_password(user_id, User.get_password_hash(new_password))
+        return True
+
     async def get_user_with_account(self, user_id: UUID) -> tuple[User | None, dict | None]:
         """
         Get a user with their associated account.

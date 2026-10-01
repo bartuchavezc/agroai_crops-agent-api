@@ -18,6 +18,7 @@ from ..domain.schemas import (
     MemberCreate,
     MemberRoleUpdate,
     MeResponse,
+    PasswordChangeRequest,
     SignupRequest,
     TokenResponse,
     UserCreate,
@@ -97,6 +98,19 @@ async def get_me(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
     return MeResponse(user=current_user, account=AccountRead.model_validate(account))
+
+
+@router.post("/password", status_code=status.HTTP_204_NO_CONTENT, summary="Change Own Password")
+@inject
+async def change_password(
+    body: PasswordChangeRequest,
+    current_user: UserRead = Depends(get_current_user),
+    user_service: UserService = Depends(Provide["auth.user_service"]),
+):
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La nueva contraseña debe ser distinta de la actual.")
+    if not await user_service.change_password(current_user.id, body.current_password, body.new_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La contraseña actual es incorrecta.")
 
 
 @router.get("/users", response_model=List[UserRead], summary="List Account Members")
