@@ -25,6 +25,7 @@ os.environ["DEV_MODE"] = "true"
 os.environ["ALLOW_PUBLIC_SIGNUP"] = "true"
 os.environ.setdefault("BASE_DATA_PATH", str(ROOT / "data" / "test_uploads"))
 os.environ.setdefault("OPENWEATHER_API_KEY", "")
+os.environ["PLATFORM_ADMIN_EMAILS"] = "Platform-Admin@example.com"
 
 
 async def _ensure_database() -> bool:

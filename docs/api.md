@@ -79,3 +79,20 @@ disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, plan
 | GET | `/weather/latest`, `/weather/history?hours_back=` | Observaciones guardadas |
 | GET | `/weather/forecast?latitude=&longitude=&days=` | Pronóstico SMN: `daily[]` + `hourly[]` |
 | GET | `/weather/current/health` | |
+
+## Admin de plataforma (panel `agroai_admin`)
+Solo para los emails de `PLATFORM_ADMIN_EMAILS` (sin distinguir mayúsculas); cualquier otro usuario recibe 404.
+Se loguea con `/auth/login` como cualquier usuario. Solo agregados y metadata: nunca el texto de los chats, las
+fotos, la memoria del agente ni las keys.
+
+| Método | Ruta | Notas |
+|---|---|---|
+| GET | `/admin/me` | Identidad del admin (sirve para validar el acceso) |
+| GET | `/admin/overview?days=30` | KPIs: usuarios (roles, estado, onboarding, DAU/WAU/MAU, BYOK), cuentas, perfiles, fotos y diagnósticos, conversaciones, sesiones de uso, agente (tools), huertas (superficie, ciclos, cultivos, eventos), alertas, adopción por módulo y salud del sistema |
+| GET | `/admin/timeseries?days=30` | Serie diaria (zona `APP_TIMEZONE`): altas, usuarios activos, mensajes, conversaciones, sesiones, fotos, eventos |
+| GET | `/admin/users` | Cada usuario con cuenta, rol, estado, última actividad y contadores de uso |
+| GET | `/admin/accounts` | Cada cuenta con miembros por rol, campos, superficie, ciclos, fotos, chats y última actividad |
+
+Definiciones: **actividad** = mensaje al agente, foto subida o evento cargado a mano. **Sesión** = mensajes de un
+usuario (y respuestas del agente) separados por menos de 30 min; su largo va del primer mensaje a la última
+respuesta. **Foto** = cada `POST /upload/image` (crea un reporte) + las fotos del plano de cada campo.

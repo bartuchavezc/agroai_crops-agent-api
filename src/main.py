@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from src.admin.router import router as admin_router
 from src.agent.conversations.router import router as chat_router
 from src.agent.memory.router import router as memory_router
 from src.agent.providers.router import router as provider_credentials_router
@@ -52,6 +53,7 @@ ROUTERS = [
     irrigation_router,
     management_router,
     satellite_router,
+    admin_router,
 ]
 WIRED_MODULES = [
     "src.auth.api.dependencies",
@@ -70,6 +72,7 @@ WIRED_MODULES = [
     "src.application.irrigation.router",
     "src.application.management.router",
     "src.application.satellite.router",
+    "src.admin.router",
 ]
 
 

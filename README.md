@@ -8,6 +8,7 @@ de cultivo, eventos, alertas y la memoria del agente. Cada usuario conecta **su 
 
 ```
 src/
+├── admin/         métricas de negocio de solo lectura para el panel agroai_admin (PLATFORM_ADMIN_EMAILS)
 ├── auth/          transversal: cuentas, usuarios con rol (owner | tecnico | staff), JWT, onboarding
 ├── providers/     datos externos
 │   └── weather/   OpenWeather (actual), ETL del SMN (smn.py), hypertables de TimescaleDB
