@@ -2,10 +2,21 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.auth.api.dependencies import get_current_user
+from src.auth.domain.schemas import UserRead
+from src.shared.utils.rate_limit import RateLimiter
 
 from .service import WeatherService
 
-router = APIRouter(prefix="/weather", tags=["Weather"], dependencies=[Depends(get_current_user)])
+# Arbitrary coordinates hit the server's own OpenWeather/SMN quota: cap requests per user.
+_weather_calls = RateLimiter(limit=120, window_seconds=600)
+
+
+async def _rate_limited_user(current_user: UserRead = Depends(get_current_user)) -> UserRead:
+    _weather_calls.check_and_hit(str(current_user.id))
+    return current_user
+
+
+router = APIRouter(prefix="/weather", tags=["Weather"], dependencies=[Depends(_rate_limited_user)])
 
 WEATHER = Provide["data_providers.weather_service"]
 LAT = Query(..., ge=-90, le=90)

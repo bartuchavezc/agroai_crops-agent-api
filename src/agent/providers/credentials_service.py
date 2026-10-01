@@ -32,7 +32,9 @@ class CredentialsService:
         api_key = api_key.strip()
         register_secret(api_key)
         await validate_gemini_key(api_key)
-        await self.repo.upsert(user_id, PROVIDER_GEMINI, self.box.encrypt(api_key), api_key[-4:])
+        await self.repo.upsert(
+            user_id, PROVIDER_GEMINI, self.box.encrypt(api_key, context=str(user_id)), api_key[-4:]
+        )
         self._cache.pop(user_id, None)
         return await self.status(user_id)
 
@@ -61,7 +63,11 @@ class CredentialsService:
         cred = await self.repo.get(user_id, PROVIDER_GEMINI)
         if cred is None:
             raise ProviderKeyMissingError()
-        api_key = self.box.decrypt(cred.api_key_ciphertext)
+        api_key = self.box.decrypt(cred.api_key_ciphertext, context=str(user_id))
         register_secret(api_key)
+        if self.box.is_legacy(cred.api_key_ciphertext):  # stored before keys were bound to their user
+            await self.repo.update_ciphertext(
+                user_id, PROVIDER_GEMINI, self.box.encrypt(api_key, context=str(user_id))
+            )
         self._cache[user_id] = (time.monotonic() + _KEY_CACHE_TTL_SECONDS, api_key)
         return api_key

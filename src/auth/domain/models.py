@@ -3,15 +3,16 @@ Account, user and profile models.
 """
 import uuid
 
-from passlib.context import CryptContext
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, String
+import bcrypt
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from src.shared.database import Base
 from src.shared.domain.base import utcnow
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt only looks at the first 72 bytes of a password; longer ones are rejected at the schema level.
+BCRYPT_MAX_PASSWORD_BYTES = 72
 
 ROLE_OWNER = "owner"
 ROLE_TECNICO = "tecnico"
@@ -46,6 +47,10 @@ class User(Base):
     last_name = Column(String)
     role = Column(String(50), nullable=False, default=ROLE_OWNER)
     is_enrolled = Column(Boolean, default=False, nullable=False)
+    # A removed member keeps their row (authorship of events/reports) but can no longer log in.
+    is_active = Column(Boolean, default=True, server_default="true", nullable=False)
+    # Embedded in every JWT ("tv"); bumping it revokes all tokens issued before (password change, removal).
+    token_version = Column(Integer, default=0, server_default="0", nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -54,11 +59,14 @@ class User(Base):
 
     @staticmethod
     def get_password_hash(password: str) -> str:
-        return pwd_context.hash(password)
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
     @staticmethod
     def verify_password(plain_password: str, hashed_password: str) -> bool:
-        return pwd_context.verify(plain_password, hashed_password)
+        try:
+            return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+        except ValueError:  # over 72 bytes, or a malformed stored hash
+            return False
 
 
 class UserProfile(Base):

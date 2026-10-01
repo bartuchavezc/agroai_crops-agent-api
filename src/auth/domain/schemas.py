@@ -6,7 +6,21 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from typing import Annotated
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
+
+from .models import BCRYPT_MAX_PASSWORD_BYTES
+
+
+def _bcrypt_sized(password: str) -> str:
+    if len(password.encode()) > BCRYPT_MAX_PASSWORD_BYTES:
+        raise ValueError(f"La contraseña puede tener como máximo {BCRYPT_MAX_PASSWORD_BYTES} bytes.")
+    return password
+
+
+# New passwords: at least 8 characters, at most what bcrypt actually hashes (72 bytes).
+NewPassword = Annotated[str, Field(min_length=8), AfterValidator(_bcrypt_sized)]
 
 
 class UserBase(BaseModel):
@@ -18,13 +32,13 @@ class UserBase(BaseModel):
 
 class SignupRequest(UserBase):
     """Creates a new account and its owner user."""
-    password: str = Field(min_length=8)
+    password: NewPassword
     account_name: str | None = Field(default=None, max_length=255)
 
 
 class MemberCreate(UserBase):
     """An account owner adds a family member / technician to the account."""
-    password: str = Field(min_length=8)
+    password: NewPassword
     role: Literal["tecnico", "staff"] = "staff"
 
 
@@ -45,6 +59,7 @@ class UserRead(UserBase):
     account_id: UUID
     role: str | None = None
     is_enrolled: bool = False
+    is_active: bool = True
     created_at: datetime
     updated_at: datetime
 
@@ -67,14 +82,14 @@ class MeResponse(BaseModel):
 
 class LoginRequest(BaseModel):
     """Schema for login request."""
-    email: str
-    password: str
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=1024)
 
 
 class PasswordChangeRequest(BaseModel):
     """Schema for a self-service password change."""
-    current_password: str
-    new_password: str = Field(min_length=8)
+    current_password: str = Field(max_length=1024)
+    new_password: NewPassword
 
 
 class TokenResponse(BaseModel):

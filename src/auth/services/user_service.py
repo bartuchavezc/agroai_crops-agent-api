@@ -71,13 +71,23 @@ class UserService:
         user = await self.user_repository.update_role(user_id, account_id, role)
         return UserRead.model_validate(user) if user else None
 
-    async def change_password(self, user_id: UUID, current_password: str, new_password: str) -> bool:
-        """Change a user's password after verifying the current one. False if the current one is wrong."""
+    async def change_password(self, user_id: UUID, current_password: str, new_password: str) -> User | None:
+        """Change a user's password after verifying the current one; every token issued before stops working.
+        Returns the updated user (to mint a fresh token), or None if the current password is wrong."""
         user = await self.user_repository.get_by_id(user_id)
         if not user or not User.verify_password(current_password, user.password_hash):
-            return False
-        await self.user_repository.update_password(user_id, User.get_password_hash(new_password))
-        return True
+            return None
+        return await self.user_repository.update_password(user_id, User.get_password_hash(new_password))
+
+    async def get_user_for_token(self, user_id: UUID, token_version: int) -> UserRead | None:
+        """The user a JWT refers to, or None if they were removed or the token was revoked."""
+        user = await self.user_repository.get_by_id(user_id)
+        if not user or not user.is_active or user.token_version != token_version:
+            return None
+        return UserRead.model_validate(user)
+
+    async def remove_member(self, user_id: UUID, account_id: UUID) -> bool:
+        return await self.user_repository.deactivate(user_id, account_id) is not None
 
     async def get_user_with_account(self, user_id: UUID) -> tuple[User | None, dict | None]:
         """

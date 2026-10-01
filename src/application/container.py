@@ -55,7 +55,7 @@ class ApplicationContainer(containers.DeclarativeContainer):
     storage_service = providers.Singleton(StorageService, file_repository=file_repository)
 
     rules_engine = providers.Singleton(RulesEngine)
-    alert_service = providers.Singleton(AlertService, session_factory=db_session_factory)
+    alert_service = providers.Singleton(AlertService, session_factory=db_session_factory, farm_service=farm_service)
     forecast_alert_service = providers.Singleton(
         ForecastAlertService,
         farm_repository=farm_repository,
@@ -80,7 +80,9 @@ class ApplicationContainer(containers.DeclarativeContainer):
     )
 
     management_repository = providers.Singleton(ManagementRepository, session_factory=db_session_factory)
-    management_service = providers.Singleton(ManagementService, repository=management_repository)
+    management_service = providers.Singleton(
+        ManagementService, repository=management_repository, farm_service=farm_service
+    )
 
     zone_satellite_repository = providers.Singleton(ZoneSatelliteRepository, session_factory=db_session_factory)
     satellite_service = providers.Singleton(

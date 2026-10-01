@@ -154,8 +154,8 @@ class TestChangePassword:
         svc = UserService(user_repository=repo)
         uid = uuid4()
         with patch("src.auth.domain.models.User.verify_password", return_value=False):
-            assert await svc.change_password(uid, "bad", "newpassword") is False
+            assert await svc.change_password(uid, "bad", "newpassword") is None
         repo.update_password.assert_not_called()
         with patch("src.auth.domain.models.User.verify_password", return_value=True):
-            assert await svc.change_password(uid, "ok", "newpassword") is True
+            assert await svc.change_password(uid, "ok", "newpassword") is repo.update_password.return_value
         repo.update_password.assert_awaited_once()

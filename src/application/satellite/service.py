@@ -18,6 +18,7 @@ from src.providers.satellite.copernicus import CopernicusAdapter
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
 from src.shared.utils.errors import InvalidInputError
+from src.shared.utils.rate_limit import RateLimiter
 
 from .models import ZoneSatelliteReading
 from .overlay import draw_boundary_outline
@@ -31,6 +32,8 @@ logger = logging.getLogger(__name__)
 # (render) even when a clear, still-recent pass exists a bit further back. Shared by check_field and
 # get_or_render_image so both queries always look at the same period.
 _LOOKBACK_DAYS = 30
+# Copernicus calls (status checks + map renders) per account per hour. The free tier is ~10k credits/month.
+COPERNICUS_CALLS_PER_HOUR = 30
 
 
 def _lookback_window() -> tuple[str, str]:
@@ -73,6 +76,18 @@ class ZoneSatelliteService:
         self.storage = storage_service
         self.alerts = alert_service
         self.rules = rules_engine
+        # Every Copernicus call spends the deployment's shared monthly processing credits: cap them per account.
+        self.copernicus_calls = RateLimiter(COPERNICUS_CALLS_PER_HOUR, 3600)
+
+    def _copernicus_budget_left(self, actor: Actor) -> bool:
+        key = str(actor.account_id)
+        if self.copernicus_calls.retry_after(key) is not None:
+            return False
+        self.copernicus_calls.hit(key)
+        return True
+
+    def _spend_copernicus_call(self, actor: Actor) -> None:
+        self.copernicus_calls.check_and_hit(str(actor.account_id))
 
     async def check_field(self, actor: Actor, field_id: UUID) -> ZoneSatelliteStatus:
         field = await self.farm.get_field(actor, field_id)
@@ -95,7 +110,11 @@ class ZoneSatelliteService:
 
         start, end = _lookback_window()
         boundary_scoped = bool(field.boundary)
-        stats = await self.copernicus.ndvi_stats(field.latitude, field.longitude, start, end, polygon=field.boundary)
+        stats = (
+            await self.copernicus.ndvi_stats(field.latitude, field.longitude, start, end, polygon=field.boundary)
+            if self._copernicus_budget_left(actor)
+            else None  # over the hourly budget: same answer as a failed fetch, with the last stored reading
+        )
         if stats is None:
             return ZoneSatelliteStatus(
                 field_id=field.id,
@@ -167,6 +186,7 @@ class ZoneSatelliteService:
                 return existing
         if not self.copernicus.configured:
             return None
+        self._spend_copernicus_call(actor)
         start, end = _lookback_window()
         png = await self.copernicus.render_map(field.latitude, field.longitude, start, end)
         if not png:
@@ -197,6 +217,7 @@ class ZoneSatelliteService:
             raise InvalidInputError(f"Field '{field.name}' has no coordinates.")
         if not self.copernicus.configured:
             return None
+        self._spend_copernicus_call(actor)
         start, end = _lookback_window()
         png = await self.copernicus.true_color_map(field.latitude, field.longitude, start, end)
         if not png:

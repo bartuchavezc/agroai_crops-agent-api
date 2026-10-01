@@ -30,7 +30,7 @@ from src.config.bootstrap import build_container
 from src.providers.weather.router import router as weather_router
 from src.shared.database import dispose_database_connections, get_engine
 from src.shared.utils import get_logger
-from src.shared.utils.errors import CropAnalysisError
+from src.shared.utils.errors import CropAnalysisError, RateLimitedError
 
 logger = get_logger(__name__)
 
@@ -84,7 +84,12 @@ def create_app() -> FastAPI:
     container.wire(modules=WIRED_MODULES)
     config = container.config
 
+    # The interactive docs and the schema map every endpoint; only served in development.
+    docs_enabled = bool(config.app.dev_mode())
     app = FastAPI(
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
         title=config.app.name(),
         version=config.app.version(),
         description="AgroAI - asistente agronómico con Gemini (BYOK), memoria de agente y alertas SMN.",
@@ -103,9 +108,11 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(CropAnalysisError)
     async def domain_error_handler(request: Request, exc: CropAnalysisError):
+        headers = {"Retry-After": str(exc.retry_after)} if isinstance(exc, RateLimitedError) else None
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.message, "error_code": exc.error_code},
+            headers=headers,
         )
 
     @app.exception_handler(HTTPException)
