@@ -59,11 +59,12 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     async def get_field_sun_exposure(field: Optional[str] = None) -> dict:
         """Direct-sun hours for a field in summer/winter/equinox, computed from real solar astronomy and the
         field's plan (walls, trees, buildings with real shapes and heights) — not a guess. Two views: `by_season`
-        (hours per compass octant N/NE/E/SE/S/SO/O/NO, an approximation) and, when the field has a terrain shape
-        and shade-casting elements, `terrain`: per season, the mean hours of direct sun, the percent of the
-        terrain in full sun (6+ h), part shade (3-6 h) and shade (<3 h), and where the sunniest and shadiest
-        zones are. Use it to reason about what to plant where (sun-loving crops in the sunniest zone,
-        shade-tolerant ones in the shadiest)."""
+        (hours per compass octant N/NE/E/SE/S/SO/O/NO, an approximation) and, when the plan has an area and
+        shade-casting elements, `environment` (the surroundings seen in the photos) and `plot` (the field's own
+        growing plot, when drawn), each per season: mean hours of direct sun over a 1 m grid, the percent of the
+        area in full sun (6+ h), part shade (3-6 h) and shade (<3 h), and where the sunniest and shadiest zones
+        are. Use it to reason about what to plant where (sun-loving crops in the sunniest zone, shade-tolerant
+        ones in the shadiest)."""
         target = await resolve_field(deps, ctx, field)
         result = await deps.farm.sun_exposure(ctx.actor, target.id)
         return compact(result)

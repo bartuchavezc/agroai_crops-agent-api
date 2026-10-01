@@ -72,7 +72,7 @@ async def extract_layout_from_photo(
     )
 
     objects = plan_to_layout_objects(extraction, camera, bearing, entorno_frame, photo.id)
-    campo = campo_element(field, entorno)
+    campo = campo_element(field, entorno, bearing)
     if campo is not None:
         new_elements.append(campo)
     return [compact(o) for o in [*new_elements, *objects]], camera

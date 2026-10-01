@@ -86,14 +86,18 @@ def polygon_element(element_type: str, label: str, points: list[Point], **extra)
     )
 
 
-def campo_element(field, entorno: Optional[list[Point]]) -> Optional[LayoutObject]:
+def campo_element(field, entorno: Optional[list[Point]], bearing_deg: Optional[float] = None) -> Optional[LayoutObject]:
     """The campo drawn from the FIELD's own measures (never from the entorno's), centered inside the entorno by
-    default. None if the field has no measures or the plan already has a campo."""
+    default. A campo typed as width x length is squared up with the photo (its length along the view direction);
+    one traced on the satellite keeps its real orientation. None if the field has no measures or the plan already
+    has a campo."""
     if any(o.type == "campo" for o in field.layout_objects):
         return None
     shape = campo_shape_from_field(field)
     if not shape:
         return None
+    if bearing_deg is not None and not field.boundary:
+        shape = [frame_to_enu(p, (0.0, 0.0), bearing_deg) for p in shape]
     cx, cy = (0.0, 0.0)
     if entorno:
         cx, cy = sum(p[0] for p in entorno) / len(entorno), sum(p[1] for p in entorno) / len(entorno)
