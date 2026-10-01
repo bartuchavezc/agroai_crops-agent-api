@@ -167,3 +167,30 @@ def test_plan_element_tolerates_out_of_range_values():
     assert extraction.elements[0].type == "otro"
     assert extraction.elements[0].confidence == 1.0
     assert extraction.elements[1].height_m == 0.0
+
+
+def test_plan_element_tolerates_unknown_kind_and_bad_shapes():
+    from src.agent.schemas import PlanExtraction
+
+    extraction = PlanExtraction.model_validate_json(
+        '{"elements": ['
+        '{"label": "Pileta", "type": "pileta", "kind": "rectangulo", "points": [{"x": 0, "y": 0}]},'
+        '{"label": "Pino", "type": "arbol", "kind": "circle", "center": "no-es-un-punto", "radius_m": "2m"},'
+        '{"label": "Cerco", "type": "cerco", "kind": "polyline", "points": "no-es-una-lista", "thickness_m": null},'
+        '{"type": "otro", "kind": "polygon"}'
+        "]}"
+    )
+    # unknown kind ("rectangulo") falls back to "polygon", the most generic shape
+    assert extraction.elements[0].kind == "polygon"
+    assert extraction.elements[1].center is None
+    assert extraction.elements[1].radius_m is None
+    assert extraction.elements[2].points is None
+    assert extraction.elements[2].thickness_m is None
+    assert extraction.elements[3].label == ""  # missing label degrades to empty, not a validation error
+
+
+def test_plan_point_tolerates_null_or_unparseable_coordinates():
+    from src.agent.schemas import PlanPoint
+
+    assert PlanPoint.model_validate({"x": None, "y": "3.5"}) == PlanPoint(x=0.0, y=3.5)
+    assert PlanPoint.model_validate({"x": "sin dato"}) == PlanPoint(x=0.0, y=0.0)
