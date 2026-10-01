@@ -15,6 +15,7 @@ from src.shared.domain.base import utcnow
 from src.shared.utils.errors import InvalidInputError
 
 from .context import ToolDeps, TurnContext, compact, parse_date, parse_when, resolve_field, tool
+from .guard import propose
 
 
 def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
@@ -314,22 +315,32 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def delete_field(field: str) -> dict:
-        """Soft-delete a field: it disappears from lists and reports, but the data is kept and can be
-        restored by support if needed — it is not permanent. Even so, ONLY call this after the user has
-        explicitly confirmed in a message of their own: first restate which field you're about to remove
-        and what that implies (its crop cycles and events stop showing up), then wait for an explicit yes.
-        Never call this in the same turn as the first request to delete something."""
+        """Propose soft-deleting a field: it disappears from lists and reports (recoverable by support).
+        Nothing is deleted yet: restate which field would be removed and what that implies (its crop cycles and
+        events stop showing up); only after the user says yes in their next message call confirm_action with
+        the returned confirmation_id."""
         target = await resolve_field(deps, ctx, field)
-        await deps.farm.delete_field(ctx.actor, target.id)
-        return {"deleted_field": target.name}
+
+        async def run() -> dict:
+            await deps.farm.delete_field(ctx.actor, target.id)
+            return {"deleted_field": target.name}
+
+        return propose(ctx, deps.pending_actions, f"Delete the field '{target.name}'", run)
 
     @tool
     async def delete_crop_cycle(crop_cycle_id: str) -> dict:
-        """Soft-delete a crop cycle (recoverable, not permanent). Same rule as delete_field: restate what
-        you're about to remove and wait for the user's explicit confirmation in a separate message first.
-        Use list_crop_cycles to find the id if you don't have it."""
-        await deps.farm.delete_crop_cycle(ctx.actor, UUID(crop_cycle_id))
-        return {"deleted_crop_cycle_id": crop_cycle_id}
+        """Propose soft-deleting a crop cycle (recoverable). Same flow as delete_field: nothing is deleted until
+        the user confirms in their next message and you call confirm_action. Use list_crop_cycles to find the id."""
+        cycle = await deps.farm.get_crop_cycle(ctx.actor, UUID(crop_cycle_id))
+        crop = await deps.farm.get_crop_master(ctx.actor, cycle.crop_master_id)
+        field_ = await deps.farm.get_field(ctx.actor, cycle.field_id)
+        label = f"{crop.name}{f' {crop.variety}' if crop.variety else ''}"
+
+        async def run() -> dict:
+            await deps.farm.delete_crop_cycle(ctx.actor, cycle.id)
+            return {"deleted_crop_cycle_id": crop_cycle_id}
+
+        return propose(ctx, deps.pending_actions, f"Delete the {label} crop cycle in '{field_.name}'", run)
 
     return [
         create_field,

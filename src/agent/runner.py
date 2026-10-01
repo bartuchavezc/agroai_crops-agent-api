@@ -249,6 +249,7 @@ class AgentRunner:
             tz=self.tz,
             default_field_id=default_field_id,
             image_identifier=image_identifier,
+            user_message=message,
         )
         agent = LlmAgent(
             name="agroai_assistant",
