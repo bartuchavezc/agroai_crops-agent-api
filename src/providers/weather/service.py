@@ -6,7 +6,7 @@ Weather queries over the TimescaleDB hypertables.
 import logging
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -145,9 +145,10 @@ class WeatherService:
     # ---------------------------------------------------------------- forecast (SMN)
 
     async def forecast_rows(
-        self, latitude: float, longitude: float, hours: int = 72, resolution: Optional[str] = None
+        self, latitude: float, longitude: float, hours: int = 72, resolution: Optional[str] = None,
+        since: Optional[datetime] = None,
     ) -> list[WeatherForecast]:
-        start = utcnow() - timedelta(hours=1)
+        start = since or utcnow() - timedelta(hours=1)
         stmt = select(WeatherForecast).where(
             WeatherForecast.latitude == round_coord(latitude),
             WeatherForecast.longitude == round_coord(longitude),
@@ -160,8 +161,15 @@ class WeatherService:
             return list((await session.execute(stmt.order_by(WeatherForecast.time))).scalars().all())
 
     async def daily_forecast(self, latitude: float, longitude: float, days: int = 3) -> list[DailyForecast]:
-        rows = await self.forecast_rows(latitude, longitude, hours=days * 24)
         today = datetime.now(self.tz).date()
+        # Read from the start of today, not "now - 1h": SMN daily rows are stamped at 00 UTC of the day they
+        # describe, which in Argentina (UTC-3) is 21:00 of the previous local day. With a "now - 1h" window,
+        # from 22:00 local on, tomorrow's daily row (tmin/tmax) was already "in the past" and got dropped —
+        # and today's hourly rows before now were missing from today's min/max too.
+        local_midnight = datetime.combine(today, time.min, tzinfo=self.tz)
+        since = min(local_midnight, datetime.combine(today, time.min, tzinfo=timezone.utc))
+        hours = int((utcnow() - since).total_seconds() // 3600) + days * 24
+        rows = await self.forecast_rows(latitude, longitude, hours=hours, since=since)
         hourly: dict[date, list[WeatherForecast]] = defaultdict(list)
         daily: dict[date, WeatherForecast] = {}
         for r in rows:
