@@ -111,3 +111,35 @@ async def test_forecast_alerts_are_created_once(client, signup, container):
 
     ack = await client.put(f"/api/v1/alerts/{active[0]['id']}/acknowledge", headers=owner["headers"])
     assert ack.status_code == 200 and ack.json()["acknowledged"] is True
+
+
+async def test_daily_forecast_keeps_smn_daily_rows_late_at_night(container):
+    """SMN daily rows are stamped 00 UTC = 21:00 of the previous day in Argentina. At 22:30 local the next
+    day's row is already 1.5 h "in the past"; the daily summary must still use its tmin/tmax."""
+    import src.providers.weather.service as weather_module
+
+    tz = ZoneInfo("America/Argentina/Buenos_Aires")
+    frozen = datetime(2026, 7, 14, 22, 30, tzinfo=tz)  # = 2026-07-15 01:30 UTC
+    lat, lon = -33.11, -60.52  # coordinates no other test uses
+    tomorrow = frozen.date() + timedelta(days=1)
+    row = {c: None for c in WeatherForecast.__table__.columns.keys()}
+    row.update({
+        "time": datetime.combine(tomorrow, time(0), tzinfo=timezone.utc),
+        "latitude": round_coord(lat), "longitude": round_coord(lon), "source": "smn_wrf", "resolution": "24h",
+        "issued_at": frozen, "tmin": -4.0, "tmax": 10.0,
+    })
+    async with container.db_session_factory()() as session:
+        await session.execute(insert(WeatherForecast.__table__).values([row]).on_conflict_do_nothing())
+        await session.commit()
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen.astimezone(tz) if tz else frozen.replace(tzinfo=None)
+
+    weather = container.data_providers.weather_service()
+    with patch.object(weather_module, "datetime", FrozenDatetime), \
+            patch.object(weather_module, "utcnow", lambda: frozen.astimezone(timezone.utc)), \
+            patch.object(weather, "tz", tz):
+        days = await weather.daily_forecast(lat, lon, days=3)
+    assert any(d.date == tomorrow and d.tmin == -4.0 and d.tmax == 10.0 for d in days)
