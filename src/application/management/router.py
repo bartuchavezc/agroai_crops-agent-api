@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional, Union
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
@@ -11,13 +11,16 @@ from src.shared.utils.routing import route_with_and_without_slash as _both
 from .schemas import (
     BudgetEntryCreate,
     BudgetEntryRead,
+    BudgetEntryUpdate,
     BudgetSummary,
     RoadmapItemCreate,
     RoadmapItemRead,
     RoadmapItemUpdate,
+    RoadmapStatus,
     ShoppingItemCreate,
     ShoppingItemRead,
     ShoppingItemUpdate,
+    ShoppingStatus,
 )
 from .service import ManagementService
 
@@ -25,16 +28,21 @@ router = APIRouter(prefix="/management", tags=["Management"])
 
 MANAGEMENT = Provide["application.management_service"]
 
+# field_id / assigned_to filters: a UUID, or "none" for items with no field / nobody assigned.
+IdFilter = Optional[Union[UUID, Literal["none"]]]
+
 
 # ---------- shopping list ----------
 
 @_both(router.get, "/shopping-list", response_model=List[ShoppingItemRead], summary="List Shopping List")
 @inject
 async def list_shopping_list(
-    field_id: Optional[UUID] = None, status_filter: Optional[str] = None,
+    field_id: IdFilter = None, status_filter: Optional[ShoppingStatus] = None, assigned_to: IdFilter = None,
     actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT),
 ):
-    return await management.list_shopping_list(actor, field_id=field_id, status=status_filter)
+    return await management.list_shopping_list(
+        actor, field_id=field_id, status=status_filter, assigned_to=assigned_to
+    )
 
 
 @_both(
@@ -71,10 +79,11 @@ async def delete_shopping_item(
 @_both(router.get, "/budget", response_model=List[BudgetEntryRead], summary="List Budget Entries")
 @inject
 async def list_budget(
-    field_id: Optional[UUID] = None, since: Optional[str] = None, until: Optional[str] = None,
+    field_id: IdFilter = None, since: Optional[str] = None, until: Optional[str] = None,
+    type: Optional[Literal["gasto", "ingreso"]] = None,
     actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT),
 ):
-    return await management.list_budget(actor, field_id=field_id, since=since, until=until)
+    return await management.list_budget(actor, field_id=field_id, since=since, until=until, type=type)
 
 
 @_both(
@@ -91,10 +100,19 @@ async def add_budget_entry(
 @router.get("/budget/summary", response_model=BudgetSummary, summary="Budget Summary")
 @inject
 async def get_budget_summary(
-    field_id: Optional[UUID] = None, since: Optional[str] = None, until: Optional[str] = None,
+    field_id: IdFilter = None, since: Optional[str] = None, until: Optional[str] = None,
     actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT),
 ):
     return await management.get_budget_summary(actor, field_id=field_id, since=since, until=until)
+
+
+@router.put("/budget/{entry_id}", response_model=BudgetEntryRead, summary="Update Budget Entry")
+@inject
+async def update_budget_entry(
+    entry_id: UUID, body: BudgetEntryUpdate,
+    actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT),
+):
+    return await management.update_budget_entry(actor, entry_id, body)
 
 
 @router.delete("/budget/{entry_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete Budget Entry")
@@ -111,10 +129,10 @@ async def delete_budget_entry(
 @_both(router.get, "/roadmap", response_model=List[RoadmapItemRead], summary="List Roadmap")
 @inject
 async def list_roadmap(
-    field_id: Optional[UUID] = None, status_filter: Optional[str] = None,
+    field_id: IdFilter = None, status_filter: Optional[RoadmapStatus] = None, assigned_to: IdFilter = None,
     actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT),
 ):
-    return await management.list_roadmap(actor, field_id=field_id, status=status_filter)
+    return await management.list_roadmap(actor, field_id=field_id, status=status_filter, assigned_to=assigned_to)
 
 
 @_both(
