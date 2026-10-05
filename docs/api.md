@@ -40,7 +40,9 @@ Los errores de dominio responden `{"detail": "...", "error_code": "..."}`.
 | GET / PUT / DELETE | `/farm-management/fields/{id}` | PUT/DELETE: owner/tecnico |
 | GET / POST | `/farm-management/crop-masters?q=` | Catálogo global + de la cuenta |
 | GET / DELETE | `/farm-management/crop-masters/{id}` | Solo se borran los de la cuenta |
-| GET / POST | `/farm-management/crop-cycles?field_id=&status=` | POST: owner/tecnico |
+| GET / POST | `/farm-management/fields/{id}/zones` | Zonas del campo (`cajon`, `cantero`, `invernadero`, `hidroponia`), numeradas por tipo: `{type, number?, name?, notes?, layout_object_id?}` → `label` "Cantero 3". POST: owner/tecnico; sin `number` toma el siguiente libre |
+| PUT / DELETE | `/farm-management/zones/{id}` | owner/tecnico. Al borrar, sus ciclos quedan en el campo sin zona |
+| GET / POST | `/farm-management/crop-cycles?field_id=&status=&zone_id=` | POST: owner/tecnico. `zone_id` opcional (de una zona del mismo campo) |
 | GET / PUT / DELETE | `/farm-management/crop-cycles/{id}` | |
 | GET / POST | `/farm-management/events?field_id=&type=&since=` | Cualquier rol registra eventos |
 | PUT / DELETE | `/farm-management/events/{id}` | Autor u owner/tecnico |
@@ -66,8 +68,9 @@ disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, plan
 | Método | Ruta | Notas |
 |---|---|---|
 | POST | `/upload/image` | multipart `image_file`, opcional `field_id`, `crop_cycle_id` → `{report_id, image_identifier}` |
+| POST | `/upload/zone-tracking` | Seguimiento diario de una zona: multipart `zone_id` + 1-4 `image_files` → un reporte `periodic` con `zone_id`, `crop_cycle_ids` (ciclos activos de la zona) e `image_identifiers`; se analiza en segundo plano (`raw_analysis_data.llm_structured_zone`: resumen + una evaluación por cultivo) |
 | POST | `/analyze` | `{report_id, image_identifier?}` → diagnóstico estructurado (Gemini multimodal) |
-| GET / POST | `/reports?field_id=` | |
+| GET / POST | `/reports?field_id=&crop_cycle_id=&zone_id=&report_type=` | `crop_cycle_id` incluye los seguimientos de zona que cubrieron ese ciclo |
 | GET / PUT / DELETE | `/reports/{id}` | `raw_analysis_data.llm_structured_diagnosis` |
 
 ## Alertas

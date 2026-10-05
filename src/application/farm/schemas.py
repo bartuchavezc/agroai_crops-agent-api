@@ -2,12 +2,15 @@ from datetime import date, datetime
 from typing import Any, Dict, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field as PField, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field as PField, computed_field, field_validator, model_validator
 
 from src.application.soil_data.schemas import SoilContext
 
+from .models import ZONE_TYPE_LABELS
+
 Octant = Literal["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
 CropCycleStatus = Literal["planned", "planted", "growing", "harvested", "failed"]
+ZoneType = Literal["cajon", "cantero", "invernadero", "hidroponia"]
 EventType = Literal[
     "sowing",
     "transplant",
@@ -204,6 +207,48 @@ class SunMapRead(BaseModel):
     timeline: list[SunMomentRead] = []
 
 
+# ---------- Zones ----------
+
+class FieldZoneCreate(BaseModel):
+    type: ZoneType
+    number: Optional[int] = PField(default=None, ge=1, le=999, description="Omitted: the next free number")
+    name: Optional[str] = PField(default=None, max_length=255)
+    notes: Optional[str] = None
+    layout_object_id: Optional[str] = PField(default=None, max_length=64)
+
+
+class FieldZoneUpdate(BaseModel):
+    type: Optional[ZoneType] = None
+    number: Optional[int] = PField(default=None, ge=1, le=999)
+    name: Optional[str] = PField(default=None, max_length=255)
+    notes: Optional[str] = None
+    layout_object_id: Optional[str] = PField(default=None, max_length=64)
+
+
+def zone_label(zone_type: str, number: int) -> str:
+    return f"{ZONE_TYPE_LABELS.get(zone_type, zone_type)} {number}"
+
+
+class FieldZoneRead(ORMModel):
+    id: UUID
+    account_id: UUID
+    field_id: UUID
+    type: ZoneType
+    number: int
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    layout_object_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    @computed_field
+    @property
+    def label(self) -> str:
+        """"Cantero 3" (+ the nickname, if any)."""
+        base = zone_label(self.type, self.number)
+        return f"{base} ({self.name})" if self.name else base
+
+
 # ---------- Crop masters ----------
 
 class CropMasterBase(BaseModel):
@@ -240,6 +285,7 @@ class CropMasterRead(CropMasterBase, ORMModel):
 class CropCycleCreate(BaseModel):
     field_id: UUID
     crop_master_id: UUID
+    zone_id: Optional[UUID] = None
     planting_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
@@ -248,6 +294,7 @@ class CropCycleCreate(BaseModel):
 
 
 class CropCycleUpdate(BaseModel):
+    zone_id: Optional[UUID] = None
     planting_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
@@ -260,6 +307,7 @@ class CropCycleRead(ORMModel):
     account_id: UUID
     field_id: UUID
     crop_master_id: UUID
+    zone_id: Optional[UUID] = None
     planting_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
@@ -275,6 +323,7 @@ class CropCycleRead(ORMModel):
 class FieldEventCreate(BaseModel):
     field_id: UUID
     crop_cycle_id: Optional[UUID] = None
+    zone_id: Optional[UUID] = PField(default=None, description="Defaults to the crop cycle's zone")
     type: EventType
     occurred_at: Optional[datetime] = None
     quantity: Optional[float] = None
@@ -298,6 +347,7 @@ class FieldEventRead(ORMModel):
     account_id: UUID
     field_id: UUID
     crop_cycle_id: Optional[UUID] = None
+    zone_id: Optional[UUID] = None
     author_user_id: Optional[UUID] = None
     type: EventType
     occurred_at: datetime
@@ -319,9 +369,12 @@ class ActiveCycleSummary(BaseModel):
     status: CropCycleStatus
     planting_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
+    zone_id: Optional[UUID] = None
+    zone_label: Optional[str] = None
 
 
 class FieldOverview(BaseModel):
     field: FieldRead
+    zones: list[FieldZoneRead] = []
     active_cycles: list[ActiveCycleSummary]
     last_event_at: Optional[datetime] = None

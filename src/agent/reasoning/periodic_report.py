@@ -62,3 +62,50 @@ def format_event_history(events: list[FieldEventRead]) -> list[str]:
             parts.append(e.notes)
         lines.append(" - ".join(parts))
     return lines
+
+
+# ---------- zone tracking (daily follow-up of a whole cajón / cantero / invernadero / hidroponía) ----------
+
+class ZoneCropAssessment(BaseModel):
+    crop_cycle_id: str = Field(description="El id del ciclo EXACTAMENTE como figura en el contexto")
+    crop_name: str
+    visible_in_photos: bool = Field(description="False si este cultivo no se distingue en ninguna foto")
+    growth_stage: str = Field(description="Etapa fenológica observada; 'no visible' si no se ve")
+    health_status: Literal["excellent", "good", "fair", "poor", "critical", "unknown"]
+    health_summary: str = Field(description="¿Cómo está este cultivo? Citando señales visuales concretas")
+    expected_vs_actual: str = Field(description="¿Cómo debería estar a esta altura del ciclo?")
+    growth_on_track: Optional[bool] = None
+    stress_signals: list[str] = Field(default_factory=list)
+    estimated_harvest_window: Optional[str] = None
+    days_to_harvest_estimate: Optional[int] = Field(None, ge=0)
+    harvest_ready: bool = Field(description="True solo con evidencia visual concreta de punto de cosecha")
+    harvest_verdict: str
+    risks: list[str] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+
+
+class ZonePeriodicReportResult(BaseModel):
+    zone_summary: str = Field(description="¿Cómo viene la zona en conjunto? 2-4 oraciones")
+    overall_health: Literal["excellent", "good", "fair", "poor", "critical"]
+    crops: list[ZoneCropAssessment] = Field(description="Una entrada por cada ciclo listado en el contexto")
+    unlisted_plants: list[str] = Field(
+        default_factory=list, description="Plantas que se ven en las fotos pero no están registradas en la zona"
+    )
+    interactions: Optional[str] = Field(
+        None, description="Competencia, sombra entre cultivos, asociaciones favorables/desfavorables"
+    )
+    past_actions_assessment: str = Field(description="¿Las decisiones registradas afectaron algo?")
+    objectives_assessment: str
+    shared_risks: list[str] = Field(default_factory=list, description="Riesgos que afectan a toda la zona")
+    risk_severity: Literal["low", "medium", "high", "critical"]
+    recommendations: list[str] = Field(default_factory=list, description="Para la zona en conjunto")
+    confidence: float = Field(ge=0, le=1)
+    needs_human_expert: bool
+
+
+def crop_entry(analysis: dict, crop_cycle_id) -> Optional[dict]:
+    """The entry of one cycle inside a zone report's structured analysis (llm_structured_zone)."""
+    for crop in analysis.get("crops") or []:
+        if crop.get("crop_cycle_id") == str(crop_cycle_id):
+            return crop
+    return None

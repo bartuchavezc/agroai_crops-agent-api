@@ -29,6 +29,9 @@ from .schemas import (
     FieldOverview,
     FieldRead,
     FieldUpdate,
+    FieldZoneCreate,
+    FieldZoneRead,
+    FieldZoneUpdate,
     SunExposureRead,
     SunMapRead,
 )
@@ -91,6 +94,42 @@ async def update_field(
 @inject
 async def delete_field(field_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
     await farm.delete_field(actor, field_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------- zones (cajón / cantero / invernadero / hidroponía) ----------
+
+@router.get("/fields/{field_id}/zones", response_model=List[FieldZoneRead], summary="List a field's zones")
+@inject
+async def list_zones(field_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
+    return await farm.list_zones(actor, field_id)
+
+
+@router.post(
+    "/fields/{field_id}/zones", response_model=FieldZoneRead, status_code=status.HTTP_201_CREATED,
+    summary="Create a zone (owner/tecnico)",
+)
+@inject
+async def create_zone(
+    field_id: UUID, body: FieldZoneCreate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
+):
+    """Without `number` the zone gets the next free number for its type in that field."""
+    return await farm.create_zone(actor, field_id, body)
+
+
+@router.put("/zones/{zone_id}", response_model=FieldZoneRead, summary="Update a zone (owner/tecnico)")
+@inject
+async def update_zone(
+    zone_id: UUID, body: FieldZoneUpdate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
+):
+    return await farm.update_zone(actor, zone_id, body)
+
+
+@router.delete("/zones/{zone_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a zone (owner/tecnico)")
+@inject
+async def delete_zone(zone_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
+    """Its crop cycles stay in the field, without a zone."""
+    await farm.delete_zone(actor, zone_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -173,10 +212,11 @@ async def delete_crop_master(
 async def list_crop_cycles(
     field_id: Optional[UUID] = None,
     status_filter: Optional[CropCycleStatus] = Query(None, alias="status"),
+    zone_id: Optional[UUID] = None,
     actor: Actor = Depends(get_actor),
     farm: FarmService = Depends(FARM),
 ):
-    return await farm.list_crop_cycles(actor, field_id=field_id, status=status_filter)
+    return await farm.list_crop_cycles(actor, field_id=field_id, status=status_filter, zone_id=zone_id)
 
 
 @_both(

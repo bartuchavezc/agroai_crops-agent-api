@@ -5,7 +5,7 @@ import uuid
 from typing import List, Optional
 from uuid import UUID
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, Text, select
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, Text, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -24,6 +24,10 @@ class ReportModel(Base):
     account_id = Column(PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(PGUUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
     crop_cycle_id = Column(PGUUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"))
+    # Zone tracking: one report covers every active crop of the zone (crop_cycle_ids), from 1-4 photos.
+    zone_id = Column(PGUUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
+    crop_cycle_ids = Column(JSONB, nullable=False, default=list, server_default="[]")
+    image_identifiers = Column(JSONB, nullable=False, default=list, server_default="[]")
     created_by = Column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     title = Column(String(255))
     summary = Column(Text)
@@ -42,7 +46,9 @@ class SQLAlchemyReportsRepository:
         self.session_factory = session_factory
 
     async def create(self, account_id: UUID, created_by: Optional[UUID], data: ReportCreate) -> Report:
-        model = ReportModel(account_id=account_id, created_by=created_by, **data.model_dump())
+        values = data.model_dump()
+        values["crop_cycle_ids"] = [str(c) for c in data.crop_cycle_ids]  # JSONB
+        model = ReportModel(account_id=account_id, created_by=created_by, **values)
         async with self.session_factory() as session:
             session.add(model)
             await session.commit()
@@ -66,12 +72,21 @@ class SQLAlchemyReportsRepository:
         report_type: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
+        zone_id: Optional[UUID] = None,
     ) -> List[Report]:
         stmt = select(ReportModel).where(ReportModel.account_id == account_id)
         if field_id:
             stmt = stmt.where(ReportModel.field_id == field_id)
         if crop_cycle_id:
-            stmt = stmt.where(ReportModel.crop_cycle_id == crop_cycle_id)
+            # Its own reports plus the zone tracking reports that covered it.
+            stmt = stmt.where(
+                or_(
+                    ReportModel.crop_cycle_id == crop_cycle_id,
+                    ReportModel.crop_cycle_ids.contains([str(crop_cycle_id)]),
+                )
+            )
+        if zone_id:
+            stmt = stmt.where(ReportModel.zone_id == zone_id)
         if report_type:
             stmt = stmt.where(ReportModel.report_type == report_type)
         stmt = stmt.order_by(ReportModel.created_at.desc()).offset(skip).limit(limit)

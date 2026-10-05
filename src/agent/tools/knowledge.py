@@ -175,7 +175,8 @@ def report_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     @tool
     async def get_latest_periodic_report(field: Optional[str] = None) -> dict:
         """Get the most recent periodic tracking report (health/growth/stress/harvest/objectives/risks) of a
-        field, to answer questions like "how is the garden doing" or "what did the last analysis say"."""
+        field, to answer questions like "how is the garden doing" or "what did the last analysis say". A zone
+        report (daily tracking of a cantero/cajón/invernadero/hidroponía) has one assessment per crop."""
         field_id = (await resolve_field(deps, ctx, field)).id if (field or ctx.default_field_id) else None
         reports = await deps.reports.list_reports(
             ctx.actor, field_id=field_id, report_type="periodic", limit=1
@@ -189,7 +190,11 @@ def report_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             "report_id": str(r.id),
             "created_at": r.created_at.isoformat(),
             "summary": r.summary,
-            "analysis": compact((r.raw_analysis_data or {}).get("llm_structured_periodic")),
+            "zone_id": str(r.zone_id) if r.zone_id else None,
+            "analysis": compact(
+                (r.raw_analysis_data or {}).get("llm_structured_periodic")
+                or (r.raw_analysis_data or {}).get("llm_structured_zone")
+            ),
         }
 
     return [save_diagnosis_report, get_latest_periodic_report]

@@ -2,7 +2,7 @@
 """
 File upload reception endpoints.
 """
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
@@ -156,6 +156,67 @@ async def upload_crop_image(
         image_identifier=image_identifier,
         status=report.status,
         message="Image uploaded and initial report created successfully.",
+    )
+
+
+MAX_ZONE_PHOTOS = 4
+
+
+@router.post(
+    "/zone-tracking",
+    response_model=UploadImageResponse,
+    summary="Daily tracking of a zone (1-4 photos)",
+    description="Upload 1-4 photos of a cajón / cantero / invernadero / hidroponía and create one periodic report "
+    "covering every active crop of the zone. It is analyzed in the background (poll GET /reports/{report_id}).",
+)
+@inject
+async def upload_zone_tracking(
+    background_tasks: BackgroundTasks,
+    zone_id: UUID = Form(...),
+    image_files: List[UploadFile] = File(..., description="1-4 photos of the zone"),
+    actor: Actor = Depends(get_actor),
+    farm_service=Depends(Provide["application.farm_service"]),
+    storage_service=Depends(Provide["application.storage_service"]),
+    reports_service=Depends(Provide["application.reports_service"]),
+    diagnosis_service=Depends(Provide["agent.diagnosis_service"]),
+):
+    if not 1 <= len(image_files) <= MAX_ZONE_PHOTOS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Send between 1 and {MAX_ZONE_PHOTOS} photos."
+        )
+    zone = await farm_service.get_zone(actor, zone_id)
+    cycles = [
+        c for c in await farm_service.list_crop_cycles(actor, field_id=zone.field_id, zone_id=zone.id)
+        if c.status in ("planned", "planted", "growing")
+    ]
+    if not cycles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{zone.label} has no active crop cycles to track. Assign its crops to the zone first.",
+        )
+    photos = [await receive_photo(f) for f in image_files]  # validate all before storing any
+    identifiers = [
+        await storage_service.save_image(actor, stored_name(f.filename), data, "image/jpeg")
+        for f, data in zip(image_files, photos, strict=True)
+    ]
+    report = await reports_service.create_report(
+        actor,
+        ReportCreate(
+            image_identifier=identifiers[0],
+            image_identifiers=identifiers,
+            field_id=zone.field_id,
+            zone_id=zone.id,
+            crop_cycle_ids=[c.id for c in cycles],
+            report_type="periodic",
+        ),
+    )
+    logger.info(f"{len(identifiers)} zone photo(s) uploaded for zone {zone.id}, account {actor.account_id}")
+    background_tasks.add_task(_analyze_in_background, diagnosis_service, actor, report.id)
+    return UploadImageResponse(
+        report_id=report.id,
+        image_identifier=identifiers[0],
+        status=report.status,
+        message="Zone photos uploaded; the tracking report is being analyzed.",
     )
 
 
