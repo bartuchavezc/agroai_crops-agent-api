@@ -7,6 +7,11 @@ from src.shared.database import Base
 from src.shared.domain.base import utcnow
 
 
+# An assistant message is saved as `pending` when its turn starts and ends up `complete` or `error`;
+# user messages are always `complete`.
+MESSAGE_STATUSES = ("complete", "pending", "error")
+
+
 class Conversation(Base):
     """A chat thread. Private to its user; one ADK session per conversation (same id)."""
     __tablename__ = "conversations"
@@ -26,6 +31,7 @@ class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
     __table_args__ = (
         CheckConstraint("role IN ('user', 'assistant')", name="role_valid"),
+        CheckConstraint(f"status IN {MESSAGE_STATUSES}", name="status_valid"),
         Index("ix_conversation_messages_conversation_created", "conversation_id", "created_at"),
     )
 
@@ -39,4 +45,6 @@ class ConversationMessage(Base):
     sources = Column(JSONB, nullable=False, default=list)
     tool_calls = Column(JSONB, nullable=False, default=list)
     attachments = Column(JSONB, nullable=False, default=list)
+    status = Column(String(10), nullable=False, default="complete", server_default="complete")
+    error_code = Column(String(50))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)

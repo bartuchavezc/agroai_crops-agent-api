@@ -38,4 +38,6 @@ class MessageRead(BaseModel):
     sources: list[dict[str, Any]] = Field(default_factory=list)
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     attachments: list[dict[str, Any]] = Field(default_factory=list)
+    status: Literal["complete", "pending", "error"] = "complete"
+    error_code: Optional[str] = None
     created_at: datetime

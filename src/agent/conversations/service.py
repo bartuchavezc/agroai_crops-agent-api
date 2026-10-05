@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
-from src.shared.utils.errors import NotFoundError
+from src.shared.utils.errors import InvalidInputError, NotFoundError
 
 from .models import Conversation, ConversationMessage
 from .schemas import ConversationCreate, ConversationRead, ConversationUpdate, MessageRead
@@ -103,48 +103,119 @@ class ConversationService:
         if self._session_deleter:
             await self._session_deleter(actor, conversation_id)
 
-    async def add_turn(
+    async def start_turn(
         self,
         actor: Actor,
         conversation_id: UUID,
         user_text: str,
-        assistant_text: str,
         image_identifier: Optional[str],
-        sources: list[dict],
-        tool_calls: list[dict],
-        attachments: Optional[list[dict]] = None,
-    ) -> tuple[MessageRead, MessageRead]:
-        now = utcnow()
-        user_msg = ConversationMessage(
-            conversation_id=conversation_id,
-            role="user",
-            content=user_text,
-            image_identifier=image_identifier,
-            created_at=now,
-        )
-        assistant_msg = ConversationMessage(
-            conversation_id=conversation_id,
-            role="assistant",
-            content=assistant_text,
-            sources=sources,
-            tool_calls=tool_calls,
-            attachments=attachments or [],
-            created_at=utcnow(),
-        )
+        retry_message_id: Optional[UUID] = None,
+    ) -> tuple[UUID, UUID]:
+        """Save the user's message and a `pending` assistant placeholder before the agent runs, so a
+        turn that fails or outlives the client is still in the transcript. With retry_message_id the
+        user message of a failed turn is reused (its failed answer is dropped) instead of duplicated.
+        Returns (user_message_id, assistant_message_id)."""
         async with self.session_factory() as session:
             await self._owned(session, actor, conversation_id)
-            session.add_all([user_msg, assistant_msg])
+            if retry_message_id:
+                user_msg = await self._failed_user_message(session, conversation_id, retry_message_id)
+                await session.execute(
+                    delete(ConversationMessage).where(
+                        ConversationMessage.conversation_id == conversation_id,
+                        ConversationMessage.role == "assistant",
+                        ConversationMessage.created_at > user_msg.created_at,
+                    )
+                )
+            else:
+                user_msg = ConversationMessage(
+                    conversation_id=conversation_id,
+                    role="user",
+                    content=user_text,
+                    image_identifier=image_identifier,
+                    created_at=utcnow(),
+                )
+                session.add(user_msg)
+            assistant_msg = ConversationMessage(
+                conversation_id=conversation_id, role="assistant", content="", status="pending", created_at=utcnow()
+            )
+            session.add(assistant_msg)
             await session.execute(
                 update(Conversation).where(Conversation.id == conversation_id).values(updated_at=utcnow())
             )
             await session.commit()
-            await session.refresh(user_msg)
-            await session.refresh(assistant_msg)
-        return MessageRead.model_validate(user_msg), MessageRead.model_validate(assistant_msg)
+            return user_msg.id, assistant_msg.id
+
+    async def _failed_user_message(
+        self, session: AsyncSession, conversation_id: UUID, message_id: UUID
+    ) -> ConversationMessage:
+        """The last user message of the conversation, only if its answer failed (or never came)."""
+        last_user = (
+            await session.execute(
+                select(ConversationMessage)
+                .where(ConversationMessage.conversation_id == conversation_id, ConversationMessage.role == "user")
+                .order_by(ConversationMessage.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if last_user is None or last_user.id != message_id:
+            raise NotFoundError("Only the last message of the conversation can be retried.")
+        answered = (
+            await session.execute(
+                select(ConversationMessage.id).where(
+                    ConversationMessage.conversation_id == conversation_id,
+                    ConversationMessage.role == "assistant",
+                    ConversationMessage.status != "error",
+                    ConversationMessage.created_at > last_user.created_at,
+                )
+            )
+        ).first()
+        if answered is not None:
+            raise InvalidInputError("That message already has an answer.")
+        return last_user
+
+    async def retry_text(self, actor: Actor, conversation_id: UUID, message_id: UUID) -> tuple[str, Optional[str]]:
+        """(text, image_identifier) of a failed user message that is about to be retried."""
+        async with self.session_factory() as session:
+            await self._owned(session, actor, conversation_id)
+            msg = await self._failed_user_message(session, conversation_id, message_id)
+            return msg.content, msg.image_identifier
+
+    async def finish_turn(
+        self,
+        assistant_message_id: UUID,
+        assistant_text: str,
+        sources: list[dict],
+        tool_calls: list[dict],
+        attachments: Optional[list[dict]] = None,
+        error_code: Optional[str] = None,
+    ) -> None:
+        """Complete the turn's placeholder; with error_code it's kept as a failed answer (with
+        whatever text was generated before the failure)."""
+        async with self.session_factory() as session:
+            await session.execute(
+                update(ConversationMessage)
+                .where(ConversationMessage.id == assistant_message_id)
+                .values(
+                    content=assistant_text,
+                    sources=sources,
+                    tool_calls=tool_calls,
+                    attachments=attachments or [],
+                    status="error" if error_code else "complete",
+                    error_code=error_code,
+                )
+            )
+            await session.commit()
 
     async def messages(
-        self, actor: Actor, conversation_id: UUID, limit: int = 50, before: Optional[datetime] = None
+        self,
+        actor: Actor,
+        conversation_id: UUID,
+        limit: int = 50,
+        before: Optional[datetime] = None,
+        running: bool = False,
     ) -> list[MessageRead]:
+        """`running`: whether a turn of this conversation is being generated right now; otherwise a
+        `pending` answer is reported as interrupted."""
         async with self.session_factory() as session:
             await self._owned(session, actor, conversation_id)
             stmt = select(ConversationMessage).where(ConversationMessage.conversation_id == conversation_id)
@@ -152,4 +223,11 @@ class ConversationService:
                 stmt = stmt.where(ConversationMessage.created_at < before)
             stmt = stmt.order_by(ConversationMessage.created_at.desc()).limit(limit)
             rows = (await session.execute(stmt)).scalars().all()
-        return [MessageRead.model_validate(m) for m in reversed(rows)]
+        result = []
+        for m in reversed(rows):
+            read = MessageRead.model_validate(m)
+            if read.status == "pending" and not running:
+                # The process running that turn went away (restart/deploy) without finishing it.
+                read = read.model_copy(update={"status": "error", "error_code": "TURN_INTERRUPTED"})
+            result.append(read)
+        return result

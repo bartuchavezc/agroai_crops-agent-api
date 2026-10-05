@@ -17,6 +17,7 @@ from google.adk.agents import LlmAgent, RunConfig
 from google.adk.agents.context_cache_config import ContextCacheConfig
 from google.adk.agents.run_config import StreamingMode
 from google.adk.apps import App
+from google.adk.events import Event
 from google.adk.models import FallbackModel, Gemini
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
@@ -31,6 +32,7 @@ from src.shared.domain.actor import Actor
 from src.shared.utils.errors import NotFoundError
 from src.shared.utils.errors import (
     CropAnalysisError,
+    InvalidInputError,
     ProviderError,
     ProviderKeyInvalidError,
     ProviderQuotaExceededError,
@@ -77,6 +79,11 @@ class PreparedTurn:
     content: types.Content
     ctx: TurnContext
     runner: Runner
+    assistant_message_id: UUID
+
+
+FAILED_TURN_NOTE = "(No pude responder este mensaje por un error técnico.)"
+STOPPED_NOTE = "_(respuesta detenida)_"
 
 
 class AgentRunner:
@@ -105,6 +112,9 @@ class AgentRunner:
         self.reports = reports_service
         self.tz = ZoneInfo(timezone_name)
         self.max_image_side = max_image_side
+        # Turns run detached from the HTTP request (see start_stream), one at a time per conversation.
+        # Single-process server: this registry is the source of truth for "is it still answering".
+        self._running: dict[UUID, asyncio.Task] = {}
         conversations.set_session_deleter(self.delete_session)
 
     def _model(self, api_key: str):
@@ -221,28 +231,40 @@ class AgentRunner:
         field_id: Optional[UUID] = None,
         image_identifier: Optional[str] = None,
         report_id: Optional[UUID] = None,
+        retry_message_id: Optional[UUID] = None,
     ) -> PreparedTurn:
-        """Everything that can fail with a plain HTTP error (missing key, unknown conversation/field/image)
-        happens here, before a streaming response is opened."""
+        """Everything that can fail with a plain HTTP error (missing key, unknown conversation/field/image,
+        a turn already running) happens here, before a streaming response is opened. A new conversation
+        is only created once all of that passed, and the user's message is saved right away (with a
+        pending answer) so it survives a failed or abandoned turn.
+        With retry_message_id, the failed user message is sent again instead of `message`."""
         api_key = await self.gemini.api_key_for(actor.user_id)
         if field_id:
             await self.farm.get_field(actor, field_id)
-        if conversation_id:
-            conversation = await self.conversations.get(actor, conversation_id)
-        else:
-            conversation = await self.conversations.create(actor, ConversationCreate(field_id=field_id))
+        conversation = await self.conversations.get(actor, conversation_id) if conversation_id else None
+        if conversation_id and self.is_running(conversation_id):
+            raise InvalidInputError("Todavía estoy respondiendo el mensaje anterior de esta conversación.")
+        if retry_message_id:
+            if conversation is None:
+                raise InvalidInputError("retry_message_id requires conversation_id.")
+            message, image_identifier = await self.conversations.retry_text(actor, conversation.id, retry_message_id)
 
-        session_id, user_id = str(conversation.id), str(actor.user_id)
-        if await self.sessions.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id) is None:
-            await self.sessions.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
-
-        default_field_id = field_id or conversation.field_id
+        default_field_id = field_id or (conversation.field_id if conversation else None)
         overview = await self.farm.overview(actor)
         crop_families = await self.farm.crop_families(actor)
         report_note = await self._report_note(actor, report_id) if report_id else None
         instruction = await self._static_instruction(actor, overview, crop_families)
         context_snapshot = await self._account_snapshot(actor, overview, default_field_id, report_note)
         new_content = await self._user_content(actor, message, image_identifier, context_snapshot)
+
+        if conversation is None:
+            conversation = await self.conversations.create(actor, ConversationCreate(field_id=field_id))
+        session_id, user_id = str(conversation.id), str(actor.user_id)
+        if await self.sessions.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id) is None:
+            await self.sessions.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+        _, assistant_message_id = await self.conversations.start_turn(
+            actor, conversation.id, message, image_identifier, retry_message_id=retry_message_id
+        )
         ctx = TurnContext(
             actor=Actor(actor.user_id, actor.account_id, actor.role, via="agent"),
             conversation_id=conversation.id,
@@ -267,7 +289,42 @@ class AgentRunner:
             content=new_content,
             ctx=ctx,
             runner=Runner(app=app, session_service=self.sessions),
+            assistant_message_id=assistant_message_id,
         )
+
+    def is_running(self, conversation_id: UUID) -> bool:
+        return conversation_id in self._running
+
+    def start_stream(self, turn: PreparedTurn) -> AsyncIterator[dict]:
+        """Run the turn in a background task and relay its events. The client going away (closing the
+        tab, navigating) only stops the relay: the turn still finishes and is saved. Stopping a turn
+        on purpose goes through stop_turn."""
+        queue: asyncio.Queue[Optional[dict]] = asyncio.Queue()
+
+        async def run() -> None:
+            try:
+                async for event in self.stream_turn(turn):
+                    queue.put_nowait(event)
+            finally:
+                queue.put_nowait(None)
+                self._running.pop(turn.conversation_id, None)
+
+        self._running[turn.conversation_id] = asyncio.create_task(run())
+
+        async def relay() -> AsyncIterator[dict]:
+            while (event := await queue.get()) is not None:
+                yield event
+
+        return relay()
+
+    async def stop_turn(self, actor: Actor, conversation_id: UUID) -> bool:
+        """Cancel the conversation's running turn (the "stop" button); what was generated is kept."""
+        await self.conversations.get(actor, conversation_id)
+        task = self._running.get(conversation_id)
+        if task is None:
+            return False
+        task.cancel()
+        return True
 
     async def stream_turn(self, turn: PreparedTurn) -> AsyncIterator[dict]:
         """Run the agent and yield events: meta, tool_call, tool_result, delta, done | error.
@@ -283,22 +340,22 @@ class AgentRunner:
                 segments.append(current)
                 current = ""
 
-        async def persist() -> ChatResponse:
+        async def persist(error_code: Optional[str] = None, fallback: Optional[str] = None) -> ChatResponse:
             nonlocal persisted
             persisted = True
             close_segment()
-            text = "\n\n".join(segments) or "No pude generar una respuesta. ¿Podés reformular la consulta?"
+            text = "\n\n".join(segments) or fallback or (
+                "" if error_code else "No pude generar una respuesta. ¿Podés reformular la consulta?"
+            )
             sources = list({s["uri"]: Source(**s) for s in turn.ctx.sources}.values())
             attachments = list({a["image_identifier"]: Attachment(**a) for a in turn.ctx.attachments}.values())
-            await self.conversations.add_turn(
-                turn.actor,
-                turn.conversation_id,
-                user_text=turn.message,
+            await self.conversations.finish_turn(
+                turn.assistant_message_id,
                 assistant_text=text,
-                image_identifier=turn.image_identifier,
                 sources=[s.model_dump() for s in sources],
                 tool_calls=[t.model_dump(mode="json") for t in tool_calls],
                 attachments=[a.model_dump(mode="json") for a in attachments],
+                error_code=error_code,
             )
             if turn.is_new:
                 await self._auto_title(turn.actor, turn.conversation_id, turn.message)
@@ -359,21 +416,51 @@ class AgentRunner:
             response = await persist()
             yield {"event": "done", "data": response.model_dump(mode="json")}
         except (asyncio.CancelledError, GeneratorExit):
-            if not persisted and (segments or current):
-                await asyncio.shield(persist())
+            if not persisted:
+                await asyncio.shield(self._close_unanswered(turn, persist(fallback=STOPPED_NOTE)))
             raise
         except Exception as exc:  # noqa: BLE001
             error = exc if isinstance(exc, CropAnalysisError) else translate_provider_error(exc)
             if not isinstance(exc, CropAnalysisError):
                 logger.warning(f"Agent turn failed: {type(exc).__name__}: {exc}")
-            if not persisted and (segments or current):
-                await persist()
+            if not persisted:
+                await self._close_unanswered(turn, persist(error_code=error.error_code))
             yield {"event": "error", "data": {"detail": error.message, "error_code": error.error_code}}
         finally:
             try:
                 await turn.runner.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    async def _close_unanswered(self, turn: PreparedTurn, persisting) -> None:
+        """Save a turn that didn't finish normally, and make sure the model's own history (the ADK
+        session) doesn't end on an unanswered user message: the next turn then reads as a normal
+        exchange instead of two user messages in a row."""
+        try:
+            await persisting
+        finally:
+            try:
+                session = await self.sessions.get_session(
+                    app_name=APP_NAME, user_id=str(turn.actor.user_id), session_id=str(turn.conversation_id)
+                )
+                last = session.events[-1] if session and session.events else None
+                answered = (
+                    last is not None
+                    and last.content is not None
+                    and last.content.role == "model"
+                    and any(p.text for p in (last.content.parts or []))
+                )
+                if session is not None and not answered:
+                    await self.sessions.append_event(
+                        session,
+                        Event(
+                            author="agroai_assistant",
+                            invocation_id=Event.new_id(),
+                            content=types.Content(role="model", parts=[types.Part(text=FAILED_TURN_NOTE)]),
+                        ),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not close the unanswered ADK turn: {type(exc).__name__}: {exc}")
 
     async def chat(
         self,
@@ -383,9 +470,12 @@ class AgentRunner:
         field_id: Optional[UUID] = None,
         image_identifier: Optional[str] = None,
         report_id: Optional[UUID] = None,
+        retry_message_id: Optional[UUID] = None,
     ) -> ChatResponse:
-        turn = await self.prepare_turn(actor, message, conversation_id, field_id, image_identifier, report_id)
-        async for event in self.stream_turn(turn):
+        turn = await self.prepare_turn(
+            actor, message, conversation_id, field_id, image_identifier, report_id, retry_message_id
+        )
+        async for event in self.start_stream(turn):
             if event["event"] == "done":
                 return ChatResponse.model_validate(event["data"])
             if event["event"] == "error":
