@@ -51,10 +51,12 @@ disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, plan
 ## Chat y conversaciones
 | Método | Ruta | Notas |
 |---|---|---|
-| POST | `/chat` | `{message, conversation_id?, image_identifier?, context: {field_id?}}` → `{response, sources[], metadata{conversation_id, tool_calls[], search_performed, model}}` |
+| POST | `/chat` | `{message, conversation_id?, image_identifier?, context: {field_id?}, retry_message_id?}` → `{response, sources[], metadata{conversation_id, tool_calls[], search_performed, model}}` |
+| POST | `/chat/stream` | Mismo body, SSE: `meta`, `tool_call`, `tool_result`, `delta`, `done`, `error`. El mensaje del usuario se guarda antes de responder; si el cliente se desconecta la respuesta sigue y se guarda igual |
 | GET / POST | `/chat/conversations` | Las del usuario (privadas) |
 | GET / PATCH / DELETE | `/chat/conversations/{id}` | PATCH: `{title?, archived?, field_id?}` |
-| GET | `/chat/conversations/{id}/messages?limit=&before=` | |
+| GET | `/chat/conversations/{id}/messages?limit=&before=` | Cada mensaje trae `status`: `complete`, `pending` (se está generando: volver a consultar) o `error` (+`error_code`; reintentar con `retry_message_id` = id del último mensaje del usuario) |
+| POST | `/chat/conversations/{id}/stop` | Detiene la respuesta en curso; lo generado se conserva |
 | DELETE | `/chat/memory?conversation_id=` | Deprecado |
 
 ## Memoria del agente (compartida por cuenta)

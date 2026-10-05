@@ -2,6 +2,7 @@
 Full chat turn through Google ADK with a scripted model in place of Gemini: tool calls hit the real
 services and database, conversations are persisted, and tools can't escape the caller's account.
 """
+import asyncio
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
@@ -17,7 +18,8 @@ FAKE_KEY = "AIzaSyTESTKEY-0123456789abcdefghijKLMN"
 
 class ScriptedLlm(BaseLlm):
     """Returns the next scripted step on every model call:
-    ('call', name, args), ('text', str) or ('text+call', str, name, args)."""
+    ('call', name, args), ('text', str), ('text+call', str, name, args), ('fail', exception) or
+    ('wait', asyncio.Event, str) — answers str once the event is set."""
     script: list = []
     requests: list = []
 
@@ -26,6 +28,11 @@ class ScriptedLlm(BaseLlm):
     ) -> AsyncGenerator[LlmResponse, None]:
         self.requests.append(llm_request)
         kind, *payload = self.script.pop(0)
+        if kind == "fail":
+            raise payload[0]
+        if kind == "wait":
+            await payload[0].wait()
+            kind, payload = "text", payload[1:]
         if kind == "call":
             name, args = payload
             parts = [types.Part.from_function_call(name=name, args=args)]
@@ -398,3 +405,126 @@ async def test_management_tools_field_assignee_status_and_delete(client, signup,
     }
     assert "update_shopping_item" in declared and "list_account_members" in declared
     assert not declared & {"remove_shopping_item", "remove_budget_entry", "remove_roadmap_item", "update_budget_entry"}
+
+
+async def _messages(client, h, conversation_id):
+    r = await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages", headers=h)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def test_failed_first_message_is_kept_and_the_conversation_continues(client, signup, with_key, scripted_model):
+    user = await signup("failfirst")
+    await with_key(user)
+    h = user["headers"]
+    scripted_model.script = [("fail", RuntimeError("503 UNAVAILABLE"))]
+    response = await client.post("/api/v1/chat/stream", headers=h, json={"message": "primer mensaje"})
+    events = _parse_sse(response.text)
+    assert [e[0] for e in events] == ["meta", "error"]
+    conversation_id = events[0][1]["conversation_id"]
+
+    messages = await _messages(client, h, conversation_id)
+    assert [(m["role"], m["status"]) for m in messages] == [("user", "complete"), ("assistant", "error")]
+    assert messages[0]["content"] == "primer mensaje"
+    assert messages[1]["error_code"] == "PROVIDER_ERROR"
+
+    # The next message continues the same thread, and the model sees a normal user/model exchange.
+    scripted_model.script = [("text", "Ahora sí")]
+    scripted_model.requests.clear()
+    r = await client.post(
+        "/api/v1/chat", headers=h, json={"message": "segundo", "conversation_id": conversation_id}
+    )
+    assert r.status_code == 200, r.text
+    roles = [c.role for c in scripted_model.requests[0].contents]
+    assert roles == ["user", "model", "user"]
+    assert [m["role"] for m in await _messages(client, h, conversation_id)] == ["user", "assistant"] * 2
+
+
+async def test_retry_resends_the_failed_message_without_duplicating_it(client, signup, with_key, scripted_model):
+    user = await signup("retry")
+    await with_key(user)
+    h = user["headers"]
+    scripted_model.script = [("fail", RuntimeError("503 UNAVAILABLE"))]
+    events = _parse_sse((await client.post("/api/v1/chat/stream", headers=h, json={"message": "regué"})).text)
+    conversation_id = events[0][1]["conversation_id"]
+    failed_user = (await _messages(client, h, conversation_id))[0]
+
+    scripted_model.script = [("text", "Registrado")]
+    r = await client.post(
+        "/api/v1/chat",
+        headers=h,
+        json={"message": "regué", "conversation_id": conversation_id, "retry_message_id": failed_user["id"]},
+    )
+    assert r.status_code == 200, r.text
+    messages = await _messages(client, h, conversation_id)
+    assert [(m["role"], m["status"], m["content"]) for m in messages] == [
+        ("user", "complete", "regué"),
+        ("assistant", "complete", "Registrado"),
+    ]
+    assert (await client.get(f"/api/v1/chat/conversations/{conversation_id}", headers=h)).json()["title"]
+
+    # Once answered, it can't be retried again.
+    r = await client.post(
+        "/api/v1/chat",
+        headers=h,
+        json={"message": "regué", "conversation_id": conversation_id, "retry_message_id": failed_user["id"]},
+    )
+    assert r.status_code == 400
+
+
+async def test_turn_finishes_after_the_client_leaves(client, signup, with_key, scripted_model, container):
+    user = await signup("detach")
+    await with_key(user)
+    h = user["headers"]
+    release = asyncio.Event()
+    scripted_model.script = [("wait", release, "Respuesta completa")]
+    runner = container.agent.runner()
+    from uuid import UUID
+
+    from src.shared.domain.actor import Actor
+
+    actor = Actor(UUID(user["user"]["id"]), UUID(user["account"]["id"]), "owner")
+    turn = await runner.prepare_turn(actor, "hola")
+    relay = runner.start_stream(turn)
+    assert (await relay.__anext__())["event"] == "meta"
+    await relay.aclose()  # the client navigates away
+
+    pending = await _messages(client, h, turn.conversation_id)
+    assert [m["status"] for m in pending] == ["complete", "pending"]
+    # Another message can't start while the answer is still being generated.
+    r = await client.post(
+        "/api/v1/chat", headers=h, json={"message": "otra", "conversation_id": str(turn.conversation_id)}
+    )
+    assert r.status_code == 400
+
+    release.set()
+    for _ in range(100):
+        if not runner.is_running(turn.conversation_id):
+            break
+        await asyncio.sleep(0.02)
+    messages = await _messages(client, h, turn.conversation_id)
+    assert [(m["status"], m["content"]) for m in messages][1] == ("complete", "Respuesta completa")
+
+
+async def test_stop_keeps_the_turn_and_marks_it_stopped(client, signup, with_key, scripted_model, container):
+    user = await signup("stop")
+    await with_key(user)
+    h = user["headers"]
+    scripted_model.script = [("wait", asyncio.Event(), "nunca")]
+
+    async def send():
+        return await client.post("/api/v1/chat/stream", headers=h, json={"message": "hola"})
+
+    sending = asyncio.create_task(send())
+    runner = container.agent.runner()
+    for _ in range(100):
+        if runner._running:
+            break
+        await asyncio.sleep(0.02)
+    (conversation_id,) = list(runner._running)
+    r = await client.post(f"/api/v1/chat/conversations/{conversation_id}/stop", headers=h)
+    assert r.status_code == 204
+    await sending
+    messages = await _messages(client, h, conversation_id)
+    assert [(m["role"], m["status"]) for m in messages] == [("user", "complete"), ("assistant", "complete")]
+    assert "detenida" in messages[1]["content"]

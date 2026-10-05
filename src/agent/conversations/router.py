@@ -36,6 +36,9 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[UUID] = None
     image_identifier: Optional[str] = Field(None, description="From POST /upload/image")
     context: ChatContext = Field(default_factory=ChatContext)
+    retry_message_id: Optional[UUID] = Field(
+        None, description="Resend this failed user message (the last one of the conversation) instead of `message`"
+    )
 
 
 @router.post("", response_model=ChatResponse, summary="Send a message to the agent")
@@ -49,6 +52,7 @@ async def chat(body: ChatRequest, actor: Actor = Depends(get_actor), runner: Age
         field_id=body.context.field_id,
         image_identifier=body.image_identifier,
         report_id=body.context.report_id,
+        retry_message_id=body.retry_message_id,
     )
 
 
@@ -57,7 +61,10 @@ async def chat(body: ChatRequest, actor: Actor = Depends(get_actor), runner: Age
 async def chat_stream(body: ChatRequest, actor: Actor = Depends(get_actor), runner: AgentRunner = Depends(RUNNER)):
     """SSE events: `meta` {conversation_id}, `tool_call` {name, args}, `tool_result` {name, ok},
     `delta` {text}, `done` (same body as POST /chat), `error` {detail, error_code}.
-    Missing/invalid key and unknown conversation are returned as normal HTTP errors before streaming."""
+    Missing/invalid key and unknown conversation are returned as normal HTTP errors before streaming.
+    The user's message is saved before the answer starts, and the answer keeps running (and is saved)
+    if the client disconnects: reopening the conversation shows it as `pending` until it's done.
+    Stop it on purpose with POST /chat/conversations/{id}/stop."""
     turn = await runner.prepare_turn(
         actor,
         body.message,
@@ -65,10 +72,13 @@ async def chat_stream(body: ChatRequest, actor: Actor = Depends(get_actor), runn
         field_id=body.context.field_id,
         image_identifier=body.image_identifier,
         report_id=body.context.report_id,
+        retry_message_id=body.retry_message_id,
     )
 
+    relay = runner.start_stream(turn)  # started now, not when the body is first read
+
     async def events():
-        async for event in runner.stream_turn(turn):
+        async for event in relay:
             yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
@@ -147,8 +157,27 @@ async def conversation_messages(
     before: Optional[datetime] = None,
     actor: Actor = Depends(get_actor),
     conversations: ConversationService = Depends(CONVERSATIONS),
+    runner: AgentRunner = Depends(RUNNER),
 ):
-    return await conversations.messages(actor, conversation_id, limit=limit, before=before)
+    """An answer still being generated comes back with status `pending` (poll until it changes)."""
+    return await conversations.messages(
+        actor, conversation_id, limit=limit, before=before, running=runner.is_running(conversation_id)
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/stop", status_code=status.HTTP_204_NO_CONTENT,
+    summary="Stop the answer being generated",
+)
+@inject
+async def stop_turn(
+    conversation_id: UUID,
+    actor: Actor = Depends(get_actor),
+    runner: AgentRunner = Depends(RUNNER),
+):
+    """What was generated so far is kept. No-op if nothing is running."""
+    await runner.stop_turn(actor, conversation_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
