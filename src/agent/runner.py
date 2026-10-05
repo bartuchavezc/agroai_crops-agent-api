@@ -148,6 +148,11 @@ class AgentRunner:
         periodic = data.get("llm_structured_periodic")
         if periodic:
             lines.append(f"Riesgos señalados: {', '.join(periodic.get('risks', [])) or 'ninguno'}.")
+        zone = data.get("llm_structured_zone")
+        if zone:
+            crops = "; ".join(f"{c.get('crop_name')}: {c.get('health_status')}" for c in zone.get("crops", []))
+            lines.append(f"Estado por cultivo: {crops or 'sin detalle'}.")
+            lines.append(f"Riesgos de la zona: {', '.join(zone.get('shared_risks', [])) or 'ninguno'}.")
         return " ".join(lines)
 
     async def _static_instruction(self, actor: Actor, overview, crop_families: set[str]) -> str:
@@ -192,10 +197,14 @@ class AgentRunner:
                 where = f" en {f.city}" if f.city else ""
                 coords = f" [{f.latitude:.3f}, {f.longitude:.3f}]" if f.latitude is not None else " [sin coordenadas]"
                 crops = ", ".join(
-                    f"{c.crop_name}{' ' + c.variety if c.variety else ''} ({c.status})" for c in item.active_cycles
+                    f"{c.crop_name}{' ' + c.variety if c.variety else ''} "
+                    f"({c.status}{', ' + c.zone_label if c.zone_label else ''})"
+                    for c in item.active_cycles
                 ) or "sin cultivos activos"
                 focus = "  <- campo de esta conversación" if f.id == default_field_id else ""
                 lines.append(f"- {f.name}{where}{coords}: {crops}{focus}")
+                if item.zones:
+                    lines.append(f"  Zonas: {', '.join(z.label for z in item.zones)}")
         else:
             lines.append("\nLa cuenta todavía no tiene campos cargados.")
 

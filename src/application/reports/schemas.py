@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,6 +17,9 @@ class ReportCreate(BaseModel):
     report_type: ReportType = "diagnosis"
     field_id: Optional[UUID] = None
     crop_cycle_id: Optional[UUID] = None
+    zone_id: Optional[UUID] = None
+    crop_cycle_ids: List[UUID] = Field(default_factory=list, description="Zone tracking: the cycles covered")
+    image_identifiers: List[str] = Field(default_factory=list, description="Zone tracking: every photo")
 
 
 class ReportUpdate(BaseModel):
@@ -38,6 +41,9 @@ class Report(BaseModel):
     account_id: UUID
     field_id: Optional[UUID] = None
     crop_cycle_id: Optional[UUID] = None
+    zone_id: Optional[UUID] = None
+    crop_cycle_ids: List[UUID] = Field(default_factory=list)
+    image_identifiers: List[str] = Field(default_factory=list)
     created_by: Optional[UUID] = None
     title: Optional[str] = None
     summary: Optional[str] = None

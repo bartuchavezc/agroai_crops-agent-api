@@ -3,7 +3,9 @@ Multimodal crop analysis: the photo goes straight to Gemini together with the fi
 Two report types share this service:
 - "diagnosis": disease/pest/nutrition focused, single photo, no cycle history (DiagnosisResult).
 - "periodic": routine tracking (health/growth/stress/harvest/objectives/risks), grounded in the crop
-  cycle's timeline and event log (PeriodicReportResult).
+  cycle's timeline and event log (PeriodicReportResult). A periodic report of a zone (cajón, cantero,
+  invernadero, hidroponía) covers every active crop of the zone at once, from 1-4 photos
+  (ZonePeriodicReportResult, stored as llm_structured_zone).
 """
 import logging
 from datetime import date
@@ -26,11 +28,17 @@ from src.shared.utils.errors import InvalidInputError
 from ..prompts.diagnosis import SYSTEM_INSTRUCTION
 from ..prompts.harvest import HARVEST_VERDICT_INSTRUCTION
 from ..prompts.knowledge_ar import modules_for_account
-from ..prompts.periodic import PERIODIC_SYSTEM_INSTRUCTION
+from ..prompts.periodic import PERIODIC_SYSTEM_INSTRUCTION, ZONE_PERIODIC_SYSTEM_INSTRUCTION
 from ..prompts.soil import SOIL_SYSTEM_INSTRUCTION
 from ..providers.gemini import GeminiGateway
 from ..schemas import DiagnosisResult, HarvestVerdictResult, SoilRecognitionResult
-from .periodic_report import PeriodicReportResult, format_cycle_progress, format_event_history
+from .periodic_report import (
+    PeriodicReportResult,
+    ZonePeriodicReportResult,
+    crop_entry,
+    format_cycle_progress,
+    format_event_history,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +117,8 @@ class DiagnosisService:
         if previous:
             lines.append("Análisis periódicos previos de este mismo ciclo (más reciente primero):")
             for r in previous:
-                summary = r.summary or "(sin resumen)"
+                entry = crop_entry((r.raw_analysis_data or {}).get("llm_structured_zone") or {}, crop_cycle_id)
+                summary = (entry or {}).get("health_summary") or r.summary or "(sin resumen)"
                 lines.append(f"- {r.created_at.date().isoformat()}: {summary}")
 
         if field_id:
@@ -130,6 +139,8 @@ class DiagnosisService:
     async def analyze(self, actor: Actor, report_id: UUID, image_identifier: Optional[str] = None) -> dict:
         report = await self.reports.get_report(actor, report_id)
         try:
+            if report.report_type == "periodic" and report.zone_id and report.crop_cycle_id is None:
+                return await self._analyze_zone(actor, report)
             if report.report_type == "periodic":
                 return await self._analyze_periodic(actor, report, image_identifier)
             if report.report_type == "soil":
@@ -291,6 +302,104 @@ class DiagnosisService:
             },
         }
 
+    async def _zone_context(self, actor: Actor, report: Report) -> list[str]:
+        zone = await self.farm.get_zone(actor, report.zone_id)
+        lines = [f"Zona: {zone.label}" + (f". Notas: {zone.notes}" if zone.notes else "")]
+        today = date.today()
+        if not report.crop_cycle_ids:
+            lines.append("La zona no tiene ciclos de cultivo activos registrados.")
+        for cycle_id in report.crop_cycle_ids:
+            cycle = await self.farm.get_crop_cycle(actor, cycle_id)
+            crop_master = await self.farm.get_crop_master(actor, cycle.crop_master_id)
+            lines.append(f"Ciclo crop_cycle_id={cycle.id}:")
+            lines.append(format_cycle_progress(cycle, crop_master, today))
+            events = await self.farm.list_events(actor, crop_cycle_id=cycle.id, limit=20)
+            if events:
+                lines.append("Eventos del ciclo: " + "; ".join(format_event_history(events)))
+        zone_events = [
+            e for e in await self.farm.list_events(actor, field_id=report.field_id, limit=50)
+            if e.zone_id == zone.id and e.crop_cycle_id is None
+        ]
+        if zone_events:
+            lines.append("Eventos de la zona en general: " + "; ".join(format_event_history(zone_events[:20])))
+        previous = [
+            r for r in await self.reports.list_reports(actor, zone_id=zone.id, report_type="periodic", limit=4)
+            if r.status == "ANALYSIS_COMPLETED" and r.id != report.id
+        ][:3]
+        if previous:
+            lines.append("Seguimientos previos de esta zona (más reciente primero):")
+            lines.extend(f"- {r.created_at.date().isoformat()}: {r.summary or '(sin resumen)'}" for r in previous)
+        if report.field_id:
+            field = await self.farm.get_field(actor, report.field_id)
+            if field.description:
+                lines.append(f"Descripción del campo (posible fuente de objetivos declarados): {field.description}")
+        return lines
+
+    async def _analyze_zone(self, actor: Actor, report: Report) -> dict:
+        """Daily tracking of a whole zone: every photo of the report, every active crop of the zone."""
+        image_ids = report.image_identifiers or ([report.image_identifier] if report.image_identifier else [])
+        if not image_ids:
+            raise InvalidInputError("The report has no image to analyze.")
+        parts = []
+        for image_id in image_ids:
+            data, mime_type = await self.storage.get_image_for_model(actor, image_id, self.max_image_side)
+            parts.append(types.Part.from_bytes(data=data, mime_type=mime_type))
+
+        context_lines, weather = await self._field_context(actor, report.field_id)
+        context_lines += await self._zone_context(actor, report)
+        prompt = (
+            f"Hacé el seguimiento diario de la zona completa ({len(image_ids)} foto/s): cómo viene la zona y cada "
+            "uno de sus cultivos.\n\nContexto del campo, la zona y sus ciclos:\n"
+            + "\n".join(f"- {line}" for line in context_lines)
+        )
+        profile = await self.profiles.get_profile_context(actor.user_id)
+        crop_families = await self.farm.crop_families(actor)
+        field_texts = [line for line in context_lines if "Suelo:" in line]
+        knowledge = modules_for_account(profile.calculated_profile if profile else None, crop_families, field_texts)
+
+        result: ZonePeriodicReportResult = await self.gemini.generate_structured(
+            actor.user_id,
+            contents=[*parts, prompt],
+            schema=ZonePeriodicReportResult,
+            system_instruction=f"{ZONE_PERIODIC_SYSTEM_INSTRUCTION}\n\n{knowledge}",
+        )
+        zone = await self.farm.get_zone(actor, report.zone_id)
+        await self.reports.update_report(
+            actor,
+            report.id,
+            ReportUpdate(
+                title=f"{zone.label} · seguimiento"[:255],
+                summary=result.zone_summary,
+                recommendations="\n".join(result.recommendations),
+                status="ANALYSIS_COMPLETED",
+                raw_analysis_data={
+                    "llm_structured_zone": result.model_dump(),
+                    "weather": weather,
+                    "analyzed_image_identifiers": image_ids,
+                    "model": self.gemini.model,
+                },
+            ),
+        )
+        await self.notifications.notify_account(
+            account_id=actor.account_id,
+            exclude_user_id=actor.user_id,
+            type="report_periodic",
+            title=f"Nuevo seguimiento: {zone.label}",
+            message=result.zone_summary,
+            entity_type="report",
+            entity_id=report.id,
+            field_id=report.field_id,
+        )
+        return {
+            "status": "success",
+            "report_id": str(report.id),
+            "caption": result.zone_summary,
+            "analysis": result.model_dump(),
+            "risk_severity": result.risk_severity,
+            "recommendations": result.recommendations,
+            "metadata": {"confidence": result.confidence, "needs_human_expert": result.needs_human_expert},
+        }
+
     async def _analyze_soil(self, actor: Actor, report: Report, image_identifier: Optional[str] = None) -> dict:
         """Soil-sample photo recognition: apparent type/porosity only, never nutrient levels (see soil prompt)."""
         report_id = report.id
@@ -387,7 +496,10 @@ class DiagnosisService:
                 "veredicto de cosecha. Pedí una foto o hacé un seguimiento periódico primero."
             )
         latest = completed[0]
-        periodic = (latest.raw_analysis_data or {}).get("llm_structured_periodic") or {}
+        data = latest.raw_analysis_data or {}
+        periodic = data.get("llm_structured_periodic") or {}
+        if not periodic and crop_cycle_id:
+            periodic = crop_entry(data.get("llm_structured_zone") or {}, crop_cycle_id) or {}
         return {
             "source": "latest_periodic_report",
             "report_date": latest.created_at.date().isoformat(),

@@ -23,6 +23,12 @@ class ReportsService:
 
     async def create_report(self, actor: Actor, data: ReportCreate) -> Report:
         await self._check_links(actor, data.field_id, data.crop_cycle_id)
+        if self.farm is not None and data.zone_id:
+            await self.farm.get_zone(actor, data.zone_id)
+        if self.farm is not None and data.crop_cycle_id and not data.zone_id:
+            # A photo of one crop is also part of its zone's history.
+            cycle = await self.farm.get_crop_cycle(actor, data.crop_cycle_id)
+            data = data.model_copy(update={"zone_id": cycle.zone_id})
         return await self.repo.create(actor.account_id, actor.user_id, data)
 
     async def get_report(self, actor: Actor, report_id: UUID) -> Report:
@@ -39,7 +45,9 @@ class ReportsService:
         report_type: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
+        zone_id: Optional[UUID] = None,
     ) -> List[Report]:
+        """crop_cycle_id also matches zone tracking reports that covered that cycle."""
         return await self.repo.list(
             actor.account_id,
             field_id=field_id,
@@ -47,6 +55,7 @@ class ReportsService:
             report_type=report_type,
             skip=skip,
             limit=min(limit, 500),
+            zone_id=zone_id,
         )
 
     async def update_report(self, actor: Actor, report_id: UUID, data: ReportUpdate) -> Report:

@@ -9,12 +9,25 @@ from src.application.farm.schemas import (
     FieldCreate,
     FieldEventCreate,
     FieldUpdate,
+    FieldZoneCreate,
     LayoutObject,
 )
 from src.shared.domain.base import utcnow
 from src.shared.utils.errors import InvalidInputError
 
-from .context import ToolDeps, TurnContext, compact, parse_date, parse_when, resolve_field, tool
+from .context import (
+    ToolDeps,
+    TurnContext,
+    compact,
+    parse_date,
+    parse_when,
+    parse_zone,
+    resolve_field,
+    resolve_zone,
+    tool,
+)
+
+_NO_ZONE = {"ninguna", "ninguno", "sin zona", "none"}
 
 
 def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
@@ -25,11 +38,25 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return {"fields": compact(overview)}
 
     @tool
-    async def list_crop_cycles(field: Optional[str] = None, status: Optional[str] = None) -> dict:
-        """List crop cycles. field: field name or id (optional). status: planned|planted|growing|harvested|failed."""
-        field_id = (await resolve_field(deps, ctx, field)).id if field else None
-        cycles = await deps.farm.list_crop_cycles(ctx.actor, field_id=field_id, status=status)
+    async def list_crop_cycles(
+        field: Optional[str] = None, status: Optional[str] = None, zone: Optional[str] = None
+    ) -> dict:
+        """List crop cycles. field: field name or id (optional). status: planned|planted|growing|harvested|failed.
+        zone: e.g. 'cantero 3' (requires the field, or the conversation's field)."""
+        target = await resolve_field(deps, ctx, field) if field or zone else None
+        zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
+        cycles = await deps.farm.list_crop_cycles(
+            ctx.actor, field_id=target.id if target else None, status=status, zone_id=zone_id
+        )
         return {"crop_cycles": compact(cycles)}
+
+    @tool
+    async def list_zones(field: Optional[str] = None) -> dict:
+        """List the zones of a field: its numbered cajones, canteros, invernaderos and sistemas de hidroponía.
+        Crops, events and the daily tracking photos are organized by zone."""
+        target = await resolve_field(deps, ctx, field)
+        zones = await deps.farm.list_zones(ctx.actor, target.id)
+        return {"field_name": target.name, "zones": compact(zones)}
 
     @tool
     async def list_recent_events(
@@ -108,12 +135,15 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         notes: Optional[str] = None,
         crop_cycle_id: Optional[str] = None,
         attach_current_photo: bool = False,
+        zone: Optional[str] = None,
     ) -> dict:
         """Register something that happened in a field.
         event_type: sowing|transplant|irrigation|fertilization|treatment|pruning|weeding|pest_sighting|
         disease_sighting|harvest|observation|photo. occurred_at: ISO date/time (default now).
-        quantity+unit e.g. 10 'litros', 2 'kg'. attach_current_photo: link the photo sent in this message."""
+        quantity+unit e.g. 10 'litros', 2 'kg'. attach_current_photo: link the photo sent in this message.
+        zone: where in the field, e.g. 'cantero 3' (taken from the crop cycle when one is given)."""
         target = await resolve_field(deps, ctx, field)
+        zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
         if attach_current_photo and not ctx.image_identifier:
             raise InvalidInputError("There is no photo in this message to attach.")
         event = await deps.farm.create_event(
@@ -121,6 +151,7 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             FieldEventCreate(
                 field_id=target.id,
                 crop_cycle_id=crop_cycle_id or None,
+                zone_id=zone_id,
                 type=event_type,
                 occurred_at=parse_when(occurred_at, ctx.tz),
                 quantity=quantity,
@@ -134,6 +165,7 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     return [
         list_fields,
         list_crop_cycles,
+        list_zones,
         list_recent_events,
         find_crop_in_catalog,
         get_field_sun_exposure,
@@ -257,11 +289,14 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         planting_date: Optional[str] = None,
         expected_harvest_date: Optional[str] = None,
         notes: Optional[str] = None,
+        zone: Optional[str] = None,
     ) -> dict:
         """Start a crop cycle (a crop planted/planned in a field). Resolves the crop from the catalog by name,
         adding it to the account catalog if missing. status: planned|planted|growing. Dates YYYY-MM-DD.
-        If expected_harvest_date is omitted it is estimated from the crop's growth period."""
+        If expected_harvest_date is omitted it is estimated from the crop's growth period.
+        zone: the field's zone it grows in, e.g. 'cantero 3' or 'invernadero 1' (see list_zones / create_zone)."""
         target = await resolve_field(deps, ctx, field)
+        zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
         matches = await deps.farm.find_crop_masters(ctx.actor, crop_name, variety)
         added = False
         if matches:
@@ -280,6 +315,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             CropCycleCreate(
                 field_id=target.id,
                 crop_master_id=crop.id,
+                zone_id=zone_id,
                 status=status,
                 planting_date=planted,
                 expected_harvest_date=expected,
@@ -300,17 +336,43 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         actual_harvest_date: Optional[str] = None,
         expected_harvest_date: Optional[str] = None,
         notes: Optional[str] = None,
+        zone: Optional[str] = None,
     ) -> dict:
-        """Update a crop cycle: status (planned|planted|growing|harvested|failed), harvest dates (YYYY-MM-DD), notes."""
+        """Update a crop cycle: status (planned|planted|growing|harvested|failed), harvest dates (YYYY-MM-DD), notes,
+        zone (move it to e.g. 'cantero 2'; 'ninguna' takes it out of its zone)."""
         values = {
             "status": status,
             "actual_harvest_date": parse_date(actual_harvest_date),
             "expected_harvest_date": parse_date(expected_harvest_date),
             "notes": notes,
         }
-        update = CropCycleUpdate(**{k: v for k, v in values.items() if v is not None})
+        values = {k: v for k, v in values.items() if v is not None}
+        if zone is not None:
+            if zone.strip().lower() in _NO_ZONE:
+                values["zone_id"] = None
+            else:
+                current = await deps.farm.get_crop_cycle(ctx.actor, UUID(crop_cycle_id))
+                field_read = await deps.farm.get_field(ctx.actor, current.field_id)
+                values["zone_id"] = (await resolve_zone(deps, ctx, field_read, zone)).id
+        update = CropCycleUpdate(**values)
         cycle = await deps.farm.update_crop_cycle(ctx.actor, UUID(crop_cycle_id), update)
         return {"updated_crop_cycle": compact(cycle)}
+
+    @tool
+    async def create_zone(
+        zone: str, field: Optional[str] = None, name: Optional[str] = None, notes: Optional[str] = None
+    ) -> dict:
+        """Create a zone in a field: a numbered cajón, cantero, invernadero or hidroponía, e.g. zone='cantero 3'
+        or just 'invernadero' (takes the next free number). name: optional nickname. Afterwards assign crops to it
+        with create_crop_cycle / update_crop_cycle (zone=...)."""
+        target = await resolve_field(deps, ctx, field)
+        zone_type, number = parse_zone(zone)
+        if zone_type is None:
+            raise InvalidInputError("Say which kind of zone: cajón, cantero, invernadero or hidroponía.")
+        created = await deps.farm.create_zone(
+            ctx.actor, target.id, FieldZoneCreate(type=zone_type, number=number, name=name, notes=notes)
+        )
+        return {"created_zone": compact(created), "field_name": target.name}
 
     @tool
     async def delete_field(field: str) -> dict:
@@ -335,6 +397,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         create_field,
         update_field,
         add_crop_to_catalog,
+        create_zone,
         create_crop_cycle,
         update_crop_cycle,
         delete_field,

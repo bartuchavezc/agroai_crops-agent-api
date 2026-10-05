@@ -4,6 +4,8 @@ and user they act on come from the authenticated request, never from model-provi
 """
 import functools
 import logging
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Optional
@@ -14,7 +16,7 @@ from pydantic import ValidationError
 
 from src.application.alerts.rules_engine import RulesEngine
 from src.application.alerts.service import AlertService
-from src.application.farm.schemas import FieldRead
+from src.application.farm.schemas import FieldRead, FieldZoneRead
 from src.application.farm.service import FarmService
 from src.application.inventory.service import InventoryService
 from src.application.irrigation.service import EvapotranspirationService
@@ -122,6 +124,44 @@ async def resolve_field(deps: ToolDeps, ctx: TurnContext, field: Optional[str]) 
     if not fields:
         raise InvalidInputError("The account has no fields yet. Offer to create one with create_field.")
     raise InvalidInputError("Several fields exist; ask the user which one: " + ", ".join(f.name for f in fields))
+
+
+_ZONE_TYPE_WORDS = {"cajon": "cajon", "cantero": "cantero", "invernadero": "invernadero", "hidroponia": "hidroponia",
+                    "hidroponico": "hidroponia", "hidro": "hidroponia"}
+
+
+def _plain(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(c) != "Mn")
+
+
+def parse_zone(text: str) -> tuple[Optional[str], Optional[int]]:
+    """'Cantero 3' -> ('cantero', 3); 'el invernadero' -> ('invernadero', None)."""
+    plain = _plain(text)
+    zone_type = next((t for word, t in _ZONE_TYPE_WORDS.items() if re.search(rf"\b{word}", plain)), None)
+    number = re.search(r"\d+", plain)
+    return zone_type, int(number.group()) if number else None
+
+
+async def resolve_zone(deps: ToolDeps, ctx: TurnContext, field: FieldRead, zone: str) -> FieldZoneRead:
+    """Accept a zone id, a label like 'cantero 3' / 'invernadero', or its nickname, within one field."""
+    zones = await deps.farm.list_zones(ctx.actor, field.id)
+    try:
+        wanted = UUID(zone)
+        match = [z for z in zones if z.id == wanted]
+    except ValueError:
+        zone_type, number = parse_zone(zone)
+        match = [
+            z for z in zones
+            if (zone_type is None or z.type == zone_type) and (number is None or z.number == number)
+        ] if zone_type or number else []
+        if not match:
+            match = [z for z in zones if z.name and _plain(zone) in _plain(z.name)]
+    if len(match) == 1:
+        return match[0]
+    available = ", ".join(z.label for z in zones) or "ninguna"
+    if len(match) > 1:
+        raise InvalidInputError(f"'{zone}' is ambiguous in {field.name}. Zones: {available}. Ask which one.")
+    raise InvalidInputError(f"No zone '{zone}' in {field.name}. Zones: {available}. Offer create_zone.")
 
 
 def compact(data: Any) -> Any:

@@ -17,7 +17,7 @@ from src.shared.utils.errors import InvalidInputError, NotFoundError, Permission
 from src.application.notifications.service import NotificationService
 from src.application.soil_data.service import SoilContextService
 
-from .models import ACTIVE_CROP_CYCLE_STATUSES, CropCycle, CropMaster, Field, FieldEvent
+from .models import ACTIVE_CROP_CYCLE_STATUSES, CropCycle, CropMaster, Field, FieldEvent, FieldZone
 from .schemas import (
     ActiveCycleSummary,
     CropCycleCreate,
@@ -32,6 +32,9 @@ from .schemas import (
     FieldOverview,
     FieldRead,
     FieldUpdate,
+    FieldZoneCreate,
+    FieldZoneRead,
+    FieldZoneUpdate,
     LayoutPhoto,
     SunCellRead,
     SunExposureRead,
@@ -324,13 +327,62 @@ class FarmService:
         if not deleted:
             raise NotFoundError(f"Crop {crop_master_id} not found (global catalog entries cannot be deleted).")
 
+    # ---------- zones ----------
+
+    async def list_zones(self, actor: Actor, field_id: Optional[UUID] = None) -> list[FieldZoneRead]:
+        if field_id:
+            await self.get_field(actor, field_id)
+        return [FieldZoneRead.model_validate(z) for z in await self.repo.list_zones(actor.account_id, field_id)]
+
+    async def get_zone(self, actor: Actor, zone_id: UUID) -> FieldZoneRead:
+        zone = await self.repo.get_zone(actor.account_id, zone_id)
+        if zone is None:
+            raise NotFoundError(f"Zone {zone_id} not found.")
+        return FieldZoneRead.model_validate(zone)
+
+    async def _check_zone_in_field(self, actor: Actor, zone_id: Optional[UUID], field_id: UUID) -> None:
+        if zone_id and (await self.get_zone(actor, zone_id)).field_id != field_id:
+            raise InvalidInputError("The zone does not belong to that field.")
+
+    async def create_zone(self, actor: Actor, field_id: UUID, data: FieldZoneCreate) -> FieldZoneRead:
+        _require_manager(actor)
+        await self.get_field(actor, field_id)
+        number = data.number or await self.repo.next_zone_number(field_id, data.type)
+        if await self.repo.zone_number_taken(field_id, data.type, number):
+            raise InvalidInputError(f"That field already has a {data.type} number {number}.")
+        zone = await self.repo.create_zone(
+            FieldZone(account_id=actor.account_id, field_id=field_id, **{**data.model_dump(), "number": number})
+        )
+        return FieldZoneRead.model_validate(zone)
+
+    async def update_zone(self, actor: Actor, zone_id: UUID, data: FieldZoneUpdate) -> FieldZoneRead:
+        _require_manager(actor)
+        current = await self.get_zone(actor, zone_id)
+        values = data.model_dump(exclude_unset=True)
+        zone_type, number = values.get("type") or current.type, values.get("number") or current.number
+        if await self.repo.zone_number_taken(current.field_id, zone_type, number, exclude_id=zone_id):
+            raise InvalidInputError(f"That field already has a {zone_type} number {number}.")
+        zone = await self.repo.update_zone(actor.account_id, zone_id, values)
+        return FieldZoneRead.model_validate(zone)
+
+    async def delete_zone(self, actor: Actor, zone_id: UUID) -> None:
+        _require_manager(actor)
+        if not await self.repo.delete_zone(actor.account_id, zone_id):
+            raise NotFoundError(f"Zone {zone_id} not found.")
+
     # ---------- crop cycles ----------
 
     async def list_crop_cycles(
-        self, actor: Actor, field_id: Optional[UUID] = None, status: Optional[str] = None
+        self,
+        actor: Actor,
+        field_id: Optional[UUID] = None,
+        status: Optional[str] = None,
+        zone_id: Optional[UUID] = None,
     ) -> list[CropCycleRead]:
         statuses = [status] if status else None
-        items = await self.repo.list_crop_cycles(actor.account_id, field_id=field_id, statuses=statuses)
+        items = await self.repo.list_crop_cycles(
+            actor.account_id, field_id=field_id, statuses=statuses, zone_id=zone_id
+        )
         return [CropCycleRead.model_validate(c) for c in items]
 
     async def get_crop_cycle(self, actor: Actor, cycle_id: UUID) -> CropCycleRead:
@@ -343,6 +395,7 @@ class FarmService:
         _require_manager(actor)
         await self.get_field(actor, data.field_id)
         await self.get_crop_master(actor, data.crop_master_id)
+        await self._check_zone_in_field(actor, data.zone_id, data.field_id)
         cycle = await self.repo.create_crop_cycle(
             CropCycle(account_id=actor.account_id, created_by=actor.user_id, **data.model_dump())
         )
@@ -350,6 +403,8 @@ class FarmService:
 
     async def update_crop_cycle(self, actor: Actor, cycle_id: UUID, data: CropCycleUpdate) -> CropCycleRead:
         _require_manager(actor)
+        if data.zone_id:
+            await self._check_zone_in_field(actor, data.zone_id, (await self.get_crop_cycle(actor, cycle_id)).field_id)
         cycle = await self.repo.update_crop_cycle(actor.account_id, cycle_id, data.model_dump(exclude_unset=True))
         if cycle is None:
             raise NotFoundError(f"Crop cycle {cycle_id} not found.")
@@ -391,10 +446,13 @@ class FarmService:
 
     async def create_event(self, actor: Actor, data: FieldEventCreate) -> FieldEventRead:
         await self.get_field(actor, data.field_id)
+        await self._check_zone_in_field(actor, data.zone_id, data.field_id)
         if data.crop_cycle_id:
             cycle = await self.get_crop_cycle(actor, data.crop_cycle_id)
             if cycle.field_id != data.field_id:
                 raise InvalidInputError("The crop cycle does not belong to that field.")
+            if data.zone_id is None:
+                data = data.model_copy(update={"zone_id": cycle.zone_id})
         values = data.model_dump()
         values["occurred_at"] = values["occurred_at"] or utcnow()
         event = await self.repo.create_event(
@@ -440,6 +498,8 @@ class FarmService:
         fields = await self.repo.list_fields(actor.account_id)
         cycles = await self.repo.active_cycles_with_crop(actor.account_id)
         last_events = await self.repo.last_event_by_field(actor.account_id)
+        zones = [FieldZoneRead.model_validate(z) for z in await self.repo.list_zones(actor.account_id)]
+        labels = {z.id: z.label for z in zones}
         by_field: dict[UUID, list[ActiveCycleSummary]] = {}
         for cycle, crop in cycles:
             by_field.setdefault(cycle.field_id, []).append(
@@ -450,11 +510,14 @@ class FarmService:
                     status=cycle.status,
                     planting_date=cycle.planting_date,
                     expected_harvest_date=cycle.expected_harvest_date,
+                    zone_id=cycle.zone_id,
+                    zone_label=labels.get(cycle.zone_id),
                 )
             )
         return [
             FieldOverview(
                 field=FieldRead.model_validate(f),
+                zones=[z for z in zones if z.field_id == f.id],
                 active_cycles=by_field.get(f.id, []),
                 last_event_at=last_events.get(f.id),
             )

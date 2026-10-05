@@ -39,6 +39,9 @@ EVENT_TYPES = (
     "photo",
 )
 EVENT_SOURCES = ("user", "agent")
+# A zone groups the crops of a field that are grown (and tracked/photographed) together: "Cantero 3".
+ZONE_TYPES = ("cajon", "cantero", "invernadero", "hidroponia")
+ZONE_TYPE_LABELS = {"cajon": "Cajón", "cantero": "Cantero", "invernadero": "Invernadero", "hidroponia": "Hidroponía"}
 
 
 class Field(Base):
@@ -70,6 +73,36 @@ class Field(Base):
     layout_objects = Column(JSONB, nullable=False, default=list, server_default="[]")
     layout_photos = Column(JSONB, nullable=False, default=list, server_default="[]")
     soil_context = Column(JSONB)  # cached INTA soil lookup (src/application/soil_data); None until computed
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    deleted_at = Column(DateTime(timezone=True))
+
+
+class FieldZone(Base):
+    """A numbered growing unit inside a field (cajón, cantero, invernadero, hidroponía). Crop cycles, events and
+    tracking reports can belong to one; the daily tracking photo is taken per zone."""
+    __tablename__ = "field_zones"
+    __table_args__ = (
+        CheckConstraint(f"type IN {ZONE_TYPES}", name="zone_type_valid"),
+        CheckConstraint("number >= 1", name="zone_number_positive"),
+        Index(
+            "uq_field_zones_field_type_number_active",
+            "field_id",
+            "type",
+            "number",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), nullable=False, index=True)
+    type = Column(String(20), nullable=False)
+    number = Column(Integer, nullable=False)
+    name = Column(String(255))  # optional nickname ("el de las aromáticas")
+    notes = Column(Text)
+    layout_object_id = Column(String(64))  # the drawn cantero on the field plan, if linked
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True))
@@ -109,6 +142,7 @@ class CropCycle(Base):
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), nullable=False, index=True)
     crop_master_id = Column(UUID(as_uuid=True), ForeignKey("crop_masters.id", ondelete="RESTRICT"), nullable=False)
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"), index=True)
     planting_date = Column(Date)
     expected_harvest_date = Column(Date)
     actual_harvest_date = Column(Date)
@@ -133,6 +167,7 @@ class FieldEvent(Base):
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), nullable=False)
     crop_cycle_id = Column(UUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"))
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
     author_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     type = Column(String(30), nullable=False)
     occurred_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)

@@ -31,13 +31,21 @@ async def list_reports(
     field_id: Optional[UUID] = None,
     crop_cycle_id: Optional[UUID] = None,
     report_type: Optional[str] = None,
+    zone_id: Optional[UUID] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     actor: Actor = Depends(get_actor),
     reports: ReportsService = Depends(REPORTS),
 ):
+    """crop_cycle_id also returns the zone tracking reports that covered that cycle."""
     return await reports.list_reports(
-        actor, field_id=field_id, crop_cycle_id=crop_cycle_id, report_type=report_type, skip=skip, limit=limit
+        actor,
+        field_id=field_id,
+        crop_cycle_id=crop_cycle_id,
+        report_type=report_type,
+        skip=skip,
+        limit=limit,
+        zone_id=zone_id,
     )
 
 
