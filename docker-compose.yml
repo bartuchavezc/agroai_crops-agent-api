@@ -63,6 +63,17 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Due reminders -> in-app notifications. Light: one query every few minutes.
+  reminders:
+    build: .
+    command: ["python", "-m", "src.batch", "reminders", "--every-minutes", "${REMINDERS_INTERVAL_MINUTES:-5}"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agroai}:${POSTGRES_PASSWORD:-agroai}@db:5432/${POSTGRES_DB:-agroai}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   pgdata:
   uploads:
