@@ -22,6 +22,7 @@ class ScriptedLlm(BaseLlm):
     ('wait', asyncio.Event, str) — answers str once the event is set."""
     script: list = []
     requests: list = []
+    heavy: list = []  # per turn: whether the runner asked for the analysis chain
 
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False
@@ -46,8 +47,13 @@ class ScriptedLlm(BaseLlm):
 
 @pytest.fixture
 def scripted_model():
-    llm = ScriptedLlm(model="scripted", script=[], requests=[])
-    with patch("src.agent.runner.AgentRunner._model", lambda self, api_key: llm):
+    llm = ScriptedLlm(model="scripted", script=[], requests=[], heavy=[])
+
+    def fake_model(self, api_key, heavy=False):
+        llm.heavy.append(heavy)
+        return llm
+
+    with patch("src.agent.runner.AgentRunner._model", fake_model):
         yield llm
 
 
@@ -528,3 +534,59 @@ async def test_stop_keeps_the_turn_and_marks_it_stopped(client, signup, with_key
     messages = await _messages(client, h, conversation_id)
     assert [(m["role"], m["status"]) for m in messages] == [("user", "complete"), ("assistant", "complete")]
     assert "detenida" in messages[1]["content"]
+
+
+async def test_chat_runs_on_the_lite_chain_and_photo_turns_on_the_analysis_chain(
+    client, signup, with_key, scripted_model, container
+):
+    import base64
+
+    user = await signup("model-chains")
+    await with_key(user)
+    h = user["headers"]
+    gemini = container.agent.gemini()
+    assert gemini.chat_chain[0] == "gemini-3.5-flash-lite"
+
+    scripted_model.script = [("text", "Hola")]
+    r = (await client.post("/api/v1/chat", headers=h, json={"message": "hola"})).json()
+    assert scripted_model.heavy == [False]
+    assert r["metadata"]["model"] == gemini.chat_chain[0]
+
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    up = await client.post("/api/v1/upload/image", headers=h, files={"image_file": ("hoja.png", png, "image/png")})
+    scripted_model.script = [("text", "Veo una hoja")]
+    r = (
+        await client.post(
+            "/api/v1/chat",
+            headers=h,
+            json={"message": "¿qué tiene?", "image_identifier": up.json()["image_identifier"]},
+        )
+    ).json()
+    assert scripted_model.heavy == [False, True]
+    assert r["metadata"]["model"] == gemini.model_chain[0]
+
+
+async def test_expert_field_analysis_reads_the_field_data_with_the_analysis_chain(
+    client, signup, with_key, scripted_model, container
+):
+    user = await signup("expert")
+    await with_key(user)
+    h = user["headers"]
+    await client.post("/api/v1/farm-management/fields", headers=h, json={"name": "Huerta"})
+    gemini = container.agent.gemini()
+    fake = AsyncMock(return_value="Conviene esperar la lluvia del jueves.")
+    scripted_model.script = [
+        ("call", "expert_field_analysis", {"question": "¿riego o espero?", "topics": ["riego", "clima"]}),
+        ("text", "Conviene esperar la lluvia del jueves."),
+    ]
+    with patch.object(gemini, "generate_text", fake):
+        r = await client.post("/api/v1/chat", headers=h, json={"message": "¿riego hoy?"})
+    assert r.status_code == 200, r.text
+    assert [t["name"] for t in r.json()["metadata"]["tool_calls"]] == ["expert_field_analysis"]
+    assert r.json()["metadata"]["tool_calls"][0]["ok"]
+    call = next(c for c in fake.call_args_list if "models" in c.kwargs)  # the other call is the auto-title
+    assert call.kwargs["models"] == gemini.model_chain
+    prompt = call.args[1]
+    assert "¿riego o espero?" in prompt and "Campo: Huerta" in prompt

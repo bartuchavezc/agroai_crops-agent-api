@@ -51,6 +51,10 @@ DEFAULT_CONFIG = {
         "echo": False,
     },
     "gemini": {
+        # Chat back-and-forth (the agent loop): cheap and fast. A turn that carries a photo uses the analysis chain.
+        "chat_model": "gemini-3.5-flash-lite",
+        "chat_fallback_models": ["gemini-flash-lite-latest", "gemini-3.5-flash"],
+        # Analysis: photo diagnosis / tracking / soil / harvest, layout and satellite images, expert data analysis.
         "model": "gemini-flash-latest",
         # Tried in order when the primary answers 429/5xx (free tier gets overloaded at peaks).
         "fallback_models": ["gemini-3.5-flash", "gemini-3-flash-preview"],
@@ -151,6 +155,11 @@ def _apply_env_overrides(config: dict) -> None:
 
     gemini = config["gemini"]
     gemini["model"] = env("GEMINI_MODEL", gemini["model"])
+    gemini["chat_model"] = env("GEMINI_CHAT_MODEL", gemini["chat_model"])
+    if env("GEMINI_CHAT_FALLBACK_MODELS") is not None:
+        gemini["chat_fallback_models"] = [
+            m.strip() for m in env("GEMINI_CHAT_FALLBACK_MODELS").split(",") if m.strip()
+        ]
     gemini["lite_model"] = env("GEMINI_LITE_MODEL", gemini["lite_model"])
     if env("GEMINI_FALLBACK_MODELS") is not None:
         gemini["fallback_models"] = [m.strip() for m in env("GEMINI_FALLBACK_MODELS").split(",") if m.strip()]

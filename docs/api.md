@@ -32,6 +32,13 @@ Los errores de dominio responden `{"detail": "...", "error_code": "..."}`.
 | PUT | `/me/provider-credentials/gemini` | `{api_key}`; se valida contra Gemini y se guarda cifrada |
 | DELETE | `/me/provider-credentials/gemini` | |
 
+Modelos (con la key de cada usuario): el ida y vuelta del chat usa la cadena **chat**
+(`GEMINI_CHAT_MODEL`, por defecto `gemini-3.5-flash-lite`, + `GEMINI_CHAT_FALLBACK_MODELS`). La cadena de
+**análisis** (`GEMINI_MODEL` + `GEMINI_FALLBACK_MODELS`) se usa para los análisis con foto (diagnóstico,
+seguimiento por cultivo y por zona, suelo, cosecha), el plano y la imagen satelital, los turnos de chat que
+traen foto, y la herramienta `expert_field_analysis` del agente (lectura de clima/suelo/satelital/riego/solar).
+`ChatResponse.metadata.model` informa el modelo principal del turno.
+
 ## Farm management (acepta rutas con y sin `/` final)
 | Método | Ruta | Permisos |
 |---|---|---|
