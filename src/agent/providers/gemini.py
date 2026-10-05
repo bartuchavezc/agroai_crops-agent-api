@@ -90,6 +90,8 @@ class GeminiGateway:
         self.credentials = credentials_service
         self.model = config["model"]
         self.fallback_models = list(config.get("fallback_models") or [])
+        self.chat_model = config.get("chat_model") or self.model
+        self.chat_fallback_models = list(config.get("chat_fallback_models") or [])
         self.lite_model = config["lite_model"]
         self.embedding_model = config["embedding_model"]
         self.embedding_dimensions = int(config["embedding_dimensions"])
@@ -97,7 +99,13 @@ class GeminiGateway:
 
     @property
     def model_chain(self) -> list[str]:
+        """Analysis chain (the capable, pricier models): photos, satellite/layout images, expert data analysis."""
         return [self.model, *[m for m in self.fallback_models if m != self.model]]
+
+    @property
+    def chat_chain(self) -> list[str]:
+        """Chat back-and-forth chain (lite models)."""
+        return [self.chat_model, *[m for m in self.chat_fallback_models if m != self.chat_model]]
 
     async def _generate(self, client: genai.Client, models: list[str], **kwargs):
         """generate_content over a chain of models, moving on when one is overloaded."""
@@ -152,9 +160,13 @@ class GeminiGateway:
             logger.error(f"Gemini returned an invalid {schema.__name__}: {exc.errors(include_input=False)}")
             raise ProviderError("La IA devolvió una respuesta con formato inválido. Reintentá en un momento.") from None
 
-    async def generate_text(self, user_id: UUID, prompt: str, model: Optional[str] = None) -> str:
+    async def generate_text(
+        self, user_id: UUID, prompt: str, model: Optional[str] = None, models: Optional[list[str]] = None
+    ) -> str:
+        """Lite models by default (titles); pass models=model_chain for an analysis-grade answer."""
         client = await self.client_for(user_id)
-        response = await self._generate(client, [model or self.lite_model, *self.model_chain], contents=prompt)
+        chain = models or list(dict.fromkeys([model or self.lite_model, *self.chat_chain]))
+        response = await self._generate(client, chain, contents=prompt)
         return (response.text or "").strip()
 
     async def embed(self, user_id: UUID, texts: Sequence[str], task_type: str) -> list[list[float]]:

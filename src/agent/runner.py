@@ -80,6 +80,7 @@ class PreparedTurn:
     ctx: TurnContext
     runner: Runner
     assistant_message_id: UUID
+    model_name: str = ""
 
 
 FAILED_TURN_NOTE = "(No pude responder este mensaje por un error técnico.)"
@@ -117,11 +118,14 @@ class AgentRunner:
         self._running: dict[UUID, asyncio.Task] = {}
         conversations.set_session_deleter(self.delete_session)
 
-    def _model(self, api_key: str):
-        """The user's key on every model of the chain; ADK falls back on 429/5xx per model call."""
+    def _model(self, api_key: str, heavy: bool = False):
+        """The user's key on every model of the chain; ADK falls back on 429/5xx per model call. The chat runs
+        on the lite chain; a turn with a photo (heavy) on the analysis chain. Data analysis inside a chat turn
+        is delegated to the analysis chain by the expert_field_analysis tool."""
+        chain = self.gemini.model_chain if heavy else self.gemini.chat_chain
         models = [
             Gemini(model=name, client_kwargs={"api_key": api_key}, retry_options=RETRY_OPTIONS)
-            for name in self.gemini.model_chain
+            for name in chain
         ]
         return models[0] if len(models) == 1 else FallbackModel(models=models)
 
@@ -283,7 +287,7 @@ class AgentRunner:
         )
         agent = LlmAgent(
             name="agroai_assistant",
-            model=self._model(api_key),
+            model=self._model(api_key, heavy=bool(image_identifier)),
             instruction=lambda _ctx: instruction,
             tools=[*build_tools(self.tool_deps, ctx), specific_manuals_toolset()],
             generate_content_config=types.GenerateContentConfig(temperature=0.4),
@@ -299,6 +303,7 @@ class AgentRunner:
             ctx=ctx,
             runner=Runner(app=app, session_service=self.sessions),
             assistant_message_id=assistant_message_id,
+            model_name=(self.gemini.model_chain if image_identifier else self.gemini.chat_chain)[0],
         )
 
     def is_running(self, conversation_id: UUID) -> bool:
@@ -376,7 +381,7 @@ class AgentRunner:
                     conversation_id=turn.conversation_id,
                     tool_calls=tool_calls,
                     search_performed=any(t.name == "web_search" for t in tool_calls),
-                    model=self.gemini.model,
+                    model=turn.model_name or self.gemini.chat_model,
                 ),
             )
 
