@@ -21,6 +21,7 @@ from src.application.farm.service import FarmService
 from src.application.inventory.service import InventoryService
 from src.application.irrigation.service import EvapotranspirationService
 from src.application.management.service import ManagementService
+from src.application.planning.service import PlanningService
 from src.application.reports.service import ReportsService
 from src.application.satellite.service import ZoneSatelliteService
 from src.application.storage.service import StorageService
@@ -51,6 +52,7 @@ class ToolDeps:
     irrigation: EvapotranspirationService
     inventory: InventoryService
     management: ManagementService
+    planning: PlanningService
     satellite: ZoneSatelliteService
     storage: StorageService
     nasa_power: NasaPowerAdapter

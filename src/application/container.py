@@ -11,6 +11,8 @@ from .irrigation.service import EvapotranspirationService
 from .management.repository import ManagementRepository
 from .management.service import ManagementService
 from .notifications.service import NotificationService
+from .planning.repository import PlanningRepository
+from .planning.service import PlanningService
 from .reports.repository import SQLAlchemyReportsRepository
 from .reports.service import ReportsService
 from .satellite.repository import ZoneSatelliteRepository
@@ -23,7 +25,7 @@ from .storage.service import StorageService
 
 class ApplicationContainer(containers.DeclarativeContainer):
     """Business services: farm, reports, alerts, storage, notifications, irrigation, inventory,
-    management, satellite."""
+    management, planning, satellite."""
 
     config = providers.Configuration()
     db_session_factory = providers.Dependency()
@@ -82,6 +84,17 @@ class ApplicationContainer(containers.DeclarativeContainer):
     management_repository = providers.Singleton(ManagementRepository, session_factory=db_session_factory)
     management_service = providers.Singleton(
         ManagementService, repository=management_repository, farm_service=farm_service
+    )
+
+    planning_repository = providers.Singleton(PlanningRepository, session_factory=db_session_factory)
+    planning_service = providers.Singleton(
+        PlanningService,
+        repository=planning_repository,
+        farm_service=farm_service,
+        notification_service=notification_service,
+        management_service=management_service,
+        inventory_service=inventory_service,
+        timezone_name=config.app.timezone,
     )
 
     zone_satellite_repository = providers.Singleton(ZoneSatelliteRepository, session_factory=db_session_factory)

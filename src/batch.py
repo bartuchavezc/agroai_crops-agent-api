@@ -4,6 +4,8 @@ Batch jobs.
     python -m src.batch smn                  # SMN forecast ETL for every field + proactive alerts, once
     python -m src.batch smn --every-hours 6  # same, forever (used by the `worker` compose service)
     python -m src.batch smn --force          # reload even if the latest cycle is already loaded
+    python -m src.batch reminders                     # notify the reminders that are due, once
+    python -m src.batch reminders --every-minutes 10  # same, forever (the `reminders` compose service)
 """
 import argparse
 import asyncio
@@ -33,27 +35,42 @@ async def run_smn(container, force: bool = False) -> None:
     # schedule or as a side effect of something else, however well-intentioned ("check after a storm").
 
 
+async def run_reminders(container) -> None:
+    result = await container.application.planning_service().run_due_reminders()
+    if result["notified"]:
+        logger.info(f"Reminders: {result}")
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m src.batch")
     sub = parser.add_subparsers(dest="job", required=True)
     smn = sub.add_parser("smn", help="SMN forecast ETL + proactive forecast alerts")
     smn.add_argument("--force", action="store_true")
     smn.add_argument("--every-hours", type=float, default=None)
+    reminders = sub.add_parser("reminders", help="In-app notifications for the reminders that are due")
+    reminders.add_argument("--every-minutes", type=float, default=None)
     args = parser.parse_args()
+
+    if args.job == "reminders":
+        job, name = run_reminders, "Reminders"
+        interval = args.every_minutes * 60 if args.every_minutes else None
+    else:
+        job, name = (lambda c: run_smn(c, force=args.force)), "SMN"
+        interval = args.every_hours * 3600 if args.every_hours else None
 
     container = build_container()
     try:
         while True:
             started = time.monotonic()
             try:
-                await run_smn(container, force=args.force)
+                await job(container)
             except Exception:
-                logger.exception("SMN batch failed")
-                if args.every_hours is None:
+                logger.exception(f"{name} batch failed")
+                if interval is None:
                     raise
-            if args.every_hours is None:
+            if interval is None:
                 break
-            await asyncio.sleep(max(60.0, args.every_hours * 3600 - (time.monotonic() - started)))
+            await asyncio.sleep(max(30.0, interval - (time.monotonic() - started)))
     finally:
         await dispose_database_connections()
 

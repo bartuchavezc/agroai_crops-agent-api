@@ -35,9 +35,13 @@ class NotificationService:
         entity_type: EntityType,
         entity_id: UUID,
         field_id: Optional[UUID] = None,
+        only_user_id: Optional[UUID] = None,
     ) -> None:
+        """only_user_id: notify just that member (e.g. a reminder's assignee) instead of everyone."""
         members = await self.users.list_by_account(account_id)
-        recipients = [m for m in members if m.id != exclude_user_id]
+        recipients = [
+            m for m in members if m.id != exclude_user_id and (only_user_id is None or m.id == only_user_id)
+        ]
         if not recipients:
             return
         now = utcnow()

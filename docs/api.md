@@ -73,6 +73,25 @@ disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, plan
 | GET / POST | `/reports?field_id=&crop_cycle_id=&zone_id=&report_type=` | `crop_cycle_id` incluye los seguimientos de zona que cubrieron ese ciclo |
 | GET / PUT / DELETE | `/reports/{id}` | `raw_analysis_data.llm_structured_diagnosis` |
 
+## Planificación y recordatorios
+Recordatorios: cualquier rol crea y marca hechos; planes, etapas y siembras: owner/tecnico. Un recordatorio vencido
+llega como notificación in-app (`type: "reminder"`, `entity_type: "reminder"`) cuando corre
+`python -m src.batch reminders` (servicio `reminders` del compose, cada 5 min); con `assigned_to` solo le llega a
+ese integrante, si no a toda la cuenta.
+
+| Método | Ruta | Notas |
+|---|---|---|
+| GET / POST | `/planning/reminders?status=&since=&until=&field_id=&crop_cycle_id=&plan_id=&assigned_to=` | `{title, due_at, description?, recurrence: none\|daily\|weekly\|every_n_days, interval_days?, until?, assigned_to?, field_id?, zone_id?, crop_cycle_id?, plan_id?}`. `assigned_to=<id>` = los suyos + los sin asignar; `none` = sin asignar |
+| PUT / DELETE | `/planning/reminders/{id}` | PUT parcial (posponer = cambiar `due_at`). DELETE: manager o quien lo creó |
+| POST | `/planning/reminders/{id}/complete` | Uno recurrente pasa a su próxima ocurrencia (y termina después de `until`) |
+| GET / POST | `/planning/plans?field_id=&status=` | `{name, kind: ciclo\|largo, field_id?, zone_id?, start_date?, end_date?, notes?, stages[], sowings[]}`; cada siembra crea su recordatorio |
+| GET / PUT / DELETE | `/planning/plans/{id}` | GET con `stages`, `sowings`, `reminders`. Archivar o borrar cancela los recordatorios pendientes |
+| POST | `/planning/plans/{id}/stages` | `{name, stage, start_date, end_date?, remind?}` — `PUT/DELETE /planning/stages/{id}` |
+| POST | `/planning/plans/{id}/sowings` | `{crop_master_id, sow_date, zone_id?, quantity?, unit?, seed_lot_id?}` — `PUT/DELETE /planning/sowings/{id}` |
+| POST | `/planning/plans/{id}/sowings/staggered` | Siembra escalonada: `{crop_master_id, start_date, count, every_days, total_quantity?, unit?, zone_id?, seed_lot_id?}` divide la cantidad en partes iguales |
+| POST | `/planning/sowings/{id}/sow` | Siembra hecha: `{sown_on?, create_crop_cycle=true, consume_seed_lot=true}` arranca el ciclo (con su plan por etapas) y descuenta el lote |
+| GET / POST | `/planning/crop-cycles/{id}/stage-plan` | GET: propuesta de etapas + recordatorios del ciclo según la plantilla del cultivo (germinación, traspaso, etapas clave, posible cosecha, cosecha estimada). POST: la guarda (regenerar reemplaza lo generado; los hechos quedan) |
+
 ## Alertas
 `GET /alerts?acknowledged=&severity=&field_id=`, `POST /alerts`, `GET /alerts/active`, `GET/DELETE /alerts/{id}`,
 `PUT /alerts/{id}/acknowledge`. Las alertas del pronóstico tienen `source: "smn"` y `rule_id`.

@@ -64,6 +64,7 @@ class AgentContainer(containers.DeclarativeContainer):
         irrigation=application.irrigation_service,
         inventory=application.inventory_service,
         management=application.management_service,
+        planning=application.planning_service,
         satellite=application.satellite_service,
         storage=application.storage_service,
         nasa_power=nasa_power,

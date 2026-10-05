@@ -52,13 +52,14 @@ las reglas (helada, calor, riesgo fúngico, lluvia fuerte) y crea alertas dedupl
 ```bash
 python -m src.batch smn                   # una vez
 python -m src.batch smn --every-hours 6   # loop (servicio `worker` del compose)
+python -m src.batch reminders --every-minutes 5   # recordatorios vencidos → notificaciones (servicio `reminders`)
 ```
 
 ## Puesta en marcha
 
 ```bash
 cp .env.example .env        # completar AUTH_SECRET_KEY, CREDENTIALS_ENCRYPTION_KEY, OPENWEATHER_API_KEY
-docker compose up --build   # db → migrate → api (:8000) + worker
+docker compose up --build   # db → migrate → api (:8000) + worker + reminders
 ```
 
 Documentación interactiva (solo con `DEV_MODE=true`): http://localhost:8000/docs · Resumen de endpoints: [docs/api.md](docs/api.md)

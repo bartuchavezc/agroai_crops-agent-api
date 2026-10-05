@@ -22,6 +22,7 @@ from src.application.farm.router import router as farm_router
 from src.application.inventory.router import router as inventory_router
 from src.application.irrigation.router import router as irrigation_router
 from src.application.management.router import router as management_router
+from src.application.planning.router import router as planning_router
 from src.application.notifications.router import router as notifications_router
 from src.application.reports.router import router as reports_router
 from src.application.satellite.router import router as satellite_router
@@ -52,6 +53,7 @@ ROUTERS = [
     inventory_router,
     irrigation_router,
     management_router,
+    planning_router,
     satellite_router,
     admin_router,
 ]
@@ -71,6 +73,7 @@ WIRED_MODULES = [
     "src.application.inventory.router",
     "src.application.irrigation.router",
     "src.application.management.router",
+    "src.application.planning.router",
     "src.application.satellite.router",
     "src.admin.router",
 ]
