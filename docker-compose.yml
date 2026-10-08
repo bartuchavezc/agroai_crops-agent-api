@@ -74,6 +74,18 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Copernicus satellite series: backfill + new passes for every field, then series-based alerts. Does
+  # nothing until SATELLITE_INGEST_ENABLED=true (measure the real cost first: src/scripts/copernicus_measure.py).
+  satellite:
+    build: .
+    command: ["python", "-m", "src.batch", "satellite", "--every-hours", "${SATELLITE_INTERVAL_HOURS:-24}"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agroai}:${POSTGRES_PASSWORD:-agroai}@db:5432/${POSTGRES_DB:-agroai}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   pgdata:
   uploads:

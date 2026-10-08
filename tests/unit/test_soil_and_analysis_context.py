@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -52,17 +51,20 @@ def test_crop_references_put_physiology_first_then_each_crop_in_a_fixed_order():
     assert text.count("## Referencia: ") == len(loaded)
 
 
-async def test_ndvi_lines_show_the_series_and_its_direction():
-    def reading(day, ndvi):
-        return SimpleNamespace(captured_at=datetime(2026, 9, day, tzinfo=timezone.utc), ndvi_mean=ndvi,
-                               ndvi_min=ndvi - 0.1, ndvi_max=ndvi + 0.1, ndwi_mean=0.05)
-
-    rows = [reading(28, 0.45), reading(21, 0.55), reading(14, 0.66)]
-    builder = AnalysisContextBuilder(None, None, None, SimpleNamespace(recent=AsyncMock(return_value=rows)))
-    lines = await builder.ndvi_lines(SimpleNamespace(account_id=1), 2)
-    assert lines[1].startswith("- 2026-09-28: NDVI 0.45") and "baja" in lines[-1] and "-0.21" in lines[-1]
-    empty = AnalysisContextBuilder(None, None, None, SimpleNamespace(recent=AsyncMock(return_value=[])))
-    assert "no hay lecturas guardadas" in (await empty.ndvi_lines(SimpleNamespace(account_id=1), 2))[0]
+async def test_ndvi_lines_summarize_the_fields_own_series():
+    analysis = SimpleNamespace(
+        has_data=True, last_pass={"date": "2026-09-28", "ndvi_mean": 0.58}, days_since_last_pass=3, phenology={},
+        status=lambda m: {"ndvi": {"value": 0.58, "trend_15d": -0.07}, "ndre": {"value": 0.31}}.get(m),
+    )
+    builder = AnalysisContextBuilder(None, None, None, SimpleNamespace(analyze=AsyncMock(return_value=analysis)))
+    lines = await builder.ndvi_lines(SimpleNamespace(account_id=1), SimpleNamespace(id=2))
+    text = "\n".join(lines)
+    assert "NDVI 0.58" in text and "NDRE (vigor): 0.31" in text and "-0.07" in text and "NDWI" not in text
+    empty = SimpleNamespace(has_data=False)
+    quiet = AnalysisContextBuilder(None, None, None, SimpleNamespace(analyze=AsyncMock(return_value=empty)))
+    assert "Todavía no hay una serie" in "\n".join(await quiet.ndvi_lines(SimpleNamespace(account_id=1), None))
+    broken = AnalysisContextBuilder(None, None, None, SimpleNamespace(analyze=AsyncMock(side_effect=RuntimeError)))
+    assert await broken.ndvi_lines(SimpleNamespace(account_id=1), None) == []
 
 
 def test_soil_lines_combine_inta_and_soilgrids():

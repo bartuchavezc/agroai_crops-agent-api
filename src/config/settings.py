@@ -107,6 +107,16 @@ DEFAULT_CONFIG = {
         # signal degrades gracefully (feature reports "not configured") when these are unset.
         "copernicus_client_id": "",
         "copernicus_client_secret": "",
+        # Time series (see application/satellite/ingest.py). The scheduled ingest stays off until the real
+        # processing-unit cost per field has been measured (src/scripts/copernicus_measure.py).
+        "ingest_enabled": False,
+        "backfill_years": 3,
+        # Monthly processing-unit caps per kind; together they should stay under the free tier's 10,000.
+        "batch_pu_budget": 7000.0,
+        "on_demand_pu_budget": 2000.0,
+        "min_valid_fraction": 0.6,
+        "s1_enabled": True,
+        "s1_orbit_direction": "DESCENDING",
     },
 }
 
@@ -210,6 +220,13 @@ def _apply_env_overrides(config: dict) -> None:
     satellite = config["satellite"]
     satellite["copernicus_client_id"] = env("COPERNICUS_CLIENT_ID", satellite["copernicus_client_id"])
     satellite["copernicus_client_secret"] = env("COPERNICUS_CLIENT_SECRET", satellite["copernicus_client_secret"])
+    satellite["ingest_enabled"] = _env_bool("SATELLITE_INGEST_ENABLED", satellite["ingest_enabled"])
+    satellite["backfill_years"] = int(env("SATELLITE_BACKFILL_YEARS", satellite["backfill_years"]))
+    satellite["batch_pu_budget"] = float(env("SATELLITE_BATCH_PU_BUDGET", satellite["batch_pu_budget"]))
+    satellite["on_demand_pu_budget"] = float(env("SATELLITE_ON_DEMAND_PU_BUDGET", satellite["on_demand_pu_budget"]))
+    satellite["min_valid_fraction"] = float(env("SATELLITE_MIN_VALID_FRACTION", satellite["min_valid_fraction"]))
+    satellite["s1_enabled"] = _env_bool("SATELLITE_S1_ENABLED", satellite["s1_enabled"])
+    satellite["s1_orbit_direction"] = env("SATELLITE_S1_ORBIT_DIRECTION", satellite["s1_orbit_direction"]).upper()
 
 
 def _validate(config: dict) -> None:

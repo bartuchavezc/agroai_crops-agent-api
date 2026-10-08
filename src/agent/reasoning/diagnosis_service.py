@@ -57,7 +57,7 @@ class DiagnosisService:
         rules_engine: RulesEngine,
         profile_service: ProfileService,
         notification_service: NotificationService,
-        satellite_repository,
+        satellite_service,
         search=None,
         max_image_side: int = 1536,
         deep_default: bool = True,
@@ -73,7 +73,7 @@ class DiagnosisService:
         self.max_image_side = max_image_side
         self.deep_default = deep_default
         self.analysis_context = AnalysisContextBuilder(
-            farm_service, reports_service, weather_service, satellite_repository, search
+            farm_service, reports_service, weather_service, satellite_service, search
         )
 
     async def _field_context(self, actor: Actor, field_id: Optional[UUID]) -> tuple[list[str], dict]:

@@ -187,21 +187,39 @@ class TestIrrigationRules:
 
 
 class TestSatelliteRules:
-    """Deterministic zone NDVI/NDWI signal rules, relative to the field's own recent baseline."""
+    """Series-based rules: relative to the field's own normal/last year (see satellite/analytics.py)."""
 
-    def test_ndvi_drop_triggers_when_baseline_available(self, rules_engine):
-        context = {"ndvi_mean": 0.3, "ndwi_mean": -0.1, "ndvi_drop": 0.2}
-        results = rules_engine.evaluate(context, categories=["satellite"])
-        assert any(r.rule_id == "satellite_ndvi_drop" for r in results)
+    def _ids(self, rules_engine, ctx):
+        return {r.rule_id for r in rules_engine.evaluate(ctx, categories=["satellite"])}
 
-    def test_no_ndvi_drop_rule_without_a_baseline(self, rules_engine):
-        results = rules_engine.evaluate({"ndvi_mean": 0.3, "ndwi_mean": -0.1}, categories=["satellite"])
-        assert not any(r.rule_id == "satellite_ndvi_drop" for r in results)
+    def test_ndvi_drop_over_15_days(self, rules_engine):
+        assert "satellite_ndvi_drop" in self._ids(rules_engine, {"ndvi_drop_15d": 0.2})
+        assert "satellite_ndvi_drop" not in self._ids(rules_engine, {"ndvi_drop_15d": 0.05})
+
+    def test_below_normal_needs_a_streak_and_two_years(self, rules_engine):
+        ctx = {"ndvi_below_p10_streak": 2, "ndvi_normal_years": 3, "ndvi_vs_normal": -0.12}
+        assert "satellite_below_normal" in self._ids(rules_engine, ctx)
+        assert "satellite_below_normal" not in self._ids(rules_engine, {**ctx, "ndvi_below_p10_streak": 1})
+        assert "satellite_below_normal" not in self._ids(rules_engine, {**ctx, "ndvi_normal_years": 1})
+
+    def test_worse_than_last_year(self, rules_engine):
+        assert "satellite_worse_than_last_year" in self._ids(rules_engine, {"ndvi_vs_last_year": -0.15})
+        assert "satellite_worse_than_last_year" not in self._ids(rules_engine, {"ndvi_vs_last_year": -0.04})
+
+    def test_early_senescence_when_falling_while_normally_rising(self, rules_engine):
+        ctx = {"ndvi_trend_15d": -0.08, "ndvi_normal_trend_15d": 0.05}
+        assert "satellite_early_senescence" in self._ids(rules_engine, ctx)
+        assert "satellite_early_senescence" not in self._ids(rules_engine, {**ctx, "ndvi_normal_trend_15d": -0.05})
+
+    def test_canopy_water_stress(self, rules_engine):
+        ctx = {"ndmi_below_p10_streak": 3, "ndmi_normal_years": 2, "ndmi_vs_normal": -0.08}
+        assert "satellite_canopy_water_stress" in self._ids(rules_engine, ctx)
 
     def test_high_ndwi_triggers_flood_signal(self, rules_engine):
-        results = rules_engine.evaluate({"ndvi_mean": 0.5, "ndwi_mean": 0.25}, categories=["satellite"])
-        assert any(r.rule_id == "satellite_high_ndwi_flood_signal" for r in results)
+        assert "satellite_high_ndwi_flood_signal" in self._ids(rules_engine, {"ndvi_mean": 0.5, "ndwi_mean": 0.25})
 
     def test_normal_readings_trigger_no_satellite_rule(self, rules_engine):
-        results = rules_engine.evaluate({"ndvi_mean": 0.6, "ndwi_mean": -0.2}, categories=["satellite"])
-        assert results == []
+        ctx = {"ndvi_mean": 0.6, "ndwi_mean": -0.2, "ndvi_vs_normal": 0.01, "ndvi_normal_years": 3,
+               "ndvi_below_p10_streak": 0, "ndvi_vs_last_year": 0.02, "ndvi_trend_15d": 0.03,
+               "ndvi_normal_trend_15d": 0.02}
+        assert rules_engine.evaluate(ctx, categories=["satellite"]) == []

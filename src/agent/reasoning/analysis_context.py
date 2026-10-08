@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from src.application.planning.stage_templates import TEMPLATES
-from src.application.satellite.repository import ZoneSatelliteRepository
+from src.application.satellite.service import summarize
 from src.providers.weather.service import WeatherService
 from src.shared.domain.locale import DEFAULT_COUNTRY
 
@@ -80,13 +80,13 @@ class AnalysisContextBuilder:
         farm_service,
         reports_service,
         weather_service: WeatherService,
-        satellite_repository: ZoneSatelliteRepository,
+        satellite_service,
         search=None,
     ):
         self.farm = farm_service
         self.reports = reports_service
         self.weather = weather_service
-        self.satellite = satellite_repository
+        self.satellite = satellite_service  # ZoneSatelliteService: reads the stored series, no Copernicus call
         self.search = search  # TavilyAdapter, for the deep pass
 
     # ------------------------------------------------------------ references
@@ -110,28 +110,24 @@ class AnalysisContextBuilder:
 
     # ------------------------------------------------------------------ data
 
-    async def ndvi_lines(self, actor, field_id) -> list[str]:
-        """The stored NDVI/NDWI readings (zone level, Sentinel-2), newest first, and the direction they are going."""
+    async def ndvi_lines(self, actor, field) -> list[str]:
+        """Where the field stands in its own stored satellite series (Sentinel-2): last clear pass, season stage, vs its
+        normal for this week and vs last year, and the other indices when they are there."""
         try:
-            rows = [
-                r for r in await self.satellite.recent(actor.account_id, field_id, limit=10) if r.ndvi_mean is not None
-            ]
+            analysis = await self.satellite.analyze(actor.account_id, field)
         except Exception:  # noqa: BLE001 - optional context
-            logger.exception("NDVI history unavailable for an analysis")
+            logger.exception("Satellite series unavailable for an analysis")
             return []
-        if not rows:
-            return ["NDVI/NDWI satelital: no hay lecturas guardadas de este campo todavía."]
-        lines = ["NDVI/NDWI de la zona (Sentinel-2, lecturas guardadas, más reciente primero):"]
-        for r in rows:
-            ndwi = f", NDWI {r.ndwi_mean:.2f}" if r.ndwi_mean is not None else ""
-            lines.append(
-                f"- {r.captured_at.date().isoformat()}: NDVI {r.ndvi_mean:.2f} "
-                f"({r.ndvi_min:.2f} a {r.ndvi_max:.2f}){ndwi}"
-            )
-        if len(rows) >= 3:
-            delta = rows[0].ndvi_mean - rows[-1].ndvi_mean
-            trend = "sube" if delta > 0.05 else "baja" if delta < -0.05 else "se mantiene"
-            lines.append(f"Tendencia del NDVI entre la lectura más vieja y la más reciente: {trend} ({delta:+.2f}).")
+        lines = ["Serie satelital del campo (Sentinel-2, datos guardados; es una señal del lote, no de la planta):"]
+        lines.append(summarize(analysis))
+        if analysis.has_data:
+            for metric, label in (("ndre", "NDRE (vigor)"), ("ndmi", "NDMI (agua en el canopeo)"), ("ndwi", "NDWI")):
+                value = (analysis.status(metric) or {}).get("value")
+                if value is not None:
+                    lines.append(f"- {label}: {value}")
+            trend = (analysis.status("ndvi") or {}).get("trend_15d")
+            if trend is not None:
+                lines.append(f"- Tendencia del NDVI en 15 días: {trend:+.2f}")
         return lines
 
     async def weather_lines(self, field) -> list[str]:
@@ -222,7 +218,7 @@ class AnalysisContextBuilder:
     async def for_crop(self, actor, report, field, crop_names: list[str]) -> AnalysisContext:
         """Everything a crop analysis (diagnosis / periodic / zone) gets besides the photo and its own cycle context."""
         text, loaded = self.references_for(self.crop_reference_names(crop_names))
-        lines, ndvi, weather = [], self.ndvi_lines(actor, field.id), self.weather_lines(field)
+        lines, ndvi, weather = [], self.ndvi_lines(actor, field), self.weather_lines(field)
         results = await asyncio.gather(
             ndvi,
             weather,
@@ -240,7 +236,7 @@ class AnalysisContextBuilder:
         text, loaded = self.references_for(names)
         lines = self.soil_lines(field)
         results = await asyncio.gather(
-            self.ndvi_lines(actor, field.id),
+            self.ndvi_lines(actor, field),
             self.weather_lines(field),
             self.previous_reports_lines(
                 actor, field.id, "soil", report.id, "Muestras de suelo anteriores de este campo (más reciente primero):"

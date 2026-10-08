@@ -284,21 +284,83 @@ class RulesEngine:
         ))
 
     def _load_satellite_rules(self) -> None:
-        """Rules over a Sentinel-2 NDVI/NDWI context, compared against the field's own recent baseline
-        (not a fixed global threshold) — a zone-wide signal, cross-referenced against the account's own
-        reports, not a substitute for them."""
+        """Rules over a field's satellite time series (see application/satellite/analytics.py): smoothed
+        values compared against THIS field's own history — its normal for the same week in previous years
+        and last year — not a fixed global threshold. A zone/field-wide signal (10m pixels), cross-checked
+        against the account's own reports, not a substitute for a visit."""
         self.add_rule(Rule(
             id="satellite_ndvi_drop",
-            name="Zone NDVI Drop",
-            condition=lambda ctx: (ctx.get("ndvi_drop") or 0) >= 0.15,
+            name="Field NDVI Drop",
+            condition=lambda ctx: (ctx.get("ndvi_drop_15d") or 0) >= 0.15,
             severity=Severity.MEDIUM,
             message_template=(
-                "Posible sequía o estrés generalizado en la zona: el NDVI bajó {ndvi_drop:.2f} respecto "
-                "al promedio reciente de este campo."
+                "Caída marcada de vegetación: el NDVI suavizado bajó {ndvi_drop_15d:.2f} en los últimos 15 días."
             ),
             recommendations=[
-                "Revisar si el estrés parece ser de toda la zona (clima) o puntual de tus plantas",
-                "Confirmar con una recorrida visual antes de decidir un tratamiento",
+                "Revisar si la caída es de toda la zona (clima, helada, granizo) o puntual de tu lote",
+                "Si no coincide con cosecha o un corte, confirmar con una recorrida antes de tratar",
+            ],
+            category="satellite",
+        ))
+        self.add_rule(Rule(
+            id="satellite_below_normal",
+            name="Field Below Its Normal",
+            condition=lambda ctx: (ctx.get("ndvi_below_p10_streak") or 0) >= 2
+            and (ctx.get("ndvi_normal_years") or 0) >= 2
+            and ctx.get("ndvi_vs_normal") is not None,
+            severity=Severity.MEDIUM,
+            message_template=(
+                "Este campo viene por debajo de lo normal para esta época: NDVI {ndvi_vs_normal:+.2f} respecto "
+                "de su mediana de {ndvi_normal_years} años previos, en {ndvi_below_p10_streak} pasadas seguidas."
+            ),
+            recommendations=[
+                "Comparar con la fecha de siembra: un atraso de siembra también corre la curva",
+                "Revisar humedad, nutrición (mirar NDRE) y sanidad en una recorrida",
+            ],
+            category="satellite",
+        ))
+        self.add_rule(Rule(
+            id="satellite_worse_than_last_year",
+            name="Field Worse Than Last Year",
+            condition=lambda ctx: ctx.get("ndvi_vs_last_year") is not None and ctx["ndvi_vs_last_year"] <= -0.10,
+            severity=Severity.LOW,
+            message_template=(
+                "Este campo va peor que el año pasado a esta altura: NDVI {ndvi_vs_last_year:+.2f} contra la misma "
+                "fecha del año anterior."
+            ),
+            recommendations=[
+                "Verificar si cambió el cultivo, la fecha de siembra o el manejo respecto del año pasado",
+            ],
+            category="satellite",
+        ))
+        self.add_rule(Rule(
+            id="satellite_early_senescence",
+            name="Early Decline",
+            condition=lambda ctx: (ctx.get("ndvi_trend_15d") is not None and ctx["ndvi_trend_15d"] <= -0.05)
+            and (ctx.get("ndvi_normal_trend_15d") is not None and ctx["ndvi_normal_trend_15d"] >= 0.03),
+            severity=Severity.MEDIUM,
+            message_template=(
+                "Caída anticipada: el NDVI baja ({ndvi_trend_15d:+.2f} en 15 días) en una época en que "
+                "normalmente sube en este campo ({ndvi_normal_trend_15d:+.2f})."
+            ),
+            recommendations=[
+                "Revisar estrés hídrico, enfermedades foliares o daño por heladas/granizo",
+            ],
+            category="satellite",
+        ))
+        self.add_rule(Rule(
+            id="satellite_canopy_water_stress",
+            name="Canopy Water Stress",
+            condition=lambda ctx: (ctx.get("ndmi_below_p10_streak") or 0) >= 2
+            and (ctx.get("ndmi_normal_years") or 0) >= 2
+            and ctx.get("ndmi_vs_normal") is not None,
+            severity=Severity.MEDIUM,
+            message_template=(
+                "Posible estrés hídrico: la humedad del canopeo (NDMI) está bajo lo normal para esta época "
+                "({ndmi_vs_normal:+.2f}) en {ndmi_below_p10_streak} pasadas seguidas."
+            ),
+            recommendations=[
+                "Revisar humedad del suelo y el balance de riego/lluvias recientes",
             ],
             category="satellite",
         ))
@@ -307,7 +369,7 @@ class RulesEngine:
             name="Zone NDWI Flood Signal",
             condition=lambda ctx: (ctx.get("ndwi_mean") if ctx.get("ndwi_mean") is not None else -1) >= 0.2,
             severity=Severity.MEDIUM,
-            message_template="Posible anegamiento en la zona: índice de agua (NDWI) elevado, {ndwi_mean:.2f}.",
+            message_template="Posible anegamiento: índice de agua (NDWI) elevado, {ndwi_mean:.2f}.",
             recommendations=[
                 "Verificar el drenaje de canteros y bajadas de agua",
                 "Evitar riego adicional hasta que baje la humedad del suelo",

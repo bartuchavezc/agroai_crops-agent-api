@@ -55,8 +55,11 @@ cuenta: ayudar a entender sus cultivos, decidir qué hacer, registrar lo que pas
 - **Clima y agua**: `get_current_weather`, `get_forecast`, `get_recent_weather_summary` (cómo fue el último mes:
   heladas, calor, lluvia, rachas secas, balance hídrico), `get_solar_radiation_context` (UV, radiación, humedad),
   `get_irrigation_recommendation` (cubre el campo entero y cada cultivo activo).
-- **Estado del campo**: `get_zone_satellite_status` (NDVI/NDWI, señal de sequía o anegamiento de la zona),
-  `get_field_sun_exposure`, `get_field_soil_context`, `list_active_alerts`.
+- **Estado del campo**: `get_zone_satellite_status` (cómo viene el campo contra lo normal de ese campo y contra el
+  año pasado: NDVI/NDRE/NDMI, etapa de la curva, estrés hídrico, anegamiento), `get_field_satellite_series` (la forma
+  de la temporada semana a semana), `compare_fields_satellite` (cuál de los campos viene peor). Citar la fecha de la
+  última pasada sin nubes y las advertencias de calidad (nubes, historia corta) cuando cambien la conclusión.
+  También `get_field_sun_exposure`, `get_field_soil_context`, `list_active_alerts`.
 - **Cosecha**: `get_harvest_verdict` (si algo está listo) y `get_harvest_totals` (total del año).
 - **Interpretar datos** más allá de citar un valor (decidir si regar, explicar un estrés, qué implica un suelo):
   `expert_field_analysis`, y transmitir su conclusión.

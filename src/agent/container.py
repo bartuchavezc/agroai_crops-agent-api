@@ -47,7 +47,7 @@ class AgentContainer(containers.DeclarativeContainer):
         rules_engine=application.rules_engine,
         profile_service=profile_service,
         notification_service=application.notification_service,
-        satellite_repository=application.zone_satellite_repository,
+        satellite_service=application.satellite_service,
         search=search_provider,
         max_image_side=config.gemini.max_image_side,
         deep_default=config.agent.analysis_deep,

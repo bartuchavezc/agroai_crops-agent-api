@@ -1,74 +1,108 @@
 """
-Regression tests for CopernicusAdapter._parse_stats: caught live against the real Copernicus Statistical
-API, which reports a cloud-masked/no-data interval's stats as the JSON string "NaN" (not a JSON number,
-since JSON has no native NaN) rather than omitting the key — this used to crash the DB insert with
-"invalid input for query argument: 'NaN' (must be real number, not str)".
+CopernicusAdapter parsing, against the shapes the real Statistical API returns: a cloud-masked/no-data
+interval reports its stats as the JSON string "NaN" (JSON has no native NaN) rather than omitting the key —
+this once crashed the DB insert with "invalid input for query argument: 'NaN'".
 """
-from src.providers.satellite.copernicus import CopernicusAdapter
+import math
+from datetime import date
+
+from src.providers.satellite.copernicus import CopernicusAdapter, _processing_units
+
+_NAN = {"min": "NaN", "max": "NaN", "mean": "NaN", "stDev": "NaN", "sampleCount": 100, "noDataCount": 100}
 
 
-def _interval(ndvi_stats: dict, ndwi_stats: dict) -> dict:
-    return {
-        "outputs": {
-            "ndvi": {"bands": {"B0": {"stats": ndvi_stats}}},
-            "ndwi": {"bands": {"B0": {"stats": ndwi_stats}}},
-        }
+def _band(mean, samples=100, no_data=0, geometry=None, percentiles=None):
+    stats = {"min": mean - 0.1, "max": mean + 0.1, "mean": mean, "stDev": 0.05,
+             "sampleCount": samples, "noDataCount": no_data}
+    if geometry is not None:
+        stats["geometryPixelCount"] = geometry
+    if percentiles is not None:
+        stats["percentiles"] = percentiles
+    return {"stats": stats}
+
+
+def _s2_interval(day, ndvi=0.6, **pixels):
+    bands = {
+        "B0": _band(ndvi, percentiles={"10.0": ndvi - 0.1, "50.0": ndvi, "90.0": ndvi + 0.1}, **pixels),
+        "B1": _band(0.3, **pixels),
+        "B2": _band(0.2, **pixels),
+        "B3": _band(0.5, **pixels),
+        "B4": _band(-0.4, **pixels),
     }
+    interval = {"from": f"{day}T00:00:00Z", "to": f"{day}T23:59:59Z"}
+    return {"interval": interval, "outputs": {"indices": {"bands": bands}}}
 
 
-_NAN_STATS = {"min": "NaN", "max": "NaN", "mean": "NaN", "stDev": "NaN", "sampleCount": 1, "noDataCount": 1}
-_VALID_STATS = {"min": 0.25, "max": 0.25, "mean": 0.25, "stDev": 0.0, "sampleCount": 1, "noDataCount": 0}
+def _nan_s2_interval(day):
+    bands = {f"B{i}": {"stats": dict(_NAN)} for i in range(5)}
+    return {"interval": {"from": f"{day}T00:00:00Z"}, "outputs": {"indices": {"bands": bands}}}
 
 
-def test_all_nan_interval_parses_to_none_not_the_string_nan():
-    payload = {"data": [_interval(_NAN_STATS, _NAN_STATS)]}
-    stats = CopernicusAdapter._parse_stats(payload)
-    assert stats.ndvi_mean is None
-    assert stats.ndvi_min is None
-    assert stats.ndvi_max is None
-    assert stats.ndwi_mean is None
+def test_s2_parses_every_index_and_percentiles():
+    [obs] = CopernicusAdapter._parse_s2({"data": [_s2_interval("2026-01-05", ndvi=0.62)]})
+    assert obs.observed_on == date(2026, 1, 5)
+    assert obs.ndvi_mean == 0.62
+    assert obs.ndvi_std == 0.05
+    assert math.isclose(obs.ndvi_p10, 0.52) and obs.ndvi_p50 == 0.62 and math.isclose(obs.ndvi_p90, 0.72)
+    assert (obs.ndre_mean, obs.ndmi_mean, obs.evi_mean, obs.ndwi_mean) == (0.3, 0.2, 0.5, -0.4)
 
 
-def test_falls_back_to_an_earlier_valid_interval_when_the_latest_is_all_nan():
-    payload = {
-        "data": [
-            _interval(_VALID_STATS, _VALID_STATS),  # older, valid
-            _interval(_NAN_STATS, _NAN_STATS),  # most recent, cloud-masked
-        ]
-    }
-    stats = CopernicusAdapter._parse_stats(payload)
-    assert stats.ndvi_mean == 0.25
-    assert stats.ndwi_mean == 0.25
+def test_fully_masked_pass_is_dropped_not_stored_as_nan():
+    payload = {"data": [_nan_s2_interval("2026-01-05"), _s2_interval("2026-01-10")]}
+    observations = CopernicusAdapter._parse_s2(payload)
+    assert [o.observed_on for o in observations] == [date(2026, 1, 10)]
 
 
-def test_prefers_the_most_recent_valid_interval():
-    payload = {
-        "data": [
-            _interval({**_VALID_STATS, "mean": 0.10}, {**_VALID_STATS, "mean": -0.10}),
-            _interval({**_VALID_STATS, "mean": 0.40}, {**_VALID_STATS, "mean": -0.40}),
-        ]
-    }
-    stats = CopernicusAdapter._parse_stats(payload)
-    assert stats.ndvi_mean == 0.40
-    assert stats.ndwi_mean == -0.40
+def test_valid_fraction_uses_the_drawn_geometry_as_denominator():
+    # 400 px in the bbox, 100 inside the polygon, 330 masked (300 outside + 30 clouded) -> 70/100 clear.
+    [obs] = CopernicusAdapter._parse_s2({"data": [_s2_interval("2026-01-05", samples=400, no_data=330, geometry=100)]})
+    assert obs.total_pixels == 100
+    assert obs.valid_pixels == 70
+    assert obs.valid_fraction == 0.7
 
 
-def test_no_intervals_returns_none():
-    assert CopernicusAdapter._parse_stats({"data": []}) is None
-    assert CopernicusAdapter._parse_stats({}) is None
+def test_valid_fraction_falls_back_to_the_box_without_a_polygon():
+    [obs] = CopernicusAdapter._parse_s2({"data": [_s2_interval("2026-01-05", samples=200, no_data=50)]})
+    assert (obs.total_pixels, obs.valid_pixels, obs.valid_fraction) == (200, 150, 0.75)
 
 
-def test_pixel_count_is_geometry_pixels_minus_no_data():
-    stats_with_geometry = {**_VALID_STATS, "geometryPixelCount": 12, "noDataCount": 2}
-    payload = {"data": [_interval(stats_with_geometry, stats_with_geometry)]}
-    stats = CopernicusAdapter._parse_stats(payload)
-    assert stats.pixel_count == 10
+def test_errored_and_empty_intervals_are_skipped():
+    payload = {"data": [{"interval": {"from": "2026-01-01T00:00:00Z"}, "error": {"type": "EXECUTION_ERROR"}}]}
+    assert CopernicusAdapter._parse_s2(payload) == []
+    assert CopernicusAdapter._parse_s2({}) == []
 
 
-def test_pixel_count_is_none_when_geometry_pixel_count_absent():
-    payload = {"data": [_interval(_VALID_STATS, _VALID_STATS)]}
-    stats = CopernicusAdapter._parse_stats(payload)
-    assert stats.pixel_count is None
+def test_s1_converts_linear_means_to_db_and_cross_ratio():
+    bands = {"B0": _band(0.1), "B1": _band(0.01), "B2": _band(0.36)}
+    payload = {"data": [{"interval": {"from": "2026-02-01T00:00:00Z"}, "outputs": {"backscatter": {"bands": bands}}}]}
+    [obs] = CopernicusAdapter._parse_s1(payload, "DESCENDING")
+    assert obs.vv_db_mean == -10.0
+    assert obs.vh_db_mean == -20.0
+    assert obs.vh_vv_db == -10.0
+    assert obs.rvi_mean == 0.36
+    assert obs.orbit_direction == "DESCENDING"
+
+
+def test_year_chunks_cover_the_range_without_gaps_or_overlap():
+    chunks = CopernicusAdapter._year_chunks(date(2023, 1, 1), date(2025, 6, 30))
+    assert chunks[0][0] == date(2023, 1, 1) and chunks[-1][1] == date(2025, 6, 30)
+    for (_, end), (start, _) in zip(chunks, chunks[1:], strict=False):
+        assert (start - end).days == 1
+    assert all((end - start).days <= 365 for start, end in chunks)
+
+
+def test_geometry_hash_changes_with_the_boundary():
+    polygon = [(-34.60, -58.40), (-34.61, -58.40), (-34.61, -58.41)]
+    box = CopernicusAdapter.geometry_hash(-34.6, -58.4)
+    drawn = CopernicusAdapter.geometry_hash(-34.6, -58.4, polygon)
+    assert box != drawn
+    assert drawn == CopernicusAdapter.geometry_hash(-34.6, -58.4, list(polygon))
+
+
+def test_processing_units_header():
+    assert _processing_units({"x-processingunits-spent": "0.0123"}) == 0.0123
+    assert _processing_units({}) is None
+    assert _processing_units({"x-processingunits-spent": "n/a"}) is None
 
 
 def test_bounds_falls_back_to_bbox_without_a_polygon():

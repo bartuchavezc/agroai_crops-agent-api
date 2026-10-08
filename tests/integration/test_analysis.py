@@ -8,7 +8,7 @@ from uuid import UUID
 
 from src.agent.reasoning.periodic_report import ZoneCropAssessment, ZonePeriodicReportResult
 from src.agent.schemas import SoilRecognitionResult
-from src.application.satellite.models import ZoneSatelliteReading
+from src.application.satellite.models import SOURCE_S2
 from src.application.soil_data.schemas import SoilGridsEstimate, SoilLayerEstimate
 from src.providers.search.tavily import SearchHit
 from src.shared.domain.actor import Actor
@@ -41,6 +41,18 @@ def _zone_result(cycles, risk="low", confidence=0.8):
     )
 
 
+def _series(ndvi: float) -> list[dict]:
+    """A year of Sentinel-2 passes every 5 days ending 3 days ago, all at the same NDVI."""
+    today, rows, day = utcnow().date(), [], utcnow().date() - timedelta(days=400)
+    while day <= today - timedelta(days=3):
+        rows.append({
+            "observed_on": day, "total_pixels": 120, "valid_pixels": 110, "valid_fraction": 0.92,
+            "ndvi_mean": ndvi, "ndre_mean": 0.3, "ndmi_mean": 0.1, "evi_mean": 0.4, "ndwi_mean": -0.2,
+        })
+        day += timedelta(days=5)
+    return rows
+
+
 async def _zone_with_crops(client, container, signup, name):
     user = await signup(name)
     h = user["headers"]
@@ -52,11 +64,9 @@ async def _zone_with_crops(client, container, signup, name):
     lettuce = await _cycle(client, h, field["id"], "lechuga", zone_id=zone["id"])
     await _cycle(client, h, field["id"], "acelga")  # another zone: NOT part of this analysis
     actor = Actor(UUID(user["user"]["id"]), UUID(user["account"]["id"]), "owner")
-    repo = container.application.zone_satellite_repository()
-    await repo.create(ZoneSatelliteReading(
-        account_id=actor.account_id, field_id=UUID(field["id"]), captured_at=utcnow() - timedelta(days=3),
-        ndvi_mean=0.58, ndvi_min=0.4, ndvi_max=0.7, ndwi_mean=0.1,
-    ))
+    await container.application.satellite_series_repository().upsert_many(
+        actor.account_id, UUID(field["id"]), SOURCE_S2, _series(0.58)
+    )
     return user, field, zone, [(tomato, "Tomate"), (lettuce, "Lechuga")], actor
 
 
@@ -141,10 +151,9 @@ async def test_soil_analysis_reads_the_photo_with_the_zone_data(client, signup, 
     )).json()
     await _cycle(client, h, field["id"], "tomate")
     actor = Actor(UUID(user["user"]["id"]), UUID(user["account"]["id"]), "owner")
-    await container.application.zone_satellite_repository().create(ZoneSatelliteReading(
-        account_id=actor.account_id, field_id=UUID(field["id"]), captured_at=utcnow() - timedelta(days=2),
-        ndvi_mean=0.41, ndvi_min=0.3, ndvi_max=0.5, ndwi_mean=0.02,
-    ))
+    await container.application.satellite_series_repository().upsert_many(
+        actor.account_id, UUID(field["id"]), SOURCE_S2, _series(0.41)
+    )
     estimate = SoilGridsEstimate(depths={
         "0-5cm": SoilLayerEstimate(ph=7.5, organic_carbon_g_kg=16.7, nitrogen_g_kg=1.68, cec_cmolc_kg=28.2),
         "15-30cm": SoilLayerEstimate(ph=7.6, organic_carbon_g_kg=12.1, nitrogen_g_kg=1.31, cec_cmolc_kg=28.0),
