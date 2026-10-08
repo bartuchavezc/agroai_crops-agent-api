@@ -9,6 +9,7 @@ only call Copernicus when the stored series is stale, and within the on-demand s
 processing-unit budget.
 """
 import logging
+import os
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
@@ -38,8 +39,6 @@ logger = logging.getLogger(__name__)
 # cloud-masked for a given point, so a short window risks a black no-data image even when a clear,
 # still-recent pass exists a bit further back.
 _LOOKBACK_DAYS = 30
-# A user-facing read refreshes the series from Copernicus only if the last sync is older than this.
-_ON_DEMAND_REFRESH = timedelta(hours=12)
 # First on-demand sync of a field fetches only the current season (fast); the batch completes the history.
 _ON_DEMAND_HISTORY_YEARS = 1
 # No alerts from a series whose last clear pass is older than this: it would describe a stale situation.
@@ -54,6 +53,15 @@ _STAGE_LABELS = {
     "caida": "en caída (senescencia/madurez)",
     "fin_de_ciclo": "fin de ciclo",
 }
+
+
+def reuse_hours() -> float:
+    """How old the stored series can be before a user-facing read syncs it again from Copernicus (each call spends
+    processing credits). `SATELLITE_MAX_AGE_HOURS`, default 12; Sentinel-2 revisits every ~5 days."""
+    try:
+        return float(os.environ.get("SATELLITE_MAX_AGE_HOURS", "12"))
+    except ValueError:
+        return 12.0
 
 
 def _lookback_window() -> tuple[str, str]:
@@ -144,13 +152,14 @@ class ZoneSatelliteService:
     # ------------------------------------------------------------ series
 
     async def refresh_if_stale(self, field: Any) -> Optional[str]:
-        """On-demand sync when the stored series is older than _ON_DEMAND_REFRESH. Returns a note for the
+        """On-demand sync when the stored series is older than `reuse_hours()`. Returns a note for the
         user when the refresh couldn't happen (budget/credentials), None otherwise."""
         if not self.copernicus.configured:
             return "Falta configurar las credenciales de Copernicus (COPERNICUS_CLIENT_ID/COPERNICUS_CLIENT_SECRET)."
         state = await self.series_repo.get_sync(field.id, SOURCE_S2)
         geometry = self.copernicus.geometry_hash(field.latitude, field.longitude, field.boundary)
-        if state and state.geometry_hash == geometry and utcnow() - state.last_synced_at < _ON_DEMAND_REFRESH:
+        fresh = state and utcnow() - state.last_synced_at < timedelta(hours=reuse_hours())
+        if state and state.geometry_hash == geometry and fresh:
             return None
         try:
             await self.ingest.sync_field(field, kind=KIND_ON_DEMAND, history_years=_ON_DEMAND_HISTORY_YEARS)

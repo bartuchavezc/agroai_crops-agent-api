@@ -12,6 +12,10 @@ class Actor:
     account_id: UUID
     role: str
     via: Literal["user", "agent", "system"] = "user"
+    # Where the person is: the agent speaks and tells time accordingly (see src/shared/domain/locale.py).
+    country: str = "AR"
+    timezone: str | None = None
+    locale: str = "es-AR"
 
     @property
     def is_manager(self) -> bool:
@@ -23,4 +27,9 @@ class Actor:
 
     @classmethod
     def from_user(cls, user, via: Literal["user", "agent"] = "user") -> "Actor":
-        return cls(user_id=user.id, account_id=user.account_id, role=user.role, via=via)
+        return cls(
+            user_id=user.id, account_id=user.account_id, role=user.role, via=via,
+            country=getattr(user, "country", None) or "AR",
+            timezone=getattr(user, "timezone", None),
+            locale=getattr(user, "locale", None) or "es-AR",
+        )

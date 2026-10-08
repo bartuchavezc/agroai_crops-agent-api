@@ -3,7 +3,7 @@ Full chat turn through Google ADK with a scripted model in place of Gemini: tool
 services and database, conversations are persisted, and tools can't escape the caller's account.
 """
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,11 +18,13 @@ FAKE_KEY = "AIzaSyTESTKEY-0123456789abcdefghijKLMN"
 
 class ScriptedLlm(BaseLlm):
     """Returns the next scripted step on every model call:
-    ('call', name, args), ('text', str), ('text+call', str, name, args), ('fail', exception) or
+    ('call', name, args), ('calls', [(name, args), ...]), ('text', str), ('text+call', str, name, args),
+    ('fail', exception) or
     ('wait', asyncio.Event, str) — answers str once the event is set."""
     script: list = []
     requests: list = []
     heavy: list = []  # per turn: whether the runner asked for the analysis chain
+    usage: Optional[tuple] = None  # (prompt, cached, output, thoughts) reported on every response when set
 
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False
@@ -34,7 +36,9 @@ class ScriptedLlm(BaseLlm):
         if kind == "wait":
             await payload[0].wait()
             kind, payload = "text", payload[1:]
-        if kind == "call":
+        if kind == "calls":  # several function calls in ONE model step (parallel tool use)
+            parts = [types.Part.from_function_call(name=name, args=args) for name, args in payload[0]]
+        elif kind == "call":
             name, args = payload
             parts = [types.Part.from_function_call(name=name, args=args)]
         elif kind == "text+call":
@@ -42,7 +46,14 @@ class ScriptedLlm(BaseLlm):
             parts = [types.Part(text=text), types.Part.from_function_call(name=name, args=args)]
         else:
             parts = [types.Part(text=payload[0])]
-        yield LlmResponse(content=types.Content(role="model", parts=parts))
+        usage = None
+        if self.usage:
+            prompt, cached, output, thoughts = self.usage
+            usage = types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=prompt, cached_content_token_count=cached,
+                candidates_token_count=output, thoughts_token_count=thoughts,
+            )
+        yield LlmResponse(content=types.Content(role="model", parts=parts), usage_metadata=usage)
 
 
 @pytest.fixture
@@ -102,20 +113,19 @@ async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_memb
     assert all(t["ok"] for t in body["metadata"]["tool_calls"])
     conversation_id = body["metadata"]["conversation_id"]
 
-    # The system instruction carries the static knowledge base and the account's modules — kept free
-    # of anything that changes turn to turn (see AgentRunner._static_instruction) so Gemini/ADK's
-    # context caching can reuse this prefix across turns instead of reprocessing it every time.
+    # The system instruction is the same text for every turn of the conversation, so the API can cache it as a
+    # prefix: shared rules and knowledge map first, then the account's modules, style, voice and structure.
     system = str(scripted_model.requests[0].config.system_instruction)
-    assert "Cantero 1" not in system
+    assert system.index("## 1. Quién eres") < system.index("# Mapa del conocimiento") < system.index("## Tu cuenta")
+    assert "Cantero 1" in system  # the account's fields and zones are part of that stable block
 
     # No profile yet -> falls back to the guardian's module set: general + horticulture, nothing else.
     assert "## Agronomía general" in system and "## Horticultura a campo abierto" in system
     assert "## Viticultura" not in system and "## Cultivos extensivos" not in system
 
-    # Per-turn account context (fields, date) rides in the user message content instead, so it never
-    # touches the cached system instruction.
+    # Only what changes during the conversation rides in the user message: local time, role, alerts.
     history = " ".join(str(c.parts) for c in scripted_model.requests[0].contents)
-    assert "Campos de la cuenta" in history and "Cantero 1" in history
+    assert "Fecha y hora local" in history and "Campos de la cuenta" not in history
 
     cycles = (await client.get("/api/v1/farm-management/crop-cycles", headers=h)).json()
     assert len(cycles) == 1 and cycles[0]["status"] == "planted" and cycles[0]["expected_harvest_date"]
@@ -590,3 +600,248 @@ async def test_expert_field_analysis_reads_the_field_data_with_the_analysis_chai
     assert call.kwargs["models"] == gemini.model_chain
     prompt = call.args[1]
     assert "¿riego o espero?" in prompt and "Campo: Huerta" in prompt
+
+
+async def test_turn_usage_sums_every_model_call_and_chat_defaults_are_cheap(
+    client, signup, with_key, scripted_model, container
+):
+    owner = await signup("usage")
+    await with_key(owner)
+    scripted_model.usage = (1000, 400, 50, 20)
+    scripted_model.script = [("call", "list_fields", {}), ("text", "No tenés campos todavía.")]
+    response = await client.post("/api/v1/chat", headers=owner["headers"], json={"message": "¿qué campos tengo?"})
+    assert response.status_code == 200, response.text
+    # one call chose the tool, the second wrote the answer: tokens are the sum of both
+    assert response.json()["metadata"]["usage"] == {
+        "llm_calls": 2, "prompt_tokens": 2000, "cached_tokens": 800, "output_tokens": 100, "thinking_tokens": 40,
+    }
+
+    # Defaults: implicit caching only, model-default temperature, "low" reasoning depth.
+    gemini = container.agent.gemini()
+    assert gemini.explicit_cache is False
+    config = gemini.chat_generation_config()
+    assert config.temperature is None and config.thinking_config.thinking_level.value == "LOW"
+
+
+async def test_turn_without_reported_usage_has_no_usage_field(client, signup, with_key, scripted_model):
+    owner = await signup("nousage")
+    await with_key(owner)
+    scripted_model.script = [("text", "Hola.")]
+    response = await client.post("/api/v1/chat", headers=owner["headers"], json={"message": "hola"})
+    assert response.json()["metadata"].get("usage") is None
+
+
+async def test_parallel_load_skill_calls_all_stick_and_only_ephemeral_ones_are_pruned_next_turn(
+    client, signup, with_key, scripted_model
+):
+    owner = await signup("skills")
+    await with_key(owner)
+    h = owner["headers"]
+    scripted_model.script = [
+        ("calls", [
+            ("load_skill", {"skill_name": "ficha-tomate"}),
+            ("load_skill", {"skill_name": "plagas-tomate"}),
+            ("load_skill", {"skill_name": "fisiologia-macronutrientes-npk-s"}),
+        ]),
+        ("text", "Cargué ficha, plagas y fisiología."),
+        ("text", "Segundo turno."),
+    ]
+    first = await client.post(
+        "/api/v1/chat", headers=h, json={"message": "¿por qué se amarillean las hojas del tomate?"}
+    )
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["metadata"]["conversation_id"]
+
+    # One model step asked for three skills; the very next request already carries all three texts.
+    answer_request = str(scripted_model.requests[1].contents)
+    assert "Solanum lycopersicum" in answer_request  # ficha-tomate
+    assert "Phytophthora infestans" in answer_request  # plagas-tomate
+    assert "3.9. El nitrógeno" in answer_request  # fisiologia-macronutrientes-npk-s
+    assert [c["name"] for c in first.json()["metadata"]["tool_calls"]] == ["load_skill"] * 3
+
+    second = await client.post(
+        "/api/v1/chat", headers=h, json={"message": "gracias", "conversation_id": conversation_id}
+    )
+    assert second.status_code == 200, second.text
+    later = str(scripted_model.requests[2].contents)
+    # The persistent skills keep their text; the ephemeral physiology fragment is reduced to a short notice.
+    assert "Solanum lycopersicum" in later and "Phytophthora infestans" in later
+    assert "3.9. El nitrógeno" not in later and "fisiologia-macronutrientes-npk-s" in later
+
+
+async def test_chat_speaks_the_users_country_and_tells_time_in_their_timezone(
+    client, signup, with_key, scripted_model
+):
+    # Argentina (default): voseo, SENASA/INTA, southern hemisphere
+    ar = await signup("voz-ar")
+    await with_key(ar)
+    scripted_model.script = [("text", "Hola.")]
+    assert (await client.post("/api/v1/chat", headers=ar["headers"], json={"message": "hola"})).status_code == 200
+    system_ar = str(scripted_model.requests[0].config.system_instruction)
+    assert "## Voz y contexto: Argentina" in system_ar and "## Voz y contexto: México" not in system_ar
+    assert "America/Argentina/Buenos_Aires" in str(scripted_model.requests[0].contents)
+
+    # Mexico: tuteo, SENASICA/COFEPRIS, northern hemisphere, Mexico City time, Mexican module set
+    mx = await signup("voz-mx")
+    await with_key(mx)
+    await client.patch("/api/v1/auth/me", headers=mx["headers"], json={"country": "MX"})
+    scripted_model.script = [("text", "Hola.")]
+    assert (await client.post("/api/v1/chat", headers=mx["headers"], json={"message": "hola"})).status_code == 200
+    system_mx = str(scripted_model.requests[-1].config.system_instruction)
+    assert "## Voz y contexto: México" in system_mx and "## Voz y contexto: Argentina" not in system_mx
+    assert "## Agronomía general (México)" in system_mx and "## Agronomía general (Argentina)" not in system_mx
+    first_turn = str(scripted_model.requests[-1].contents)
+    assert "America/Mexico_City" in first_turn
+    # The weekday is in Spanish whatever the server locale is
+    assert any(day in first_turn for day in ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"))
+    assert not any(day in first_turn for day in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"))
+
+
+async def test_system_instruction_is_stable_between_turns_and_within_budget(client, signup, with_key, scripted_model):
+    owner = await signup("estable")
+    await with_key(owner)
+    scripted_model.script = [("text", "uno"), ("text", "dos")]
+    first = await client.post("/api/v1/chat", headers=owner["headers"], json={"message": "hola"})
+    conversation_id = first.json()["metadata"]["conversation_id"]
+    await client.post(
+        "/api/v1/chat", headers=owner["headers"], json={"message": "otra", "conversation_id": conversation_id}
+    )
+    one, two = (str(r.config.system_instruction) for r in scripted_model.requests[:2])
+    assert one == two  # byte-identical: nothing volatile leaks into it, so the prefix cache can reuse it
+    # Fixed prompt budget (~4 chars per token): rules + map + modules + style + voice + account + skill catalog.
+    assert 4_096 * 4 < len(one) < 30_000 * 4, len(one)
+
+
+async def test_recent_weather_summary_tool_reads_the_last_month(client, signup, with_key, scripted_model, container):
+    owner = await signup("clima")
+    await with_key(owner)
+    await client.post(
+        "/api/v1/farm-management/fields", headers=owner["headers"],
+        json={"name": "Huerta", "latitude": -34.92, "longitude": -57.95},
+    )
+    days = [
+        {"date": f"2026-09-{i:02d}", "temp_max_c": 22.0, "temp_min_c": 9.0, "temp_mean_c": 15.5,
+         "precipitation_mm": 5.0 if i % 10 == 0 else 0.0, "et0_mm": 3.0}
+        for i in range(1, 31)
+    ]
+    weather = container.data_providers.weather_service()
+    weather._recent_cache.clear()
+    scripted_model.script = [("call", "get_recent_weather_summary", {"field": "Huerta"}), ("text", "Un mes seco.")]
+    with patch.object(weather.open_meteo, "recent_daily", AsyncMock(return_value=days)) as fetch:
+        response = await client.post(
+            "/api/v1/chat", headers=owner["headers"], json={"message": "¿cómo fue el último mes de clima?"}
+        )
+    assert response.status_code == 200, response.text
+    fetch.assert_awaited_once()
+    result = scripted_model.requests[1].contents[-1].parts[0].function_response.response
+    assert result["field_name"] == "Huerta" and result["days_with_data"] == 30
+    assert result["rain_mm"] == 15.0 and result["et0_mm"] == 90.0 and result["water_balance_mm"] == -75.0
+    assert result["longest_dry_spell_days"] == 9 and result["frost_days"] == 0
+    assert response.json()["metadata"]["tool_calls"][0]["ok"] is True
+
+
+@pytest.fixture
+def preflight_on(container):
+    """Switch the router step on for a test; its Gemini call is replaced by whatever the test sets."""
+    from src.agent.preflight import PreflightPlan
+
+    runner = container.agent.runner()
+    gateway = container.agent.gemini()
+    runner.preflight.enabled = True
+    with patch.object(gateway, "generate_structured", AsyncMock(return_value=PreflightPlan())) as router:
+        yield router
+    runner.preflight.enabled = False
+
+
+async def test_preflight_gathers_first_so_the_model_answers_in_one_call(
+    client, signup, with_key, scripted_model, preflight_on
+):
+    from src.agent.preflight import PreflightPlan, ToolRequest
+
+    owner = await signup("preflight")
+    await with_key(owner)
+    h = owner["headers"]
+    await client.post(
+        "/api/v1/farm-management/fields", headers=h, json={"name": "Huerta", "latitude": -34.9, "longitude": -57.9}
+    )
+    preflight_on.return_value = PreflightPlan(
+        skills=["ficha-tomate", "fisiologia-macronutrientes-npk-s"],
+        tools=[ToolRequest(name="list_fields", args="{}"), ToolRequest(name="log_event", args='{"event_type":"x"}')],
+        reason="síntoma en tomate",
+    )
+    scripted_model.script = [("text", "Probablemente falta nitrógeno.")]
+    response = await client.post(
+        "/api/v1/chat", headers=h, json={"message": "las hojas de abajo del tomate se ponen amarillas"}
+    )
+    assert response.status_code == 200, response.text
+
+    # ONE model call: the router chose, everything was fetched in parallel, the model answered with it all in hand.
+    assert len(scripted_model.requests) == 1
+    seen = " ".join(str(p.text) for p in scripted_model.requests[0].contents[-1].parts)
+    assert "Solanum lycopersicum" in seen  # ficha-tomate, already in the message
+    assert "3.9. El nitrógeno" in seen  # a physiology fragment
+    assert "Huerta" in seen and "Datos: list_fields" in seen  # a data tool's result
+    assert "Consultado: skills ficha-tomate, fisiologia-macronutrientes-npk-s; datos list_fields" in seen
+    assert seen.rindex("las hojas de abajo del tomate") > seen.index("[Fin de lo consultado]")  # the question last
+    # the write the router asked for never ran
+    assert (await client.get("/api/v1/farm-management/events", headers=h)).json() == []
+
+    names = [c["name"] for c in response.json()["metadata"]["tool_calls"]]
+    assert names == ["list_fields", "load_skill", "load_skill"]
+
+
+async def test_preflight_block_is_dropped_from_the_next_turns_history(
+    client, signup, with_key, scripted_model, preflight_on
+):
+    from src.agent.preflight import PreflightPlan
+
+    owner = await signup("preflight2")
+    await with_key(owner)
+    h = owner["headers"]
+    preflight_on.return_value = PreflightPlan(skills=["ficha-tomate"])
+    scripted_model.script = [("text", "uno"), ("text", "dos")]
+    first = await client.post("/api/v1/chat", headers=h, json={"message": "háblame del tomate cherry"})
+    conversation_id = first.json()["metadata"]["conversation_id"]
+    preflight_on.return_value = PreflightPlan()  # the follow-up needs nothing new
+    await client.post(
+        "/api/v1/chat", headers=h, json={"message": "gracias, entendido", "conversation_id": conversation_id}
+    )
+
+    second_request = " ".join(str(p.text) for c in scripted_model.requests[1].contents for p in c.parts or [])
+    assert "Solanum lycopersicum" not in second_request  # the document did not ride along again
+    assert "[Consultado en un mensaje anterior: skills ficha-tomate]" in second_request
+    assert "háblame del tomate cherry" in second_request  # the person's own words stay
+
+
+async def test_preflight_router_failure_falls_back_to_the_plain_loop(
+    client, signup, with_key, scripted_model, preflight_on
+):
+    owner = await signup("preflight3")
+    await with_key(owner)
+    preflight_on.side_effect = RuntimeError("router down")
+    scripted_model.script = [("call", "list_fields", {}), ("text", "No tenés campos todavía.")]
+    response = await client.post(
+        "/api/v1/chat", headers=owner["headers"], json={"message": "¿qué campos tengo cargados?"}
+    )
+    assert response.status_code == 200, response.text
+    assert len(scripted_model.requests) == 2  # the classic loop: tool call, then answer
+    assert [c["name"] for c in response.json()["metadata"]["tool_calls"]] == ["list_fields"]
+
+
+async def test_preflight_router_tokens_count_in_the_turn_usage(client, signup, with_key, scripted_model, preflight_on):
+    from src.agent.preflight import PreflightPlan
+    owner = await signup("preflight4")
+    await with_key(owner)
+
+    async def router(*args, usage_sink=None, **kwargs):
+        usage_sink.add(types.GenerateContentResponseUsageMetadata(prompt_token_count=700, candidates_token_count=30))
+        return PreflightPlan(skills=["ficha-tomate"])
+
+    preflight_on.side_effect = router
+    scripted_model.usage = (1000, 0, 50, 0)
+    scripted_model.script = [("text", "Listo.")]
+    response = await client.post(
+        "/api/v1/chat", headers=owner["headers"], json={"message": "¿cómo se cultiva el tomate cherry?"}
+    )
+    usage = response.json()["metadata"]["usage"]
+    assert usage["llm_calls"] == 2 and usage["prompt_tokens"] == 1700 and usage["output_tokens"] == 80

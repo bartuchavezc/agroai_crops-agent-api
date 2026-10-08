@@ -98,13 +98,15 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def get_field_soil_context(field: Optional[str] = None) -> dict:
-        """Official soil read for this field's location, from INTA's national datasets ("Suelos de la
-        República Argentina" 1:500.000 + pH raster) — a real geographic reference, not a guess: soil
-        order/subgroup, texture, drainage, depth, alkalinity, erosion, floodability, and estimated
-        topsoil pH. A zone signal (km-scale), not per-plant precision. Cross-reference against a
-        photo-based read (save_soil_sample) when both are available. None if the field has no
-        coordinates or falls outside the dataset's covered area."""
+        """Soil read for this field's location: in Argentina INTA's national datasets ("Suelos de la República
+        Argentina" 1:500.000 + pH raster) — soil order/subgroup, texture, drainage, depth, alkalinity, erosion,
+        floodability, topsoil pH — and, where the SoilGrids tiles are loaded (Argentina, Mexico), the ISRIC
+        SoilGrids estimate by depth (0-30 cm): pH, organic carbon
+        (g/kg), nitrogen (g/kg) and cation-exchange capacity (cmol(c)/kg). Regional estimates from models and maps
+        (km to 250 m), not a lab analysis of this field and not per-plant precision. Cross-reference against a
+        photo-based read (save_soil_sample) when both are available. None if the field has no coordinates."""
         target = await resolve_field(deps, ctx, field)
+        target = await deps.farm.ensure_soilgrids(ctx.actor, target.id)  # local tiles, cached in the field
         return {"soil_context": compact(target.soil_context) if target.soil_context else None}
 
     @tool

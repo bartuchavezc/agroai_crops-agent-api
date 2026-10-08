@@ -7,6 +7,7 @@ from typing import Optional
 from google.genai import types
 
 from ..prompts.satellite import SATELLITE_IMAGE_INSTRUCTION, SATELLITE_SERIES_GUIDE
+from ..prompts.voice import localize
 from ..schemas import SatelliteImageAnalysis
 from .context import ToolDeps, TurnContext, compact, resolve_field, tool
 
@@ -58,7 +59,7 @@ def satellite_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                             "Interpretá este mapa NDVI de la zona.",
                         ],
                         schema=SatelliteImageAnalysis,
-                        system_instruction=SATELLITE_IMAGE_INSTRUCTION,
+                        system_instruction=localize(SATELLITE_IMAGE_INSTRUCTION, ctx.actor.country),
                     )
                     result["image_analysis"] = compact(analysis)
                 except Exception:  # noqa: BLE001 - the numeric status/image are still useful without this

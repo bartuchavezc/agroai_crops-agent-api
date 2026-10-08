@@ -87,6 +87,39 @@ class OpenMeteoAdapter:
         data = await self._get(self.FORECAST_URL, params)
         return self._parse_hourly(data) if data else []
 
+    async def recent_daily(self, latitude: float, longitude: float, days: int = 30) -> list[dict]:
+        """The last `days` days (plus today), one record per day, oldest first: tmax/tmin/tmean, rain and FAO-56 ET0.
+        One call to the forecast endpoint with `past_days`, which also covers the last few days the archive lags on."""
+        params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "daily": (
+                "temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,et0_fao_evapotranspiration"
+            ),
+            "past_days": max(1, min(days, 92)),
+            "forecast_days": 1,
+            "timezone": "auto",
+        }
+        data = await self._get(self.FORECAST_URL, params)
+        daily = (data or {}).get("daily") or {}
+        times = daily.get("time") or []
+
+        def at(key: str, i: int) -> Optional[float]:
+            series = daily.get(key) or []
+            return series[i] if i < len(series) else None
+
+        return [
+            {
+                "date": t,
+                "temp_max_c": at("temperature_2m_max", i),
+                "temp_min_c": at("temperature_2m_min", i),
+                "temp_mean_c": at("temperature_2m_mean", i),
+                "precipitation_mm": at("precipitation_sum", i),
+                "et0_mm": at("et0_fao_evapotranspiration", i),
+            }
+            for i, t in enumerate(times)
+        ]
+
     async def historical_hourly(
         self, latitude: float, longitude: float, start: date, end: date
     ) -> list[OpenMeteoHour]:

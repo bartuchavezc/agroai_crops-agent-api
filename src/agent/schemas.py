@@ -53,6 +53,17 @@ class SoilRecognitionResult(BaseModel):
         description="Must always state that nitrogen/nutrient levels cannot be determined from a photo"
     )
     needs_human_expert: bool = False
+    zone_data_interpretation: str = Field(
+        default="",
+        description="What the zone-level data given with the photo (pH, organic carbon, nitrogen and CEC estimates, "
+        "INTA soil map, NDVI history, last month's weather) say about this soil, and where they agree or disagree with "
+        "the photo. Always worded as regional estimates, never as measurements of this sample. Empty if no data came.",
+    )
+    amendment_suggestions: list[str] = Field(
+        default_factory=list,
+        description="Concrete soil-management suggestions with their reason (organic matter, cover crops, liming or "
+        "sulfur only if the pH data call for it...). No product doses: a lab analysis gives the real numbers.",
+    )
 
 
 class HarvestVerdictResult(BaseModel):
@@ -194,11 +205,21 @@ class ToolCallInfo(BaseModel):
     ok: bool = True
 
 
+class UsageInfo(BaseModel):
+    """Tokens the turn consumed across all its model calls (absent when the provider reported none)."""
+    llm_calls: int
+    prompt_tokens: int
+    cached_tokens: int
+    output_tokens: int
+    thinking_tokens: int
+
+
 class ChatMetadata(BaseModel):
     conversation_id: UUID
     tool_calls: list[ToolCallInfo] = Field(default_factory=list)
     search_performed: bool = False
     model: str
+    usage: Optional[UsageInfo] = None
 
 
 class ChatResponse(BaseModel):

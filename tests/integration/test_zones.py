@@ -226,10 +226,10 @@ async def test_agent_creates_zone_and_plants_in_it(client, signup, with_key, scr
     events = (await client.get(f"{FARM}/events", headers=h)).json()
     assert events[0]["zone_id"] == zones[0]["id"]
 
-    # Next turn: the per-turn account snapshot lists the zone and which crop grows there.
+    # Next turn: the account structure (system instruction) lists the zone and which crop grows there.
     scripted_model.script = [("text", "ok")]
     scripted_model.requests.clear()
     conversation_id = r.json()["metadata"]["conversation_id"]
     await client.post("/api/v1/chat", headers=h, json={"message": "¿qué hay?", "conversation_id": conversation_id})
-    snapshot = str(scripted_model.requests[0].contents[-1].parts)
-    assert "Zonas: Cantero 3" in snapshot and "Cantero 3)" in snapshot
+    system = str(scripted_model.requests[0].config.system_instruction)
+    assert "Zonas: Cantero 3" in system and "Cantero 3)" in system

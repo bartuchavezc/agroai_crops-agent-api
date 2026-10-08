@@ -10,6 +10,7 @@ from sqlalchemy.orm import relationship
 
 from src.shared.database import Base
 from src.shared.domain.base import utcnow
+from src.shared.domain.locale import COUNTRIES, DEFAULT_COUNTRY, default_locale, default_timezone
 
 # bcrypt only looks at the first 72 bytes of a password; longer ones are rejected at the schema level.
 BCRYPT_MAX_PASSWORD_BYTES = 72
@@ -37,6 +38,7 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint(f"role IN {ROLES}", name="role_valid"),
+        CheckConstraint(f"country IN {COUNTRIES}", name="country_valid"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -46,6 +48,16 @@ class User(Base):
     first_name = Column(String)
     last_name = Column(String)
     role = Column(String(50), nullable=False, default=ROLE_OWNER)
+    # Where the person is and how to talk to them (voice of the agent, local time). Existing users stay in Argentina.
+    country = Column(String(2), nullable=False, default=DEFAULT_COUNTRY, server_default=DEFAULT_COUNTRY)
+    timezone = Column(
+        String(64), nullable=False, default=default_timezone(DEFAULT_COUNTRY),
+        server_default=default_timezone(DEFAULT_COUNTRY),
+    )
+    locale = Column(
+        String(10), nullable=False, default=default_locale(DEFAULT_COUNTRY),
+        server_default=default_locale(DEFAULT_COUNTRY),
+    )
     is_enrolled = Column(Boolean, default=False, nullable=False)
     # A removed member keeps their row (authorship of events/reports) but can no longer log in.
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)

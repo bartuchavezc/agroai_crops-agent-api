@@ -95,6 +95,9 @@ class GeminiGateway:
         self.lite_model = config["lite_model"]
         self.embedding_model = config["embedding_model"]
         self.embedding_dimensions = int(config["embedding_dimensions"])
+        self.explicit_cache = bool(config.get("explicit_cache", False))
+        self.chat_thinking_level = (config.get("chat_thinking_level") or "").strip().lower()
+        self.chat_temperature = config.get("chat_temperature")
         self._clients: dict[UUID, tuple[str, genai.Client]] = {}
 
     @property
@@ -106,6 +109,18 @@ class GeminiGateway:
     def chat_chain(self) -> list[str]:
         """Chat back-and-forth chain (lite models)."""
         return [self.chat_model, *[m for m in self.chat_fallback_models if m != self.chat_model]]
+
+    def chat_generation_config(self) -> types.GenerateContentConfig:
+        """Generation settings of the chat agent. Temperature is left at the model default unless configured
+        (Gemini 3 is tuned for 1.0); thinking depth comes from `chat_thinking_level`."""
+        kwargs: dict = {}
+        if self.chat_temperature is not None:
+            kwargs["temperature"] = float(self.chat_temperature)
+        if self.chat_thinking_level:
+            kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel(self.chat_thinking_level.upper())
+            )
+        return types.GenerateContentConfig(**kwargs)
 
     async def _generate(self, client: genai.Client, models: list[str], **kwargs):
         """generate_content over a chain of models, moving on when one is overloaded."""
@@ -140,8 +155,17 @@ class GeminiGateway:
         schema: Type[T],
         system_instruction: Optional[str] = None,
         model: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+        usage_sink=None,
     ) -> T:
+        """`thinking_level` (minimal | low | medium | high) caps the reasoning of a Gemini 3 model: a routing or
+        extraction call has no use for deep thinking, which is billed as output."""
         client = await self.client_for(user_id)
+        config_kwargs: dict = {}
+        if thinking_level:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel(thinking_level.upper())
+            )
         response = await self._generate(
             client,
             [model] if model else self.model_chain,
@@ -150,8 +174,11 @@ class GeminiGateway:
                 system_instruction=system_instruction,
                 response_mime_type="application/json",
                 response_schema=schema,
+                **config_kwargs,
             ),
         )
+        if usage_sink is not None:
+            usage_sink.add(response.usage_metadata)
         if isinstance(response.parsed, schema):
             return response.parsed
         try:

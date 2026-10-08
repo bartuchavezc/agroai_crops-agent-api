@@ -6,8 +6,9 @@ client_kwargs), with tools bound to that user, run it against the ADK session of
 (1:1, stored in the `adk` schema) and persist the turn in our own conversation tables.
 """
 import asyncio
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import AsyncIterator, Optional
 from uuid import UUID
@@ -41,27 +42,27 @@ from src.shared.utils.errors import (
 from .conversations.schemas import ConversationCreate
 from .conversations.service import ConversationService
 from .prompts.chat import BASE_INSTRUCTION
-from .prompts.knowledge_ar import modules_for_account, style_for_profile
+from .prompts.knowledge import modules_for, style_for
 from .prompts.knowledge_base import core_knowledge_base
-from .prompts.knowledge_skills import specific_manuals_toolset
+from .preflight import PreflightEngine, PreflightInputs, prune_consulted_blocks
+from .prompts.knowledge_skills import skill_catalog, specific_manuals_toolset
 from .prompts.title import auto_title_prompt
+from .prompts.voice import local_now_label, voice_for
 from .providers.gemini import RETRY_OPTIONS, GeminiGateway, error_from_event, translate_provider_error
-from .schemas import Attachment, ChatMetadata, ChatResponse, Source, ToolCallInfo
+from .schemas import Attachment, ChatMetadata, ChatResponse, Source, ToolCallInfo, UsageInfo
 from .tools import ToolDeps, TurnContext, build_tools
+from .usage import TurnUsage
 
 logger = logging.getLogger(__name__)
 
 APP_NAME = "agroai"
 
-# The system instruction (base instructions + knowledge base + account modules/style, potentially
-# 100k+ tokens once the knowledge base fills out) stays byte-identical across the turns of a
-# session, so ADK/Gemini explicit context caching can reuse it instead of reprocessing it every
-# turn. Per-turn variable data (date, fields, alerts) is kept OUT of it on purpose — see
-# AgentRunner._account_snapshot — since baking it into the instruction would change the cached
-# prefix's fingerprint every turn and defeat the cache. ttl_seconds=3600 (the max Gemini honors
-# for an explicit cache) suits a prompt this large; cache_intervals keeps the default (10 reuses
-# before a refresh, which also picks up profile/crop changes made mid-session).
-CONTEXT_CACHE_CONFIG = ContextCacheConfig(ttl_seconds=3600)
+# Explicit context caching (ADK/Gemini) is OPT-IN (`GEMINI_EXPLICIT_CACHE`). It bills storage per token-hour and
+# does not exist on the free tier, so it only pays off with many model calls per conversation-hour. By default the
+# API's implicit caching applies on its own — free, automatic from 4,096 tokens — and rewards what the prompt is
+# already designed for: a system instruction that stays byte-identical across turns, with per-turn data (date,
+# alerts) kept in the user message — see AgentRunner._account_snapshot.
+EXPLICIT_CACHE_CONFIG = ContextCacheConfig(ttl_seconds=3600)
 
 _ERRORS_BY_CODE = {
     ProviderQuotaExceededError.error_code: ProviderQuotaExceededError,
@@ -81,6 +82,8 @@ class PreparedTurn:
     runner: Runner
     assistant_message_id: UUID
     model_name: str = ""
+    snapshot: str = ""  # the per-turn context text inside `content`, to rebuild it with the preflight block
+    preflight: Optional[PreflightInputs] = None
 
 
 FAILED_TURN_NOTE = "(No pude responder este mensaje por un error técnico.)"
@@ -101,6 +104,8 @@ class AgentRunner:
         reports_service: ReportsService,
         timezone_name: str,
         max_image_side: int = 1536,
+        preflight_enabled: bool = True,
+        preflight_max_tokens: int = 60000,
     ):
         self.gemini = gemini
         self.sessions = session_service
@@ -113,10 +118,18 @@ class AgentRunner:
         self.reports = reports_service
         self.tz = ZoneInfo(timezone_name)
         self.max_image_side = max_image_side
+        self.preflight = PreflightEngine(gemini, enabled=preflight_enabled, max_tokens=preflight_max_tokens)
         # Turns run detached from the HTTP request (see start_stream), one at a time per conversation.
         # Single-process server: this registry is the source of truth for "is it still answering".
         self._running: dict[UUID, asyncio.Task] = {}
         conversations.set_session_deleter(self.delete_session)
+
+    def _tz_for(self, actor: Actor) -> ZoneInfo:
+        """The user's own timezone, or the deployment default when the actor carries none (or an unknown one)."""
+        try:
+            return ZoneInfo(actor.timezone) if actor.timezone else self.tz
+        except (KeyError, ValueError, OSError):
+            return self.tz
 
     def _model(self, api_key: str, heavy: bool = False):
         """The user's key on every model of the chain; ADK falls back on 429/5xx per model call. The chat runs
@@ -162,9 +175,10 @@ class AgentRunner:
     async def _static_instruction(self, actor: Actor, overview, crop_families: set[str]) -> str:
         """Base instructions + knowledge base + account modules/style. Deliberately free of anything
         that changes turn to turn (date, field state, alerts): this string is what LlmAgent uses as
-        `system_instruction`, and Gemini/ADK explicit context caching (see CONTEXT_CACHE_CONFIG) can
-        only reuse a cached prefix while it stays byte-identical across turns. Per-turn state goes in
-        `_account_snapshot` instead, folded into the user message so it never touches this string."""
+        `system_instruction`, and Gemini's implicit caching (or the opt-in explicit cache, see
+        EXPLICIT_CACHE_CONFIG) can only reuse a cached prefix while it stays byte-identical across turns.
+        Per-turn state goes in `_account_snapshot` instead, folded into the user message so it never touches
+        this string."""
         field_texts = [t for item in overview for t in (item.field.soil_type, item.field.description) if t]
 
         profile = await self.profiles.get_profile_context(actor.user_id)
@@ -175,46 +189,57 @@ class AgentRunner:
             for block in (
                 BASE_INSTRUCTION,
                 core_knowledge_base(),
-                modules_for_account(profile_name, crop_families, field_texts),
-                style_for_profile(profile_name),
+                modules_for(actor.country, profile_name, crop_families, field_texts),
+                style_for(profile_name),
+                voice_for(actor.country),
+                self._account_structure(overview),
             )
             if block
         ]
         return "\n\n".join(blocks)
 
+    @staticmethod
+    def _account_structure(overview) -> str:
+        """The account's fields, zones and active crops: slow-changing, so it rides in the system instruction (after
+        everything shared) where the API's prefix cache can reuse it turn after turn, instead of being repeated in
+        every user message. What changes within a conversation (clock, alerts) stays in `_account_snapshot`."""
+        if not overview:
+            return "## Tu cuenta\n\nLa cuenta todavía no tiene campos cargados."
+        lines = ["## Tu cuenta", "", "Campos de la cuenta:"]
+        for item in overview:
+            f = item.field
+            where = f" en {f.city}" if f.city else ""
+            coords = f" [{f.latitude:.3f}, {f.longitude:.3f}]" if f.latitude is not None else " [sin coordenadas]"
+            crops = ", ".join(
+                f"{c.crop_name}{' ' + c.variety if c.variety else ''} "
+                f"({c.status}{', ' + c.zone_label if c.zone_label else ''})"
+                for c in item.active_cycles
+            ) or "sin cultivos activos"
+            lines.append(f"- {f.name}{where}{coords}: {crops}")
+            if item.zones:
+                lines.append(f"  Zonas: {', '.join(z.label for z in item.zones)}")
+        return "\n".join(lines)
+
     async def _account_snapshot(
         self, actor: Actor, overview, default_field_id: Optional[UUID], report_note: Optional[str]
     ) -> str:
-        """Per-turn account state (date, fields, alerts, report context) rebuilt fresh on every turn.
+        """Per-turn account state (date, role, field in focus, alerts, report context) rebuilt fresh on every turn.
         Kept out of the system instruction on purpose — see `_static_instruction` — and instead
         prepended to the user message content itself, so it never affects the cached prefix."""
-        now = datetime.now(self.tz)
-        lines = [f"Fecha y hora local: {now:%A %d/%m/%Y %H:%M} ({self.tz.key})."]
+        tz = self._tz_for(actor)
+        now = datetime.now(tz)
+        lines = [f"Fecha y hora local: {local_now_label(now)} ({tz.key})."]
         lines.append(f"Rol del usuario en la cuenta: {actor.role}.")
         if actor.role == "staff":
             lines.append("Este usuario puede registrar eventos, pero no crear campos ni ciclos de cultivo.")
 
-        if overview:
-            lines.append("\nCampos de la cuenta:")
-            for item in overview:
-                f = item.field
-                where = f" en {f.city}" if f.city else ""
-                coords = f" [{f.latitude:.3f}, {f.longitude:.3f}]" if f.latitude is not None else " [sin coordenadas]"
-                crops = ", ".join(
-                    f"{c.crop_name}{' ' + c.variety if c.variety else ''} "
-                    f"({c.status}{', ' + c.zone_label if c.zone_label else ''})"
-                    for c in item.active_cycles
-                ) or "sin cultivos activos"
-                focus = "  <- campo de esta conversación" if f.id == default_field_id else ""
-                lines.append(f"- {f.name}{where}{coords}: {crops}{focus}")
-                if item.zones:
-                    lines.append(f"  Zonas: {', '.join(z.label for z in item.zones)}")
-        else:
-            lines.append("\nLa cuenta todavía no tiene campos cargados.")
+        focus = next((item.field.name for item in overview if item.field.id == default_field_id), None)
+        if focus:
+            lines.append(f"Campo en foco en esta conversación: {focus}.")
 
         active_alerts = await self.alerts.get_active_alerts(actor)
         if active_alerts:
-            lines.append(f"\nHay {len(active_alerts)} alertas activas; mencioná las críticas si son relevantes:")
+            lines.append(f"\nHay {len(active_alerts)} alertas activas; mencionar las críticas si son relevantes:")
             for alert in active_alerts[:5]:
                 lines.append(f"- [{alert.severity}] {alert.message}")
 
@@ -270,6 +295,9 @@ class AgentRunner:
         context_snapshot = await self._account_snapshot(actor, overview, default_field_id, report_note)
         new_content = await self._user_content(actor, message, image_identifier, context_snapshot)
 
+        recent: list[tuple[str, str]] = []
+        if conversation is not None and self.preflight.enabled:
+            recent = [(m.role, m.content) for m in await self.conversations.messages(actor, conversation.id, limit=6)]
         if conversation is None:
             conversation = await self.conversations.create(actor, ConversationCreate(field_id=field_id))
         session_id, user_id = str(conversation.id), str(actor.user_id)
@@ -279,20 +307,37 @@ class AgentRunner:
             actor, conversation.id, message, image_identifier, retry_message_id=retry_message_id
         )
         ctx = TurnContext(
-            actor=Actor(actor.user_id, actor.account_id, actor.role, via="agent"),
+            actor=replace(actor, via="agent"),
             conversation_id=conversation.id,
-            tz=self.tz,
+            tz=self._tz_for(actor),
             default_field_id=default_field_id,
             image_identifier=image_identifier,
         )
+        tools = build_tools(self.tool_deps, ctx)
+        preflight = None
+        if self.preflight.enabled:
+            preflight = PreflightInputs(
+                user_id=actor.user_id,
+                country=actor.country,
+                message=message,
+                account_text=f"{self._account_structure(overview)}\n\n{context_snapshot}",
+                recent=recent,
+                tools={t.__name__: t for t in tools},
+                skills=skill_catalog(),
+            )
         agent = LlmAgent(
             name="agroai_assistant",
             model=self._model(api_key, heavy=bool(image_identifier)),
             instruction=lambda _ctx: instruction,
-            tools=[*build_tools(self.tool_deps, ctx), specific_manuals_toolset()],
-            generate_content_config=types.GenerateContentConfig(temperature=0.4),
+            tools=[*tools, specific_manuals_toolset()],
+            generate_content_config=self.gemini.chat_generation_config(),
+            before_model_callback=prune_consulted_blocks,
         )
-        app = App(name=APP_NAME, root_agent=agent, context_cache_config=CONTEXT_CACHE_CONFIG)
+        app = App(
+            name=APP_NAME,
+            root_agent=agent,
+            context_cache_config=EXPLICIT_CACHE_CONFIG if self.gemini.explicit_cache else None,
+        )
         return PreparedTurn(
             actor=actor,
             message=message,
@@ -304,6 +349,8 @@ class AgentRunner:
             runner=Runner(app=app, session_service=self.sessions),
             assistant_message_id=assistant_message_id,
             model_name=(self.gemini.model_chain if image_identifier else self.gemini.chat_chain)[0],
+            snapshot=context_snapshot,
+            preflight=preflight,
         )
 
     def is_running(self, conversation_id: UUID) -> bool:
@@ -346,6 +393,7 @@ class AgentRunner:
         segments: list[str] = []
         current = ""
         tool_calls: list[ToolCallInfo] = []
+        usage = turn.preflight.usage if turn.preflight is not None else TurnUsage()  # includes the router call
         persisted = False
 
         def close_segment() -> None:
@@ -382,19 +430,33 @@ class AgentRunner:
                     tool_calls=tool_calls,
                     search_performed=any(t.name == "web_search" for t in tool_calls),
                     model=turn.model_name or self.gemini.chat_model,
+                    usage=UsageInfo(**vars(usage)) if usage.seen else None,
                 ),
             )
 
         yield {"event": "meta", "data": {"conversation_id": str(turn.conversation_id)}}
         try:
+            content = turn.content
+            if turn.preflight is not None:
+                plan = await self.preflight.plan(turn.preflight)
+                if plan is not None:
+                    for req in plan.tools:
+                        yield {"event": "tool_call", "data": {"name": req.name, "args": json.loads(req.args)}}
+                    result = await self.preflight.execute(turn.preflight, plan)
+                    for call in result.calls:
+                        tool_calls.append(ToolCallInfo(**call))
+                        yield {"event": "tool_result", "data": {"name": call["name"], "ok": call["ok"]}}
+                    content = self._content_with_block(turn, result.block)
             async for event in turn.runner.run_async(
                 user_id=str(turn.actor.user_id),
                 session_id=str(turn.conversation_id),
-                new_message=turn.content,
+                new_message=content,
                 run_config=RunConfig(streaming_mode=StreamingMode.SSE),
             ):
                 if event.error_code and not event.content:
                     raise error_from_event(event.error_code, event.error_message)
+                if not event.partial:
+                    usage.add(event.usage_metadata)
                 parts = event.content.parts if event.content and event.content.parts else []
                 text = "".join(p.text for p in parts if p.text and not p.thought)
                 if event.partial:
@@ -428,6 +490,8 @@ class AgentRunner:
                         segments.append(text)
                         yield {"event": "delta", "data": {"text": text}}
             response = await persist()
+            if usage.seen:
+                logger.info(usage.log_line(turn.conversation_id, response.metadata.model))
             yield {"event": "done", "data": response.model_dump(mode="json")}
         except (asyncio.CancelledError, GeneratorExit):
             if not persisted:
@@ -445,6 +509,13 @@ class AgentRunner:
                 await turn.runner.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    @staticmethod
+    def _content_with_block(turn: PreparedTurn, block: str) -> types.Content:
+        """The user message with the preflight block between the account context and the question (the question goes
+        last: Gemini 3 answers best when the instruction follows the data)."""
+        text = f"[Contexto de la cuenta en este momento]\n{turn.snapshot}\n\n{block}\n\n{turn.message}"
+        return types.Content(role="user", parts=[*(turn.content.parts or [])[:-1], types.Part(text=text)])
 
     async def _close_unanswered(self, turn: PreparedTurn, persisting) -> None:
         """Save a turn that didn't finish normally, and make sure the model's own history (the ADK
