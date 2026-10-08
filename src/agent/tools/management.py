@@ -2,7 +2,7 @@
 
 Every item can be tied to a field and (shopping/roadmap) assigned to a member. Filters take a field
 name and a member name/email; "ninguno" means "no field" / "unassigned"."""
-from datetime import date
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -169,7 +169,7 @@ def management_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             ctx.actor,
             BudgetEntryCreate(
                 description=description, amount=amount, type=type,
-                date=parse_date(entry_date) or date.today(),
+                date=parse_date(entry_date) or datetime.now(ctx.tz).date(),
                 field_id=await r.field_value(field), category=category,
             ),
         )

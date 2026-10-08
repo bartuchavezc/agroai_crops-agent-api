@@ -53,6 +53,11 @@ class UserRepositoryInterface(ABC):
         """Mark a member of `account_id` inactive and revoke their tokens."""
         ...
 
+    @abstractmethod
+    async def update_locale(self, user_id: UUID, country: str, timezone: str, locale: str) -> Optional[User]:
+        """Store where the user is (country, IANA timezone, locale)."""
+        ...
+
 
 class SQLAlchemyUserRepository(UserRepositoryInterface):
     """SQLAlchemy implementation of user repository."""
@@ -149,6 +154,17 @@ class SQLAlchemyUserRepository(UserRepositoryInterface):
                 return None
             user.is_active = False
             user.token_version = User.token_version + 1
+            await session.commit()
+            await session.refresh(user)
+        return user
+
+    async def update_locale(self, user_id: UUID, country: str, timezone: str, locale: str) -> Optional[User]:
+        async with self.session_factory() as session:
+            result = await session.execute(select(User).filter(User.id == user_id))
+            user = result.scalars().first()
+            if not user:
+                return None
+            user.country, user.timezone, user.locale = country, timezone, locale
             await session.commit()
             await session.refresh(user)
         return user

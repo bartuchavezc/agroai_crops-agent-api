@@ -18,6 +18,7 @@ from src.shared.domain.base import utcnow
 
 from .models import WeatherForecast, WeatherObservation, round_coord
 from .open_meteo import OpenMeteoAdapter
+from .summary import summarize_daily
 from .openweather import OpenWeatherAdapter
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,9 @@ def _observation_dict(obs: WeatherObservation) -> dict:
     }
 
 
+RECENT_SUMMARY_TTL_HOURS = 6
+
+
 class WeatherService:
     def __init__(
         self,
@@ -73,6 +77,7 @@ class WeatherService:
         self.session_factory = session_factory
         self.openweather = openweather
         self.open_meteo = open_meteo
+        self._recent_cache: dict[tuple, tuple[datetime, dict]] = {}
         self.ttl = timedelta(seconds=current_cache_ttl)
         self.tz = ZoneInfo(timezone_name)
         self.hourly_step = smn_hourly_step
@@ -260,6 +265,20 @@ class WeatherService:
             await session.execute(insert(WeatherObservation.__table__).values(row).on_conflict_do_nothing())
             await session.commit()
         return {"uv_index": closest.uv_index, "humidity": closest.humidity, "wind_speed": closest.wind_speed_10m}
+
+    async def recent_summary(self, latitude: float, longitude: float, days: int = 30) -> dict:
+        """How the last `days` days went at the point (Open-Meteo): see `summarize_daily`. Empty when the provider
+        has nothing. Kept in memory for a few hours per point: the past does not change and an agent turn may ask
+        for it more than once."""
+        days = max(7, min(days, 60))
+        key = (round_coord(latitude), round_coord(longitude), days)
+        cached = self._recent_cache.get(key)
+        if cached and cached[0] > utcnow():
+            return cached[1]
+        summary = summarize_daily(await self.open_meteo.recent_daily(key[0], key[1], days))
+        if summary:
+            self._recent_cache[key] = (utcnow() + timedelta(hours=RECENT_SUMMARY_TTL_HOURS), summary)
+        return summary
 
     async def daily_agro(self, latitude: float, longitude: float, days: int = 1) -> list[dict]:
         """Per-day wind/radiation/humidity averages from Open-Meteo, cached in weather_forecasts under

@@ -18,7 +18,9 @@ from .reports.service import ReportsService
 from .satellite.repository import ZoneSatelliteRepository
 from .satellite.service import ZoneSatelliteService
 from .soil_data.repository import SoilDataRepository
+
 from .soil_data.service import SoilContextService
+from .soil_data.soilgrids_repository import SoilGridsRepository
 from .storage.local_adapter import LocalFileRepository
 from .storage.service import StorageService
 
@@ -38,7 +40,12 @@ class ApplicationContainer(containers.DeclarativeContainer):
     )
 
     soil_data_repository = providers.Singleton(SoilDataRepository, session_factory=db_session_factory)
-    soil_context_service = providers.Singleton(SoilContextService, repository=soil_data_repository)
+    soilgrids_repository = providers.Singleton(SoilGridsRepository, session_factory=db_session_factory)
+    soil_context_service = providers.Singleton(
+        SoilContextService,
+        repository=soil_data_repository,
+        soilgrids=soilgrids_repository,
+    )
 
     farm_repository = providers.Singleton(FarmRepository, session_factory=db_session_factory)
     farm_service = providers.Singleton(

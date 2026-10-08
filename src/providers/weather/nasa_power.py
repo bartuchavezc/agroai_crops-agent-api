@@ -28,8 +28,20 @@ class NasaPowerAdapter:
 
     def __init__(self, timeout: int = 15):
         self.timeout = timeout
+        # A climatology (multi-year monthly averages) on a ~55 km grid: it doesn't change within a process lifetime,
+        # so each grid cell is fetched once instead of on every agent question.
+        self._climatology_cache: dict[tuple[float, float], SolarClimatology] = {}
 
     async def solar_climatology(self, latitude: float, longitude: float) -> Optional[SolarClimatology]:
+        key = (round(latitude, 1), round(longitude, 1))
+        if key in self._climatology_cache:
+            return self._climatology_cache[key]
+        result = await self._fetch_solar_climatology(latitude, longitude)
+        if result is not None:
+            self._climatology_cache[key] = result
+        return result
+
+    async def _fetch_solar_climatology(self, latitude: float, longitude: float) -> Optional[SolarClimatology]:
         params = {
             "parameters": "ALLSKY_SFC_SW_DWN",
             "community": "AG",

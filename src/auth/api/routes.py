@@ -22,6 +22,7 @@ from ..domain.schemas import (
     SignupRequest,
     TokenResponse,
     UserCreate,
+    UserLocaleUpdate,
     UserProfileContext,
     UserProfileRead,
     UserRead,
@@ -80,6 +81,9 @@ async def signup(
                 password=signup_req.password,
                 first_name=signup_req.first_name,
                 last_name=signup_req.last_name,
+                country=signup_req.country,
+                timezone=signup_req.timezone,
+                locale=signup_req.locale,
                 account_id=account.id,
                 role=ROLE_OWNER,
             )
@@ -99,6 +103,19 @@ async def get_me(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
     return MeResponse(user=current_user, account=AccountRead.model_validate(account))
+
+
+@router.patch("/me", response_model=UserRead, summary="Update Where I Am (country, timezone, locale)")
+@inject
+async def update_me(
+    change: UserLocaleUpdate,
+    current_user: UserRead = Depends(get_current_user),
+    user_service: UserService = Depends(Provide["auth.user_service"]),
+):
+    user = await user_service.update_locale(current_user, change)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
 
 
 @router.post("/password", response_model=TokenResponse, summary="Change Own Password")
@@ -145,6 +162,10 @@ async def add_member(
                 password=member.password,
                 first_name=member.first_name,
                 last_name=member.last_name,
+                # A member who doesn't say where they are shares the owner's country, time and voice.
+                country=member.country if "country" in member.model_fields_set else owner.country,
+                timezone=member.timezone or (owner.timezone if "country" not in member.model_fields_set else None),
+                locale=member.locale or (owner.locale if "country" not in member.model_fields_set else None),
                 account_id=owner.account_id,
                 role=member.role,
             )

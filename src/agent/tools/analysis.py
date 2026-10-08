@@ -3,9 +3,12 @@ data is delegated here — the field's data is gathered server-side and read by 
 (gemini.model_chain), which returns a conclusion for the chat to relay."""
 import json
 import logging
-from datetime import date
+from datetime import datetime
 from typing import Optional
 
+from src.application.satellite.service import reuse_hours
+
+from ..prompts.voice import localize
 from .context import ToolDeps, TurnContext, compact, resolve_field, tool
 
 logger = logging.getLogger(__name__)
@@ -49,13 +52,15 @@ def analysis_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 logger.warning(f"expert analysis: solar unavailable: {exc}")
             if climatology:
                 data["radiacion_solar_mj_m2_dia"] = {
-                    "mes_actual": climatology.monthly_avg_radiation_mj_m2_day.get(date.today().month),
+                    "mes_actual": climatology.monthly_avg_radiation_mj_m2_day.get(datetime.now(ctx.tz).month),
                     "promedio_anual": climatology.annual_avg_radiation_mj_m2_day,
                 }
         if "suelo" in topics and field.soil_context:
             data["suelo_inta"] = compact(field.soil_context)
         if "satelital" in topics:
-            await safe("satelital_ndvi_ndwi", deps.satellite.check_field(ctx.actor, field.id))
+            await safe(
+                "satelital_ndvi_ndwi", deps.satellite.check_field(ctx.actor, field.id, max_age_hours=reuse_hours())
+            )
         if "riego" in topics:
             await safe("riego_et0", deps.irrigation.compute(ctx.actor, field.id))
         return data
@@ -78,7 +83,8 @@ def analysis_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             for c in (overview.active_cycles if overview else [])
         ) or "sin cultivos activos"
         prompt = (
-            f"{EXPERT_INSTRUCTION}\n\nFecha: {date.today().isoformat()}\nCampo: {target.name}"
+            f"{localize(EXPERT_INSTRUCTION, ctx.actor.country)}\n\n"
+            f"Fecha: {datetime.now(ctx.tz).date().isoformat()}\nCampo: {target.name}"
             f"{' (' + target.city + ')' if target.city else ''}\nCultivos: {crops}\n"
             f"Pregunta: {question}\n\nDatos disponibles (JSON):\n{json.dumps(data, ensure_ascii=False, default=str)}"
         )

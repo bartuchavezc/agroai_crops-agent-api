@@ -14,11 +14,12 @@ Los errores de dominio responden `{"detail": "...", "error_code": "..."}`.
 ## Auth y cuenta
 | Método | Ruta | Notas |
 |---|---|---|
-| POST | `/auth/signup` | Crea cuenta + usuario `owner`. Desactivado salvo `ALLOW_PUBLIC_SIGNUP=true` |
+| POST | `/auth/signup` | Crea cuenta + usuario `owner`. Desactivado salvo `ALLOW_PUBLIC_SIGNUP=true`. Acepta `country` (`AR` por defecto, `MX`), `timezone` (IANA; el cliente debe mandar `Intl.DateTimeFormat().resolvedOptions().timeZone`) y `locale` (`es-AR`, `es-MX`): si faltan se completan según el país |
 | POST | `/auth/login` | Email sin distinguir mayúsculas. Los 401 repetidos por IP los banea fail2ban (`deploy/fail2ban`) |
 | POST | `/auth/password` | Cambia la propia contraseña; invalida todos los tokens anteriores y devuelve uno nuevo |
-| GET | `/auth/me` | `{user, account}` |
-| GET / POST | `/auth/users` | Miembros de la cuenta / alta de `tecnico` o `staff` (solo owner) |
+| GET | `/auth/me` | `{user, account}`; `user` incluye `country`, `timezone` y `locale` |
+| PATCH | `/auth/me` | `{country?, timezone?, locale?}`: dónde está la persona. Define la voz del agente (voseo argentino / tuteo mexicano), el hemisferio, las autoridades de referencia y la hora local. Cambiar solo el país lleva zona horaria y locale a los de ese país |
+| GET / POST | `/auth/users` | Miembros de la cuenta / alta de `tecnico` o `staff` (solo owner). Si el alta no manda `country`, el miembro hereda país, zona horaria y locale del owner |
 | GET | `/auth/users/{id}` | Solo misma cuenta |
 | PATCH | `/auth/users/{id}/role` | Solo owner |
 | DELETE | `/auth/users/{id}` | Solo owner: da de baja al miembro (no puede loguearse, sus tokens dejan de valer) |
@@ -37,7 +38,7 @@ Modelos (con la key de cada usuario): el ida y vuelta del chat usa la cadena **c
 **análisis** (`GEMINI_MODEL` + `GEMINI_FALLBACK_MODELS`) se usa para los análisis con foto (diagnóstico,
 seguimiento por cultivo y por zona, suelo, cosecha), el plano y la imagen satelital, los turnos de chat que
 traen foto, y la herramienta `expert_field_analysis` del agente (lectura de clima/suelo/satelital/riego/solar).
-`ChatResponse.metadata.model` informa el modelo principal del turno.
+`ChatResponse.metadata.model` informa el modelo principal del turno. `metadata.usage` (opcional) trae los tokens del turno sumados sobre todas sus llamadas al modelo: `{llm_calls, prompt_tokens, cached_tokens, output_tokens, thinking_tokens}`; falta si el proveedor no informó uso.
 
 ## Farm management (acepta rutas con y sin `/` final)
 | Método | Ruta | Permisos |
@@ -60,7 +61,7 @@ disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, plan
 ## Chat y conversaciones
 | Método | Ruta | Notas |
 |---|---|---|
-| POST | `/chat` | `{message, conversation_id?, image_identifier?, context: {field_id?}, retry_message_id?}` → `{response, sources[], metadata{conversation_id, tool_calls[], search_performed, model}}` |
+| POST | `/chat` | `{message, conversation_id?, image_identifier?, context: {field_id?}, retry_message_id?}` → `{response, sources[], metadata{conversation_id, tool_calls[], search_performed, model, usage?}}` |
 | POST | `/chat/stream` | Mismo body, SSE: `meta`, `tool_call`, `tool_result`, `delta`, `done`, `error`. El mensaje del usuario se guarda antes de responder; si el cliente se desconecta la respuesta sigue y se guarda igual |
 | GET / POST | `/chat/conversations` | Las del usuario (privadas) |
 | GET / PATCH / DELETE | `/chat/conversations/{id}` | PATCH: `{title?, archived?, field_id?}` |
@@ -76,7 +77,7 @@ disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, plan
 |---|---|---|
 | POST | `/upload/image` | multipart `image_file`, opcional `field_id`, `crop_cycle_id` → `{report_id, image_identifier}` |
 | POST | `/upload/zone-tracking` | Seguimiento diario de una zona: multipart `zone_id` + 1-4 `image_files` → un reporte `periodic` con `zone_id`, `crop_cycle_ids` (ciclos activos de la zona) e `image_identifiers`; se analiza en segundo plano (`raw_analysis_data.llm_structured_zone`: resumen + una evaluación por cultivo) |
-| POST | `/analyze` | `{report_id, image_identifier?}` → diagnóstico estructurado (Gemini multimodal) |
+| POST | `/analyze` | `{report_id, image_identifier?, deep?}` → diagnóstico estructurado (Gemini multimodal). El análisis recibe fisiología vegetal, la ficha y la guía de plagas de cada cultivo del lote, NDVI/NDWI históricos, clima de 30 días, suelo y registros previos. `deep` (por defecto `ANALYSIS_DEEP`, activo) agrega una segunda pasada que busca fuentes en la web (Tavily) y refina el análisis; las fuentes quedan en `raw_analysis_data.research` y el diagnóstico las cita en `additional_notes`. Los análisis de suelo no usan `deep` |
 | GET / POST | `/reports?field_id=&crop_cycle_id=&zone_id=&report_type=` | `crop_cycle_id` incluye los seguimientos de zona que cubrieron ese ciclo |
 | GET / PUT / DELETE | `/reports/{id}` | `raw_analysis_data.llm_structured_diagnosis` |
 
@@ -127,3 +128,15 @@ fotos, la memoria del agente ni las keys.
 Definiciones: **actividad** = mensaje al agente, foto subida o evento cargado a mano. **Sesión** = mensajes de un
 usuario (y respuestas del agente) separados por menos de 30 min; su largo va del primer mensaje a la última
 respuesta. **Foto** = cada `POST /upload/image` (crea un reporte) + las fotos del plano de cada campo.
+
+## Suelo de la zona (`field.soil_context`)
+
+Además de los datos de INTA (Argentina), `soil_context.soilgrids` trae la estimación de ISRIC SoilGrids por profundidad
+(0-5, 5-15 y 15-30 cm): pH, carbono orgánico (g/kg), nitrógeno (g/kg) y CEC (cmol(c)/kg), con `resolution_m` y, si el
+píxel del campo no tiene dato (urbano o agua), `distance_km` al píxel válido más cercano usado en su lugar. Es una
+estimación regional de ~1 km, no un análisis de laboratorio.
+
+Los datos salen de las tablas `soilgrids_grids` y `soilgrids_tiles` de la propia base (sin llamadas externas). Fuera de
+las grillas cargadas no hay estimación. Hay que importar los rasters en cada ambiente después de migrar:
+
+    uv run python -m src.scripts.import_soilgrids --dir raw_data/downloads/soilgrids [--depths ...] [--regions ...]

@@ -9,22 +9,39 @@ de PDF/HTML.
 
 ## core/
 
-Manuales de conocimiento general: no dependen de la especie ni de la región del usuario, así que se
-cargan siempre, en cada turno de cada conversación.
+Documentos de referencia técnica general (no dependen de la especie ni del cultivo). **Por defecto solo el mapa
+(`000_*`, ~1,3k tokens) va pegado en el system prompt; el resto se sirve como skills `core-<nombre>`** que el agente pide con
+`load_skill` cuando la pregunta los necesita (ciclo de vida efímero: se liberan al terminar el turno). Motivo: cada vuelta de
+herramienta reenvía el prompt fijo completo, y los documentos son grandes (16–56k tokens cada uno); con todo fijo eran ~221k
+tokens por llamada.
 
-Wireado en `src/agent/prompts/knowledge_base.py::core_knowledge_base()`, que concatena (ordenados
-por nombre de archivo) todos los `.md` de esta carpeta, y se invoca desde
-`AgentRunner._static_instruction()` (`src/agent/runner.py`) como uno de los bloques del system
-prompt.
+Wireado en `src/agent/prompts/knowledge_base.py` (`core_knowledge_base()` arma lo fijo; `deferred_core_files()` lo que se sirve
+como skill) y `knowledge_skills.py` (`_core_skills()` con las descripciones). Se invoca desde `AgentRunner._static_instruction()`.
 
 Archivos:
-- `00_fisiologia_y_fertirriego_base.md` — Fisiología Vegetal (Vol. 1): introducción, relaciones
-  hídricas y nutrición mineral. En construcción: se irá completando con más capítulos del manual.
-- `01_fertilizantes_y_enmiendas.md` — Manual de Fertilizantes y Enmiendas (PROMIPAC/PASOLAC,
-  Zamorano 2009): requerimientos nutricionales, análisis de suelo, tipos de fertilizantes y enmiendas,
-  cálculo de dosis, formas de aplicación y buenas prácticas de manejo. Va en `core/` y no en un
-  vademécum aparte porque es conocimiento general de cómo trabajar la fertilización (no depende del
-  cultivo ni de un insumo comercial puntual).
+- `000_mapa_del_conocimiento.md` — índice corto escrito a mano (siempre fijo): capas de conocimiento, cómo pedirlas (varias
+  `load_skill` en el mismo paso), qué pedir según la pregunta, de dónde no salen productos/dosis/registros y qué no existe. No
+  duplica el catálogo de skills, que ADK ya inyecta en el prompt (`EAGER`); hay que actualizarlo cuando cambien las capas. Un test
+  verifica que cada skill que nombra exista.
+- `01_fertilizantes_y_enmiendas.md` — Manual de Fertilizantes y Enmiendas (PROMIPAC/PASOLAC, Zamorano 2009): requerimientos
+  nutricionales, análisis de suelo, tipos de fertilizantes y enmiendas, cálculo de dosis y aplicación (~16k tokens).
+- `02_resistencia_a_herbicidas_hrac.md` — HRAC: *Guideline to the Management of Herbicide Resistance* (2025) y *Monitoring and
+  Mitigation of Herbicide Resistance*, completos y en inglés (~20k tokens). Se dejaron los dos enteros: se solapan poco y
+  comprimirlos ahorraba pocos miles de tokens a cambio de perder detalle.
+- `03_uso_y_manejo_de_plaguicidas_mx.md` — SENASICA, *Manual para el buen uso y manejo de plaguicidas en campo* (2019),
+  completo (~22k tokens): manejo integrado de plagas, equipos, seguridad, envases y marco jurídico mexicano.
+- `04_fungicidas_eficacia_y_momento_uc.md` — UC, *Fungicides, Bactericides, Biocontrols, and Natural Products* (2025), completo
+  y en inglés (~56k tokens), con sus tablas de eficacia. Lleva una nota de alcance: los productos y registros son de California,
+  así que sirve como referencia técnica (clases, códigos FRAC, resistencia, momento de aplicación), nunca como prueba de
+  registro local.
+
+**Fijar documentos en el prompt (`KNOWLEDGE_CORE_ALWAYS`).** Sin definir o `none`: solo el mapa. Lista de prefijos numéricos
+(`01,03`): esos documentos quedan pegados en el prompt (y dejan de ser skills; el mapa lo avisa en una nota generada). `all`:
+todos fijos (~115k tokens), para despliegues que prefieren pagar ese costo en cada llamada. El system prompt sigue siendo
+idéntico entre turnos para una misma configuración, así que el caché del prompt no se rompe.
+
+Los cuatro se generan con `scripts/build_kb.py` (pymupdf4llm; solo limpia maquetación, no resume), y `scripts/kb_coverage.py` y
+`scripts/kb_missing.py` comparan el Markdown con el texto del PDF. Esos scripts y `raw_data/` no se versionan.
 
 ## specific/
 
@@ -49,6 +66,9 @@ Dos capas con reglas distintas (`specific_manuals_toolset()` en `knowledge_skill
 |---|---|---|---|
 | **Tipo de campo** | los manuales (`manual-horticultura`, `huerta-organica`; más adelante granos, vid, flores) | `BOUNDED`, `max_active_skills=1` | Son enormes (100k+ tokens) y un campo es de un solo tipo: cargar otro desaloja al anterior |
 | **Cultivo** | `ficha-<cultivo>` y `plagas-<cultivo>` | `PERSISTENT`: sin tope, nunca se desalojan solos | Una consulta por un cajón o parcela involucra varios cultivos a la vez, y el usuario suele tener varios. Son chicos (~5k tokens) |
+| **Fisiología vegetal** | `fisiologia-*` (7 fragmentos de `specific/fisiologia/`) | `EPHEMERAL`: se liberan al terminar el turno | Es un libro de texto (~106k tokens en total, 11–19k cada fragmento): se consulta puntualmente y no debe seguir viajando en los turnos siguientes |
+| **Referencias técnicas** | `core-*` (los documentos de `core/` que no están fijados) | `EPHEMERAL` | Igual: documentos grandes de consulta puntual |
+| **Guías de catálogo** | las de `specific/guias/` (BPA, trazabilidad, producción orgánica, etiquetado, centrales de abasto, inocuidad en producción primaria) | `PERSISTENT` | Dependen del tipo de campo y del perfil (orgánico o no); el modelo elige por la descripción y puede tener varias a la vez |
 
 El modelo suelta con `unload_skill` los de cultivo que ya no usa. Para que `unload_skill` exista y para que
 ADK reescriba, en los turnos posteriores, la respuesta vieja de `load_skill` por un aviso corto
@@ -121,6 +141,33 @@ de California) más *Tuta absoluta* desde las fuentes de INTA de la ficha. Texto
 siguientes: `scripts/ucipm_to_text.py` (HTML en `raw_data/html/<cultivo>/` → `raw_data/text/<cultivo>/`).
 `tests/unit/test_knowledge_skills.py` verifica secciones, ausencia de dosis y que cada guía tenga su ficha.
 
+### specific/fisiologia/
+
+*Fisiología Vegetal, Vol. I: Nutrición Hídrica y Mineral de las Plantas* (Torres García et al., Universidad Técnica de Manabí,
+CC BY-NC-ND), antes un solo documento fijo de ~106k tokens, partido en 7 skills **sin quitar una sola línea** (incluido el
+aparato de libro de texto: resúmenes, glosarios, bibliografías y solucionarios): `fisiologia-fundamentos`,
+`fisiologia-agua-suelo-y-absorcion`, `fisiologia-estomas-y-transpiracion`, `fisiologia-balance-hidrico-y-clima`,
+`fisiologia-nutricion-mineral-fundamentos`, `fisiologia-macronutrientes-npk-s` y `fisiologia-calcio-magnesio-microelementos`
+(registro en `_FISIOLOGIA` de `knowledge_skills.py`). Cada fragmento nombra a los demás en su cabecera. Se generaron con
+`scripts/split_fisiologia.py`; `tests/unit/test_knowledge_skills.py` verifica que cada sección 1.1–3.23 esté exactamente una vez.
+
+### specific/guias/
+
+Guías de SENASICA (México) convertidas a Markdown completo y sin resumir, expuestas como skills y elegidas por el agente
+desde su descripción (catálogo). Registro en `_GUIDES` de `knowledge_skills.py`:
+
+| Skill | Cuándo cargarla |
+|---|---|
+| `inocuidad-produccion-primaria-vegetales` | Solo al planificar un cultivo o ciclo de hortalizas |
+| `bpa-hortofruticolas-campo-empaque` | Huerta/hortalizas y frutas: BPA de campo y empaque, registros, certificación |
+| `bpa-granos-almacenamiento` | Campos de granos: poscosecha, almacenamiento, distribución |
+| `trazabilidad-vegetales-consumo-fresco` | Trazabilidad de lotes y retiro de producto |
+| `bp-centrales-de-abasto-vegetales` | Solo si el usuario maneja vegetales en una central de abasto o bodega |
+| `produccion-organica-vegetal-mx` | Perfil orgánico o certificación orgánica en México |
+| `etiquetado-organico-distintivo-nacional-mx` | Etiquetado y venta de productos orgánicos elaborados |
+
+Faltan las guías de frutas, flores y vid; cuando existan se suman al mismo diccionario.
+
 ## inputs/ (pendiente, no existe todavía como carpeta de manuales)
 
 Se descartó como capa de manuales estáticos. En su lugar, `inputs/` va a ser una **tool de RAG**
@@ -131,12 +178,31 @@ diseño e implementación (probablemente indexado con pgvector, igual que la mem
 
 ## System prompt cacheado
 
-El system instruction (`BASE_INSTRUCTION` + `core_knowledge_base()` + módulos/estilo de la cuenta,
-armado en `AgentRunner._static_instruction`) se construye **sin nada que cambie turno a turno**
-(fecha, campos, alertas) a propósito: esos datos van aparte, en `AgentRunner._account_snapshot`,
-plegados dentro del mensaje del usuario en vez de en el system prompt. Así el system prompt es
-byte-idéntico entre turnos de una misma conversación, y el explicit context caching de Gemini/ADK
-(`CONTEXT_CACHE_CONFIG` en `runner.py`, aplicado vía `google.adk.apps.App.context_cache_config`)
-puede reusar ese prefijo cacheado en vez de reprocesarlo — y cobrarlo — en cada turno. Si algún
-bloque estático empieza a incluir datos por-cuenta que cambian seguido, hay que mudarlos a
-`_account_snapshot` para no romper el cacheo.
+El system instruction (`BASE_INSTRUCTION` + conocimiento fijo + módulos/estilo de la cuenta, armado en
+`AgentRunner._static_instruction`) se construye **sin nada que cambie turno a turno** (fecha, alertas) a propósito: esos datos
+van aparte, en `AgentRunner._account_snapshot`, plegados dentro del mensaje del usuario. Así el prefijo es byte-idéntico entre
+turnos y la API puede reusarlo.
+
+Por defecto se usa el **caché implícito** de Gemini (automático desde 4.096 tokens, sin costo de almacenamiento, con el mismo
+descuento de tokens cacheados). El caché **explícito** de ADK (`EXPLICIT_CACHE_CONFIG` en `runner.py`) cobra almacenamiento por
+token-hora, no existe en el tier gratuito y solo compensa con más de ~5 llamadas al modelo por hora por conversación: se activa
+con `GEMINI_EXPLICIT_CACHE=true`. Para ver si el caché funciona, el log `turn_usage` y `metadata.usage` de la respuesta traen
+`prompt_tokens` y `cached_tokens` por turno.
+
+## Preflight (`src/agent/preflight/`)
+
+En vez de que el modelo pida un skill, lo lea, pida otro, llame al clima, al satélite... (cada paso reenvía todo el prompt), un
+**enrutador** barato (Gemini Flash-Lite, razonamiento bajo) mira el mensaje, la estructura de la cuenta y los menús de skills y
+herramientas, y devuelve un plan: qué skills cargar, qué herramientas **de lectura** correr y, si hace falta, una búsqueda web. Todo
+se ejecuta en paralelo y el modelo de chat responde **una vez** con el conocimiento y los datos ya en el mensaje (entre el contexto
+de la cuenta y la pregunta, que va al final).
+
+- Solo corre herramientas de lectura de una lista blanca (`READ_ONLY_TOOLS` en `engine.py`); las que escriben, las que hacen una
+  llamada de visión y `expert_field_analysis` quedan para el modelo. El satélite se pide sin imagen.
+- Presupuesto: `AGENT_PREFLIGHT_MAX_TOKENS` (60.000 estimados). Los datos tienen prioridad; los skills que no entran se descartan.
+- El bloque se marca (`[Conocimiento y datos consultados…]`) y, en los turnos siguientes, `prune_consulted_blocks` (un
+  `before_model_callback`) lo reemplaza en el request saliente por una línea que dice qué se consultó, así los documentos no se
+  acumulan en el historial. El modelo conserva `load_skill` y todas las herramientas por si el plan se quedó corto.
+- Si el enrutador falla o tarda, se sigue con el bucle de siempre. Mensajes triviales (< 12 caracteres) ni lo invocan.
+- Se apaga con `AGENT_PREFLIGHT=false`. Las herramientas y skills del plan se informan en `metadata.tool_calls` (los skills como
+  `load_skill`). Los tokens de la llamada del enrutador se suman en `metadata.usage` (cuenta como una llamada más).

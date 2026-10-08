@@ -1,5 +1,5 @@
 """Memory, weather, alerts and diagnosis-report tools."""
-from datetime import date
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -72,6 +72,18 @@ def weather_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return {"field_name": target.name, "daily": [d.to_dict() for d in daily], "risks": risks}
 
     @tool
+    async def get_recent_weather_summary(field: Optional[str] = None, days: int = 30) -> dict:
+        """How the weather went over the last days at a field (Open-Meteo, default 30, 7-60): mean/warmest/coldest
+        temperature, frost and heat days, total rain and rainy days, longest dry spell, evapotranspiration and water
+        balance (rain minus ET0), and the last 7 days against the rest. Use it to explain a stress or a symptom with
+        what actually happened (a dry spell, a heat wave, too much rain), not only today's weather or the forecast."""
+        target = await _coords(field)
+        summary = await deps.weather.recent_summary(target.latitude, target.longitude, days)
+        if not summary:
+            return {"error": "Recent weather history unavailable right now."}
+        return {"field_name": target.name, **summary}
+
+    @tool
     async def get_solar_radiation_context(field: Optional[str] = None) -> dict:
         """Zone-level (NASA POWER, ~55km grid — context, not field precision) average solar radiation for
         the current month and the annual average. Agronomic context (e.g. for framing why growth is slow in
@@ -80,7 +92,7 @@ def weather_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         climatology = await deps.nasa_power.solar_climatology(target.latitude, target.longitude)
         if not climatology:
             return {"error": "NASA POWER radiation data unavailable right now."}
-        month = date.today().month
+        month = datetime.now(ctx.tz).month
         return {
             "field_name": target.name,
             "unit": "MJ/m2/day",
@@ -88,7 +100,7 @@ def weather_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             "annual_avg": climatology.annual_avg_radiation_mj_m2_day,
         }
 
-    return [get_current_weather, get_forecast, get_solar_radiation_context]
+    return [get_current_weather, get_forecast, get_recent_weather_summary, get_solar_radiation_context]
 
 
 def alert_tools(deps: ToolDeps, ctx: TurnContext) -> list:

@@ -4,7 +4,10 @@ from typing import Optional
 
 from google.genai import types
 
+from src.application.satellite.service import reuse_hours
+
 from ..prompts.satellite import SATELLITE_IMAGE_INSTRUCTION
+from ..prompts.voice import localize
 from ..schemas import SatelliteImageAnalysis
 from .context import ToolDeps, TurnContext, compact, resolve_field, tool
 
@@ -24,7 +27,7 @@ def satellite_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         includes a Gemini-vision interpretation of the color pattern (image_analysis) so you have the full
         picture, not just the NDVI/NDWI numbers, for reasoning."""
         target = await resolve_field(deps, ctx, field)
-        status = await deps.satellite.check_field(ctx.actor, target.id)
+        status = await deps.satellite.check_field(ctx.actor, target.id, max_age_hours=reuse_hours())
         result = compact(status)
         if include_image:
             image_identifier = await deps.satellite.get_or_render_image(ctx.actor, target.id)
@@ -49,7 +52,7 @@ def satellite_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                             "Interpretá este mapa NDVI de la zona.",
                         ],
                         schema=SatelliteImageAnalysis,
-                        system_instruction=SATELLITE_IMAGE_INSTRUCTION,
+                        system_instruction=localize(SATELLITE_IMAGE_INSTRUCTION, ctx.actor.country),
                     )
                     result["image_analysis"] = compact(analysis)
                 except Exception:  # noqa: BLE001 - the numeric status/image are still useful without this
