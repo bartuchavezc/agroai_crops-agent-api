@@ -3,9 +3,10 @@ data is delegated here — the field's data is gathered server-side and read by 
 (gemini.model_chain), which returns a conclusion for the chat to relay."""
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
+from ..prompts.satellite import SATELLITE_SERIES_GUIDE
 from .context import ToolDeps, TurnContext, compact, resolve_field, tool
 
 logger = logging.getLogger(__name__)
@@ -54,8 +55,12 @@ def analysis_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 }
         if "suelo" in topics and field.soil_context:
             data["suelo_inta"] = compact(field.soil_context)
-        if "satelital" in topics:
-            await safe("satelital_ndvi_ndwi", deps.satellite.check_field(ctx.actor, field.id))
+        if "satelital" in topics and has_coords:
+            await safe("satelital_estado", deps.satellite.check_field(ctx.actor, field.id))
+            await safe(
+                "satelital_serie_ndvi_semanal",
+                deps.satellite.series(ctx.actor, field.id, "ndvi", since=date.today() - timedelta(days=180)),
+            )
         if "riego" in topics:
             await safe("riego_et0", deps.irrigation.compute(ctx.actor, field.id))
         return data
@@ -64,7 +69,8 @@ def analysis_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     async def expert_field_analysis(
         question: str, field: Optional[str] = None, topics: Optional[list[str]] = None
     ) -> dict:
-        """In-depth reading of a field's data by the analysis model: use it to interpret satellite (NDVI/NDWI),
+        """In-depth reading of a field's data by the analysis model: use it to interpret satellite (the field's
+        NDVI/NDRE/NDMI series vs its normal and last year, season stage),
         weather/forecast, soil, irrigation or solar data beyond quoting a single value (e.g. "¿conviene regar o
         esperar la lluvia?", "¿por qué el satélite marca estrés?", "¿qué implica este suelo para mis cultivos?").
         topics: any of clima, suelo, satelital, riego, solar (default: all). Relay its conclusion to the user."""
@@ -77,8 +83,9 @@ def analysis_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             f"{', sembrado ' + c.planting_date.isoformat() if c.planting_date else ''})"
             for c in (overview.active_cycles if overview else [])
         ) or "sin cultivos activos"
+        guide = f"\n\n{SATELLITE_SERIES_GUIDE}" if any(k.startswith("satelital") for k in data) else ""
         prompt = (
-            f"{EXPERT_INSTRUCTION}\n\nFecha: {date.today().isoformat()}\nCampo: {target.name}"
+            f"{EXPERT_INSTRUCTION}{guide}\n\nFecha: {date.today().isoformat()}\nCampo: {target.name}"
             f"{' (' + target.city + ')' if target.city else ''}\nCultivos: {crops}\n"
             f"Pregunta: {question}\n\nDatos disponibles (JSON):\n{json.dumps(data, ensure_ascii=False, default=str)}"
         )

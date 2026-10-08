@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -29,3 +29,7 @@ class ZoneSatelliteStatus(BaseModel):
     alerts: list[str] = []
     boundary_scoped: bool = False
     pixel_count_caveat: Optional[str] = None
+    # The field's series read against its own history (see application/satellite/analytics.py
+    # SeriesAnalysis): last clear pass, every index vs its normal/last year, season stage, radar
+    # continuity signal and data-quality caveats.
+    analysis: Optional[dict[str, Any]] = None

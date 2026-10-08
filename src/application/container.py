@@ -15,7 +15,8 @@ from .planning.repository import PlanningRepository
 from .planning.service import PlanningService
 from .reports.repository import SQLAlchemyReportsRepository
 from .reports.service import ReportsService
-from .satellite.repository import ZoneSatelliteRepository
+from .satellite.ingest import SatelliteIngestService
+from .satellite.repository import SatelliteSeriesRepository, ZoneSatelliteRepository
 from .satellite.service import ZoneSatelliteService
 from .soil_data.repository import SoilDataRepository
 from .soil_data.service import SoilContextService
@@ -98,10 +99,25 @@ class ApplicationContainer(containers.DeclarativeContainer):
     )
 
     zone_satellite_repository = providers.Singleton(ZoneSatelliteRepository, session_factory=db_session_factory)
+    satellite_series_repository = providers.Singleton(SatelliteSeriesRepository, session_factory=db_session_factory)
+    satellite_ingest_service = providers.Singleton(
+        SatelliteIngestService,
+        repository=satellite_series_repository,
+        copernicus=copernicus,
+        backfill_years=config.satellite.backfill_years,
+        batch_pu_budget=config.satellite.batch_pu_budget,
+        on_demand_pu_budget=config.satellite.on_demand_pu_budget,
+        s1_enabled=config.satellite.s1_enabled,
+        s1_orbit_direction=config.satellite.s1_orbit_direction,
+    )
     satellite_service = providers.Singleton(
         ZoneSatelliteService,
         farm_service=farm_service,
+        farm_repository=farm_repository,
         repository=zone_satellite_repository,
+        series_repository=satellite_series_repository,
+        ingest=satellite_ingest_service,
+        min_valid_fraction=config.satellite.min_valid_fraction,
         copernicus=copernicus,
         storage_service=storage_service,
         alert_service=alert_service,

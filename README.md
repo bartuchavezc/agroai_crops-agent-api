@@ -26,7 +26,7 @@ src/
 │   └── runner.py  turno de Google ADK
 ├── config/        settings, container DI, bootstrap
 ├── main.py        FastAPI
-└── batch.py       jobs batch (SMN + alertas)
+└── batch.py       jobs batch (SMN + alertas, recordatorios, serie satelital)
 ```
 
 Dependencias entre capas: `agent → application → providers`. `auth` y `shared` son transversales.
@@ -53,6 +53,27 @@ las reglas (helada, calor, riesgo fúngico, lluvia fuerte) y crea alertas dedupl
 python -m src.batch smn                   # una vez
 python -m src.batch smn --every-hours 6   # loop (servicio `worker` del compose)
 python -m src.batch reminders --every-minutes 5   # recordatorios vencidos → notificaciones (servicio `reminders`)
+```
+
+### Satélite (Copernicus)
+Cada campo tiene una serie temporal en `field_satellite_observations`: una fila por pasada real de
+Sentinel-2 L2A (NDVI con desvío y percentiles, NDRE, NDMI, EVI, NDWI y la fracción del campo sin nubes) y de
+Sentinel-1 (VV/VH, cross-ratio y RVI, para los períodos nublados), con `UNIQUE (field_id, observed_on, source)`
+y upsert. La Statistical API devuelve hasta un año de pasadas en una llamada (intervalo P1D), así que el
+backfill de varios años son pocas llamadas por campo. `src/application/satellite/analytics.py` calcula al
+leer la serie suavizada, lo normal de cada semana para ese campo (años previos), la anomalía contra eso y
+contra el año pasado, y las etapas de la curva; las reglas `satellite_*` generan alertas como "este campo va
+peor que el año pasado".
+
+Los créditos del free tier (10.000 unidades/mes) se miden con el header de cada respuesta y se guardan en
+`copernicus_usage`, con un cupo mensual para el batch y otro para lo que pide el usuario. El job programado
+está apagado (`SATELLITE_INGEST_ENABLED=false`) hasta medir el costo real con un campo:
+
+```bash
+python -m src.scripts.copernicus_measure --field-id <uuid>   # costo real por campo y cuántos entran
+python -m src.batch satellite                                # backfill + pasadas nuevas + alertas, una vez
+python -m src.batch satellite --every-hours 24               # loop (servicio `satellite` del compose)
+python -m src.batch satellite-backfill --years 5             # extender la historia
 ```
 
 ## Puesta en marcha

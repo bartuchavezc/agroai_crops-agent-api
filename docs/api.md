@@ -103,6 +103,15 @@ ese integrante, si no a toda la cuenta.
 `GET /alerts?acknowledged=&severity=&field_id=`, `POST /alerts`, `GET /alerts/active`, `GET/DELETE /alerts/{id}`,
 `PUT /alerts/{id}/acknowledge`. Las alertas del pronóstico tienen `source: "smn"` y `rule_id`.
 
+## Satélite (Copernicus)
+| Método | Ruta | Notas |
+|---|---|---|
+| GET | `/satellite/fields/{id}/status` | Última pasada sin nubes + `analysis` (cada índice vs lo normal de esa semana y vs el año pasado, tendencia, etapa de la curva, señal de radar, advertencias) + alertas. Actualiza la serie desde Copernicus solo si tiene más de 12 h y hay cupo on-demand |
+| GET | `/satellite/fields/{id}/series?metric=ndvi&since=` | Serie guardada (sin llamar a Copernicus): tabla semanal (crudo, suavizado, normal p10/p50/p90, año pasado), pasadas y radar. `metric`: ndvi, ndre, ndmi, evi, ndwi |
+| POST | `/satellite/fields/{id}/sync` | Fuerza la actualización de la serie (respeta el cupo mensual) |
+| GET / POST | `/satellite/fields/{id}/image`, `/render-map` | Mapa NDVI coloreado (cacheado / regenerar) |
+| GET | `/satellite/fields/{id}/boundary-base-image` | Imagen color real para dibujar el borde del campo |
+
 ## Clima
 | Método | Ruta | Notas |
 |---|---|---|

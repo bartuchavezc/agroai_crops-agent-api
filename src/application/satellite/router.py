@@ -1,7 +1,9 @@
+from datetime import date
+from typing import Optional
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
@@ -20,6 +22,26 @@ async def field_satellite_status(
     field_id: UUID, actor: Actor = Depends(get_actor), satellite: ZoneSatelliteService = Depends(SATELLITE)
 ):
     return await satellite.check_field(actor, field_id)
+
+
+@router.get("/fields/{field_id}/series", summary="Field Satellite Time Series (stored data, no Copernicus call)")
+@inject
+async def field_satellite_series(
+    field_id: UUID,
+    metric: str = Query("ndvi", description="ndvi | ndre | ndmi | evi | ndwi"),
+    since: Optional[date] = Query(None, description="Default: one year ago"),
+    actor: Actor = Depends(get_actor),
+    satellite: ZoneSatelliteService = Depends(SATELLITE),
+):
+    return await satellite.series(actor, field_id, metric=metric, since=since)
+
+
+@router.post("/fields/{field_id}/sync", summary="Refresh The Field's Satellite Series From Copernicus")
+@inject
+async def sync_field_satellite_series(
+    field_id: UUID, actor: Actor = Depends(get_actor), satellite: ZoneSatelliteService = Depends(SATELLITE)
+):
+    return await satellite.sync(actor, field_id)
 
 
 @router.get("/fields/{field_id}/image", summary="Latest Zone Satellite Image (cached, renders one if none exists)")
