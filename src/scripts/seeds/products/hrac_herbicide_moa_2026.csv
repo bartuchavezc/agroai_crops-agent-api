@@ -1,0 +1,366 @@
+moa_group,chemical_class,active,hrac_global,hrac_legacy
+Auxin Mimics,Phenoxycarboxylates,"2,4,5-T",4,O
+Auxin Mimics,Phenoxycarboxylates,"2,4-D",4,O
+Auxin Mimics,Phenoxycarboxylates,"2,4-DB",4,O
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Acetochlor,15,K3
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Acifluorfen,14,E
+Inhibition of Solanesyl Diphosphate Synthase (SDPS),Diphenyl ether,Aclonifen,32,S/F3
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Alachlor,15,K3
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Allidochlor=CDAA,15,K3
+Inhibition of Acetyl CoA Carboxylase (ACCase),Cyclohexanediones (DIMs),Alloxydim,1,A
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Ametryne,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazolinone,Amicarbazone,5,C1
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Amidosulfuron,2,B
+Auxin Mimics,Pyrimidinecarboxylates,Aminocyclopyrachlor,4,O
+Auxin Mimics,6-Chloropicolinates,Aminopyralid,4,O
+Unknown,Triazole,Amitrole,0,F3
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Thioacetamides,Anilofos,15,K3
+Inhibition of Dihydropteroate Synthase (DHPS),Carbamate,Asulam,18,I
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Atraton,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Atrazine,5,C1
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenyltriazolinones,Azafenidin,14,E
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Azimsulfuron,2,B
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Aziprotryne=aziprotryn,5,C1
+Microtubule Interference - Unclear Site of Action ,Carbamates,Barban,23,K2 
+Inhibition of Phytoene Desaturase (PDS),Phenylethers,Beflubutamid,12,F1
+Auxin Mimics,no chemical class,Benazolin-ethyl,4,O
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Benefin=benfluralin,3,K1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Benzofuranes,Benfuresate,15,K3/N
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Bensulfuron-methyl,2,B
+Unknown,Phosphorodithioate,Bensulide,0,Z/N
+Inhibition of Photosynthesis at PSII - D1 Histidine 215 binders,Benzothiadiazinone,Bentazon,6,C3
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Triketones (procide),Benzobicyclon,27,F2
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Pyrazoles (procide),Benzofenap ,27,F2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Benzthiazuron,5,C2
+Inhibition of Glutamine Synthetase (GS),Phosphinic acids,Bialaphos/bilanafos,10,H
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Triketones,Bicyclopyrone,27,F2
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Bifenox,14,E
+Inhibition of Acetolactate Synthase (ALS),Pyrimidinylbenzoates,Bispyribac-sodium,2,B
+Inhibition of Deoxy-D-Xylulose Phosphate Synthase (DXPS),Isoxazolidinones,Bixlozone,13,F4
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Uracils,Bromacil,5,C1
+Inhibition of Fatty Acid Thioesterase (FAT),gem-Dimethylbenzamides,Bromobutide,30,Z
+Inhibition of Photosynthesis at PSII - D1 Histidine 215 binders/Uncouplers,Nitriles,Bromofenoxim,6/24,C3/M
+Inhibition of Photosynthesis at PSII - D1 Histidine 215 binders/Uncouplers,Nitriles,Bromoxynil,6/24,C3/M
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Pyridazinones,Brompyrazon,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Bromuron,5,C2
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Butachlor,15,K3
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Butafenacil,14,E
+Inhibition of Microtubule Assembly - α-Tubulin,Phosphoroamidates,Butamifos,3,K1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Butenachlor,15,K3
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Butralin,3,K1
+Inhibition of Acetyl CoA Carboxylase (ACCase),Cyclohexanediones (DIMs),Butroxydim,1,A
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Buturon,5,C2
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Butylate,15,K3/N
+Unknown,no chemical class,Cacodylic acid,0,Z
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Azolylcarboxamides,Cafenstrole,15,K3
+Unknown,no chemical class,CAMA,0,Z
+Microtubule Interference - Unclear Site of Action ,Carbamates,Carbetamide,23,K2 
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenyltriazolinones,Carfentrazone-ethyl,14,E
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Chlomethoxyfen,14,E
+Auxin Mimics,Benzoates,Chloramben,4,O
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Amides,Chloranocryl=dicryl,5,C2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Chlorazine,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Chlorbromuron,5,C2
+Microtubule Interference - Unclear Site of Action ,Carbamates,Chlorbufam,23,K2 
+Auxin Mimics,Phenylcarboxylates,Chlorfenac=fenac,4,O
+Auxin Mimics,Phenylcarboxylates,Chlorfenprop,4,O
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Pyridazinones,Chloridazon (=pyrazon),5,C1
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Chlorimuron-ethyl,2,B
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Chlornitrofen,14,E
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Chlorotoluron,5,C2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Chloroxuron,5,C2
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Chlorphthalim,14,E
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Phenylcarbamates,Chlorprocarb,5,C1
+Microtubule Interference - Unclear Site of Action ,Carbamates,Chlorpropham,23,K2 
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Chlorsulfuron,2,B
+Inhibition of Microtubule Assembly - α-Tubulin,Benzoic acid,Chlorthal-dimethyl=DCPA,3,K1
+Inhibition of Cellulose Synthesis,Nitriles,Chlorthiamid,29,L
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Cinidon-ethyl,14,E
+Inhibition of Fatty Acid Thioesterase (FAT),Benzyl ethers,Cinmethylin,30,Q/Z
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Cinosulfuron,2,B
+Inhibition of Acetyl CoA Carboxylase (ACCase),Cyclohexanediones (DIMs),Clethodim,1,A
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Clodinafop-propargyl,1,A
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Clofop,1,A
+Inhibition of Deoxy-D-Xylulose Phosphate Synthase (DXPS),Isoxazolidinones,Clomazone,13,F4
+Auxin Mimics,Phenoxycarboxylates,Clomeprop,4,O
+Inhibition of Acetyl CoA Carboxylase (ACCase),Cyclohexanediones (DIMs),Cloproxydim,1,A
+Auxin Mimics,6-Chloropicolinates,Clopyralid,4,O
+Inhibition of Acetolactate Synthase (ALS),Triazolopyrimidines - Type 1,Cloransulam-methyl ,2,B
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,CP 17029,5,C1
+Inhibition of Fatty Acid Thioesterase (FAT),gem-Dimethylbenzamides,Cumyluron,30,Z
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Cyanazine,5,C1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Cycloate,15,K3/N
+Inhibition of Homogentisate Solanesyl Transferase (HST),Phenoxypyridazine,Cyclopyrimorate,33,T
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Cyclosulfamuron,2,B
+Inhibition of Acetyl CoA Carboxylase (ACCase),Cyclohexanediones (DIMs),Cycloxydim,1,A
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Cyhalofop-butyl,1,A
+PS I Electron Diversion,Pyridiniums,Cyperquat,22,D
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Cyprazine,5,C1
+Unknown,Chlorocarbonic acids,Dalapon,0,Z/N
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Delachlor,15,K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Phenylcarbamates,Desmedipham,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Desmetryne,5,C1
+Auxin Mimics,Benzoates,Dicamba ,4,O
+Inhibition of Cellulose Synthesis,Nitriles,Dichlobenil,29,L
+Auxin Mimics,Phenoxycarboxylates,Dichlorprop,4,O
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Diclofop-methyl,1,A
+Inhibition of Acetolactate Synthase (ALS),Triazolopyrimidines - Type 1,Diclosulam,2,B
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Diethatyl-ethyl,15,K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Difenoxuron,5,C2
+Unknown,no chemical class,Difenzoquat,0,Z
+Inhibition of Phytoene Desaturase (PDS),Phenylethers,Diflufenican,12,F1
+Auxin Transport Inhibitors,Arylcarboxylates,Diflufenzopyr,19,P
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Dimefuron,5,C2
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Dimepiperate ,15,K3/N
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Dimethachlor,15,K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Dimethametryn,5,C1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Dimethenamid,15,K3
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Dinitramine,3,K1
+Uncouplers,Dinitrophenols,Dinosam,24,M
+Uncouplers,Dinitrophenols,Dinoseb,24,M
+Uncouplers,Dinitrophenols,Dinoterb,24,M
+Unknown,Acetamides,Diphenamid ,0,Z/K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Dipropetryn,5,C1
+PS I Electron Diversion,Pyridiniums,Diquat,22,D
+Inhibition of Microtubule Assembly - α-Tubulin,Pyridines,Dithiopyr,3,K1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Diuron,5,C2
+Inhibition of Microtubule Assembly - α-Tubulin,Phosphoroamidates,DMPA,3,K1
+Uncouplers,Dinitrophenols,DNOC,24,M
+Unknown,no chemical class,DSMA,0,Z
+Unknown,no chemical class,Dymron=Daimuron,0,Z
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Eglinazine-ethyl,5,C1
+Inhibition of Serine-Threonine Protein Phosphatase,no chemical class,Endothal,31,R
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,EPTC ,15,K3/N
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Epyrifenacil,14,E
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Esprocarb,15,K3/N
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Ethalfluralin,3,K1
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Ethametsulfuron-methyl,2,B
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Ethidimuron,5,C2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazinones,Ethiozin,5,C1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Benzofuranes,Ethofumesate,15,K3/N
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Ethoxysulfuron,2,B
+Uncouplers,Dinitrophenols,Etinofen,24,M
+Unknown,no chemical class,Etobenzanid,0,Z
+Auxin Mimics,Phenoxycarboxylates,Fenoprop,4,O
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Fenoxaprop-ethyl,1,A
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Isoxazolines,Fenoxasulfone,15,K3
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Triketones,Fenquinotrione,27,F2
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Fenthiaprop,1,A
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Azolylcarboxamides,Fentrazamide,15,K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Fenuron,5,C2
+Unknown,Arylaminopropionic acid,Flamprop-m,0,Z
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Flazasulfuron,2,B
+Inhibition of Acetolactate Synthase (ALS),Triazolopyrimidines - Type 1,Florasulam,2,B
+Auxin Mimics,6-Arylpicolinates,Florpyrauxifen,4,O
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Fluazifop-butyl,1,A
+Inhibition of Acetolactate Synthase (ALS),Triazolinones,Flucarbazone-Na,2,B
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Flucetosulfuron,2,B
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Fluchloralin,3,K1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Oxyacetamides,Flufenacet,15,K3
+Inhibition of Acetolactate Synthase (ALS),Triazolopyrimidines - Type 1,Flumetsulam ,2,B
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Flumiclorac-pentyl,14,E
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Flumioxazin,14,E
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Flumipropyn,14,E
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Fluometuron,5,C2
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Fluorodifen,14,E
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Fluoroglycofen-ethyl,14,E
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Fluoronitrofen,14,E
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Fluothiuron,5,C2
+Inhibition of Cellulose Synthesis,Triazolocarboxamide,Flupoxam,29,L
+Unknown,Chlorocarbonic acids,Flupropanate,0,Z/N
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Flupyrsulfuron-methyl-Na,2,B
+Inhibition of Phytoene Desaturase (PDS),Diphenyl heterocycles,Fluridone ,12,F1
+Inhibition of Phytoene Desaturase (PDS),N-Phenyl heterocycles,Flurochloridone ,12,F1
+Auxin Mimics,Pyridyloxycarboxylates,Fluroxypyr,4,O
+Inhibition of Phytoene Desaturase (PDS),Diphenyl heterocycles,Flurtamone,12,F1
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides (procide),Fluthiacet-methyl,14,E
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Fomesafen,14,E
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Foramsulfuron,2,B
+Unknown,no chemical class,Fosamine,0,Z
+Inhibition of Glutamine Synthetase (GS),Phosphinic acids,Glufosinate-ammonium,10,H
+Inhibition of Enolpyruvyl Shikimate Phosphate Synthase,Glycine,Glyphosate,9,G
+Auxin Mimics,6-Arylpicolinates,Halauxifen,4,O
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Halosulfuron-methyl,2,B
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Haloxyfop-methyl,1,A
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazinones,Hexazinone,5,C1
+Inhibition of Acetolactate Synthase (ALS),Imidazolinones,Imazamethabenz-methyl,2,B
+Inhibition of Acetolactate Synthase (ALS),Imidazolinones,Imazamox,2,B
+Inhibition of Acetolactate Synthase (ALS),Imidazolinones,Imazapic,2,B
+Inhibition of Acetolactate Synthase (ALS),Imidazolinones,Imazapyr,2,B
+Inhibition of Acetolactate Synthase (ALS),Imidazolinones,Imazaquin,2,B
+Inhibition of Acetolactate Synthase (ALS),Imidazolinones,Imazethapyr,2,B
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Imazosulfuron,2,B
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Oxiranes,Indanofan,15,K3/Z
+Inhibition of Cellulose Synthesis,Alkylazines,Indaziflam,29,L
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Iodosulfuron-methyl-Na,2,B
+Inhibition of Photosynthesis at PSII - D1 Histidine 215 binders/Uncouplers,Nitriles,Ioxynil,6/24,C3/M
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Ipazine,5,C1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Azolylcarboxamides,Ipfencarbazone,15,K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Uracils,Isocil,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazinones,Isomethiozin,5,C1
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Isopropalin,3,K1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Isoproturon,5,C2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Isouron,5,C2
+Inhibition of Cellulose Synthesis,Benzamide,Isoxaben,29,L
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Isoxazole,Isoxaflutole,27,F2
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Isoxapyrifop,1,A
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Lactofen,14,E
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Uracils,Lenacil,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Linuron,5,C2
+Auxin Mimics,Phenoxycarboxylates,MCPA ,4,O
+Auxin Mimics,Phenoxycarboxylates,MCPB,4,O
+Auxin Mimics,Phenoxycarboxylates,Mecoprop,4,O
+Uncouplers,Dinitrophenols,Medinoterb,24,M
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Oxyacetamides,Mefenacet,15,K3
+Unknown,Trifluoromethanesulfonanilides,Mefluidide,0,Z
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Mesosulfuron-methyl,2,B
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Triketones,Mesotrione,27,F2
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Metamifop,1,A
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazinones,Metamitron,5,C1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Metazachlor,15,K3
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Metazosulfuron,2,B
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Methabenzthiazuron,5,C2
+Inhibition of Fatty Acid Thioesterase (FAT),Benzyl ethers,Methiozolin,30,Q
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Methoprotryne=methoprotryn,5,C1
+Unknown,no chemical class,Methyldymron,0,Z
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Metobenzuron,5,C2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Metobromuron,5,C2
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Metolachlor,15,K3
+Inhibition of Acetolactate Synthase (ALS),Triazolopyrimidines - Type 1,Metosulam,2,B
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Metoxuron,5,C2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazinones,Metribuzin,5,C1
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Metsulfuron-methyl,2,B
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Molinate,15,K3/N
+Unknown,no chemical class,Monalide,0,Z
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Monolinuron,5,C2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Monuron,5,C2
+PS I Electron Diversion,Pyridiniums,Morfamquat,22,D
+Unknown,no chemical class,MSMA,0,Z
+Unknown,Acetamides,Naproanilide ,0,Z/K3
+Unknown,Acetamides,Napropamide,0,Z/K3
+Auxin Transport Inhibitors,Arylcarboxylates,Naptalam,19,P
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Neburon,5,C2
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Nicosulfuron,2,B
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Nitralin,3,K1
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Nitrofen,14,E
+Inhibition of Phytoene Desaturase (PDS),N-Phenyl heterocycles,Norflurazon,12,F1
+Unknown,no chemical class,Oleic acid,0,Z
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Orbencarb,15,K3/N
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Orthosulfamuron,2,B
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Oryzalin,3,K1
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenyloxadiazolones,Oxadiargyl,14,E
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenyloxadiazolones,Oxadiazon,14,E
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Oxasulfuron,2,B
+Inhibition of Fatty Acid Thioesterase (FAT),gem-Dimethylbenzamides,Oxaziclomefone ,30,Z
+Inhibition of Protoporphyrinogen Oxidase (PPO),Diphenyl ethers,Oxyfluorfen,14,E
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Parafluron,5,C2
+PS I Electron Diversion,Pyridiniums,Paraquat,22,D
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Pebulate,15,K3/N
+Unknown,no chemical class,Pelargonic acid ,0,Z
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Pendimethalin,3,K1
+Inhibition of Acetolactate Synthase (ALS),Triazolopyrimidines - Type 2,Penoxsulam,2,B
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Amides,Pentanochlor,5,C2
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Pentoxazone ,14,E
+Unknown,Trifluoromethanesulfonanilides,Perfluidone,0,Z
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Pethoxamid,15,K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Phenylcarbamates,Phenisopham,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Phenylcarbamates,Phenmedipham,5,C1
+Auxin Mimics,6-Chloropicolinates,Picloram,4,O
+Inhibition of Phytoene Desaturase (PDS),Phenylethers,Picolinafen,12,F1
+Inhibition of Acetyl CoA Carboxylase (ACCase),Phenylpyrazoline (DEN),Pinoxaden,1,A
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Thioacetamides,Piperophos,15,K3
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Pretilachlor,15,K3
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Primisulfuron-methyl,2,B
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,procyazine,5,C1
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Prodiamine,3,K1
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Profluralin,3,K1
+Inhibition of Acetyl CoA Carboxylase (ACCase),Cyclohexanediones (DIMs),Profoxydim,1,A
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Proglinazine-ethyl,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Prometon,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Prometryne,5,C1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Propachlor,15,K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Amides,Propanil,5,C2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Propazine,5,C1
+Microtubule Interference - Unclear Site of Action ,Carbamates,Propham,23,K2 
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Propisochlor,15,K3
+Inhibition of Acetolactate Synthase (ALS),Triazolinones,Propoxycarbazone-Na,2,B
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Propyrisulfuron,2,B
+Inhibition of Microtubule Assembly - α-Tubulin,Benzamides,Propyzamide=pronamide ,3,K1
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Prosulfocarb,15,K3/N
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Prosulfuron,2,B
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Prynachlor,15,K3
+Inhibition of Protoporphyrinogen Oxidase (PPO),no chemical class,Pyraclonil,14,E
+Inhibition of Protoporphyrinogen Oxidase (PPO),Phenylpyrazoles,Pyraflufen-ethyl,14,E
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Pyrazoles,Pyrasulfotole,27,F2
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Pyrazoles (procide),Pyrazolynate,27,F2
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Pyrazosulfuron-ethyl,2,B
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Pyrazoles (procide),Pyrazoxyfen,27,F2
+Inhibition of Acetolactate Synthase (ALS),Pyrimidinylbenzoates,Pyribenzoxim (prodrug of bispyribac),2,B
+Unknown,no chemical class,Pyributicarb,0,Z
+Inhibition of Photosynthesis at PSII - D1 Histidine 215 binders,Phenyl-pyridazines,Pyridate,6,C3
+Inhibition of Acetolactate Synthase (ALS),Pyrimidinylbenzoates,Pyriftalid,2,B
+Inhibition of Acetolactate Synthase (ALS),Pyrimidinylbenzoates,Pyriminobac-methyl,2,B
+Inhibition of Acetolactate Synthase (ALS),Sulfonanilides,Pyrimisulfan,2,B
+Inhibition of Acetolactate Synthase (ALS),Pyrimidinylbenzoates,Pyrithiobac-sodium,2,B
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Isoxazolines,Pyroxasulfone,15,K3
+Inhibition of Acetolactate Synthase (ALS),Triazolopyrimidines - Type 2,Pyroxsulam,2,B
+Auxin Mimics/Inhibition of Cellulose Synthesis,Quinoline-carboxylates,Quinclorac,4/29,O/L
+Auxin Mimics/Inhibition of Cellulose Synthesis,Quinoline-carboxylates,Quinmerac,4/29,O
+Unknown,no chemical class,Quinoclamine,0,Z
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Quizalofop-ethyl,1,A
+Inhibition of Acetyl CoA Carboxylase (ACCase),Aryloxyphenoxypropionates (FOPs),Propaquizafop,1,A
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Rimsulfuron,2,B
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Saflufenacil,14,E
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Sebuthylazine,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Secbumeton,5,C1
+Inhibition of Acetyl CoA Carboxylase (ACCase),Cyclohexanediones (DIMs),Sethoxydim,1,A
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Siduron,5,C2
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Simazine,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Simetryne,5,C1
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Triketones,Sulcotrione,27,F2
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenyltriazolinones,Sulfentrazone,14,E
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Sulfometuron-methyl,2,B
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Sulfosulfuron,2,B
+Microtubule Interference - Unclear Site of Action ,Carbamates,Swep,23,K2 
+Auxin Mimics,Benzoates,TBA,4,O
+Unknown,Chlorocarbonic acids,TCA,0,Z/N
+Inhibition of Fatty Acid Thioesterase (FAT),Benzamides,Tebutam,30,Z/K1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Tebuthiuron,5,C2
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Triketones,Tefuryltrione,27,F2
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Triketones,Tembotrione,27,F2
+Inhibition of Acetyl CoA Carboxylase (ACCase),Cyclohexanediones (DIMs),Tepraloxydim,1,A
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Uracils,Terbacil,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Terbumeton,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Terbuthylazine ,5,C1
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Terbutryne,5,C1
+Inhibition of Dihydroorotate Dehydrogenase (DHODH),Aryl pyrrolidinone anilide,Tetflupyrolimet,28,-
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),α-Chloroacetamides,Thenylchlor,15,K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Ureas,Thiazafluron,5,C2
+Inhibition of Microtubule Assembly - α-Tubulin,Pyridines,Thiazopyr,3,K1
+Inhibition of Acetolactate Synthase (ALS),Triazolinones,Thiencarbazone-methyl,2,B
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Thifensulfuron-methyl,2,B
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Thiobencarb (=Benthiocarb),15,K3/N
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Tiafenacil,14,E
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Tiocarbazil,15,K3/N
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Pyrazoles,Tolpyralate,27,F2
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Pyrazoles,Topramezone,27,F2
+Inhibition of Acetyl CoA Carboxylase (ACCase),Cyclohexanediones (DIMs),Tralkoxydim,1,A
+Inhibition of Acetolactate Synthase (ALS),Sulfonanilides,Triafamone,2,B
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Tri-allate,15,K3/N
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Triasulfuron,2,B
+Inhibition of Cellulose Synthesis,Alkylazines,Triaziflam,29,L
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Tribenuron-methyl,2,B
+Auxin Mimics,Pyridyloxycarboxylates,Triclopyr,4,O
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Oxiranes,Tridiphane,15,K3
+Inhibition of Photosynthesis at PSII - D1 Serine 264 binders (and other non-histidine 215 binders),Triazines,Trietazine,5,C1
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Trifloxysulfuron-Na,2,B
+Inhibition of Protoporphyrinogen Oxidase (PPO),N-Phenylimides,Trifludimoxazin,14,E
+Inhibition of Microtubule Assembly - α-Tubulin,Dinitroanilines ,Trifluralin,3,K1
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Triflusulfuron-methyl,2,B
+Inhibition of Acetolactate Synthase (ALS),Sulfonylureas,Tritosulfuron,2,B
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Thiocarbamates,Vernolate,15,K3/N
+Microtubule Interference - Unclear Site of Action ,Isoxazolinyl carboxamide,Icafolin-methyl,23,-
+Inhibition of Acetyl CoA Carboxylase (ACCase),Carbocyclic aryl diones,Metproxybicyclone,1,-
+Inhibition of Very Long-Chain Fatty Acid Synthesis (VLCFA),Trifluoromethanesulfonanilide ,Dimesulfazet,15,-
+Inhibition of Hydroxyphenyl Pyruvate Dioxygenase (HPPD),Azole Carboxamide,Iptriazopyrid,27,-
+Dual Inhibition of Phytoene Desaturase (PDS) and Solanesyl Diphosphate Synthase (SDPS),Pyrimidylaryl ether,Rimisoxafen,12/32,-
