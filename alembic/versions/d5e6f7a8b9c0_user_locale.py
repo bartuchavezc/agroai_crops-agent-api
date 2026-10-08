@@ -1,7 +1,7 @@
 """users: country, timezone and locale (the agent's voice and local time); existing users stay in Argentina
 
 Revision ID: d5e6f7a8b9c0
-Revises: b2c3d4e5f6a7
+Revises: a1b2c3d4e5f6
 Create Date: 2026-10-08 15:10:00.000000
 """
 from typing import Sequence, Union
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'd5e6f7a8b9c0'
-down_revision: Union[str, None] = 'b2c3d4e5f6a7'
+down_revision: Union[str, None] = 'a1b2c3d4e5f6'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -17,7 +17,7 @@ import unicodedata
 import uuid
 
 from sqlalchemy import (
-    Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint,
+    CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
@@ -179,36 +179,5 @@ class FertilizerProduct(Base):
     origin_country = Column(String(80))
     company = Column(String(255))
     company_tax_id = Column(String(20))
-    source = Column(String(40), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
-
-
-class OrganicInput(Base):
-    """A product on the OMRI list for the USDA National Organic Program (NOP): allowed in certified-organic
-    production *under the NOP*. That is not a registration or authorisation in any other country — a pesticide or
-    biopesticide here still needs its own SENASA/COFEPRIS-style registration where it is sold or used, and the
-    local organic standard (SENASA Argentina, SENASICA México, EU) decides what a certifier accepts.
-
-    `company_country` is the country of the company's listed address, not where the product is made. Only business
-    data is stored (no contact people, phones, emails or street addresses)."""
-    __tablename__ = "organic_inputs"
-    __table_args__ = (
-        _trgm("organic_inputs", "name_norm"),
-        _trgm("organic_inputs", "category"),
-        Index("ix_organic_inputs_scope", "scope"),
-        Index("ix_organic_inputs_company_country", "company_country"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    omri_id = Column(String(20), nullable=False, unique=True)  # e.g. "acd-3508"
-    name = Column(String(1000), nullable=False)
-    name_norm = Column(String(1000), nullable=False)
-    scope = Column(String(40))  # cultivos | producción animal | procesamiento
-    category = Column(Text)  # OMRI material class, e.g. "Pesticidas botánicos", "Inoculantes microbianos"
-    company = Column(String(255), nullable=False)
-    company_country = Column(String(80))
-    company_website = Column(String(255))
-    restricted = Column(Boolean, nullable=False, default=False)  # listed with use conditions
-    restriction_note = Column(Text)
     source = Column(String(40), nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)

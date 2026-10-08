@@ -4,7 +4,6 @@ Seeds the products reference tables (src/application/products/) from the CSVs in
   - senasa_terapeutica_veg_act.csv      technical-grade active registrations (SENASA 'ST-A')
   - senasa_fertilizantes_enimiendas_otr.csv  fertilizers, amendments, stimulants, inoculants (SENASA)
   - hrac_herbicide_moa_2026.csv         HRAC herbicide mode-of-action master list (active -> MoA group)
-  - omri_nop_2026.csv                   OMRI list (USDA NOP organic inputs), made by `parse_omri_pdf` from the PDF
 
     uv run python -m src.scripts.seed_products [--seeds-dir DIR]
 
@@ -35,7 +34,6 @@ from src.application.products.models import (
     ActiveIngredientAlias,
     ActiveIngredientRegistration,
     FertilizerProduct,
-    OrganicInput,
     PhytoProduct,
     PhytoProductIngredient,
     normalize_name,
@@ -263,29 +261,6 @@ async def _load_fertilizers(session, path: Path) -> int:
     return len(rows)
 
 
-async def _load_omri(session, path: Path) -> int:
-    rows = []
-    for r in _read_csv(path, delimiter=","):
-        if not r["omri_id"]:
-            continue
-        rows.append({
-            "id": uuid.uuid4(), "omri_id": r["omri_id"], "name": r["name"], "name_norm": normalize_name(r["name"]),
-            "scope": _none(r["scope"]), "category": _none(r["category"]), "company": r["company"],
-            "company_country": _none(r["company_country"]), "company_website": _none(r["company_website"]),
-            "restricted": r["restricted"] == "True", "restriction_note": _none(r["restriction_note"]),
-            "source": "omri_nop_2026",
-        })
-    for chunk in _chunks(rows):
-        stmt = insert(OrganicInput).values(chunk)
-        await session.execute(stmt.on_conflict_do_update(
-            index_elements=["omri_id"],
-            set_={c: stmt.excluded[c] for c in (
-                "name", "name_norm", "scope", "category", "company", "company_country", "company_website",
-                "restricted", "restriction_note", "source")},
-        ))
-    return len(rows)
-
-
 async def seed(session_factory, seeds_dir: Path) -> dict[str, int]:
     stats: dict[str, int] = {}
     async with session_factory() as session:
@@ -303,7 +278,6 @@ async def seed(session_factory, seeds_dir: Path) -> dict[str, int]:
             session, seeds_dir / "senasa_terapeutica_veg_act.csv", index
         )
         stats["fertilizers"] = await _load_fertilizers(session, seeds_dir / "senasa_fertilizantes_enimiendas_otr.csv")
-        stats["organic_inputs"] = await _load_omri(session, seeds_dir / "omri_nop_2026.csv")
         stats["ingredients_total"] = len(index.by_name)
         await session.commit()
     return stats
