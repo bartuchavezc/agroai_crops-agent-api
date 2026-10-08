@@ -11,6 +11,9 @@ from .schemas import SoilContext
 
 logger = logging.getLogger(__name__)
 
+# `source` of a context that has no INTA data (outside Argentina): the only source is SoilGrids.
+_SOILGRIDS_ONLY_SOURCE = "ISRIC SoilGrids 2.0 (modelo global de suelos)"
+
 # The source dataset uses these as its own "not applicable / not determined" placeholders.
 _BLANK_VALUES = {"-", "", "No determinada"}
 
@@ -22,8 +25,23 @@ def _clean(value):
 
 
 class SoilContextService:
-    def __init__(self, repository: SoilDataRepository):
+    def __init__(self, repository: SoilDataRepository, soilgrids=None):
         self.repo = repository
+        self.soilgrids = soilgrids  # SoilGridsRepository: the rasters loaded in our own database (no external API)
+
+    async def add_soilgrids(self, current: Optional[dict], latitude: float, longitude: float) -> Optional[dict]:
+        """`current` (a stored soil_context, or None) with the SoilGrids estimate added. Unchanged when it was already
+        asked, or when no loaded grid covers the point (it will be tried again once one is imported)."""
+        if (current or {}).get("soilgrids_checked"):
+            return current
+        if self.soilgrids is None:
+            return current
+        answered, estimate = await self.soilgrids.estimate(latitude, longitude)
+        if not answered:
+            return current
+        context = SoilContext(**current) if current else SoilContext(source=_SOILGRIDS_ONLY_SOURCE)
+        context.soilgrids, context.soilgrids_checked = estimate, True
+        return context.model_dump(mode="json")
 
     async def lookup(self, latitude: float, longitude: float) -> Optional[SoilContext]:
         try:
@@ -36,10 +54,20 @@ class SoilContextService:
         except Exception:
             logger.exception("Soil pH lookup failed")
             ph = None
-        if unit is None and ph is None:
+        soilgrids = None
+        if self.soilgrids is not None:
+            try:
+                _, soilgrids = await self.soilgrids.estimate(latitude, longitude)
+            except Exception:
+                logger.exception("SoilGrids lookup failed")
+        if unit is None and ph is None and soilgrids is None:
             return None
+        has_inta = bool(unit) or ph is not None
         unit = unit or {}
         return SoilContext(
+            soilgrids=soilgrids,
+            soilgrids_checked=soilgrids is not None,
+            **({} if has_inta else {"source": _SOILGRIDS_ONLY_SOURCE}),
             province=_clean(unit.get("provincia")),
             unit_symbol=_clean(unit.get("unit_symbol")),
             soil_order=_clean(unit.get("soil_order")),
