@@ -62,6 +62,38 @@ Archivos:
   como purines e infusiones), huerta saludable (aromáticas y medicinales) y de la huerta a la mesa
   (nutrición, seguridad alimentaria, recetario).
 
+### specific/cultivos/
+
+Una **ficha técnica corta por cada cultivo del catálogo** (`GLOBAL_CROPS` en la migración inicial):
+`<slug>.md`, con el mismo slug que las claves de `src/application/planning/stage_templates.py`
+(`frutilla.md`, `tomate.md`, `maiz.md`, …). Las 29 fichas cubren las 31 entradas del catálogo
+(Tomate redondo/cherry y Lechuga mantecosa/crespa comparten ficha). Cada una pesa ~4–5k tokens y
+sigue la misma estructura de 15 secciones en tablas (ver `_plantilla.md`): identificación,
+variedades usadas en Argentina, composición nutricional, clima, suelo, fertilización, riego y Kc,
+siembra, etapas (alineadas con los hitos de `stage_templates.py`), plagas, enfermedades,
+fisiopatías, asociaciones y rotación, cosecha y poscosecha, claves para el agente y fuentes.
+
+Se cargan igual que los manuales, como un skill por cultivo (`ficha-<slug>`), en
+`knowledge_skills.py`. La descripción del skill sale de la primera línea del archivo
+(`# Nombre — *Científico* (Familia)`), así que para sumar un cultivo alcanza con copiar
+`_plantilla.md` (los archivos que empiezan con `_` no se cargan). `tests/unit/test_knowledge_skills.py`
+verifica que cada cultivo de `TEMPLATES` tenga su ficha.
+
+De dónde salen los datos:
+- **Tabulados, copiados de la fuente, no redactados**: composición por 100 g (USDA SR Legacy, vía el
+  paquete R `NutrienTrackeR`); temperaturas, pH, textura, profundidad, luz, lluvia y ciclo (FAO
+  ECOCROP, vía el paquete R `Recocrop`); Kc inicial/medio/final (FAO-56 Tabla 12, vía el paquete R
+  `FAO56`; para rúcula, acelga, perejil, albahaca y puerro, que FAO-56 no tabula, se indica un valor
+  análogo y se aclara); umbrales de salinidad (Maas & Hoffman / FAO-29).
+- **Específico de Argentina** (variedades, zonas, plagas, enfermedades y manejo): INTA, MAGyP, INASE,
+  SENASA, universidades nacionales (UNLu, UNLP, UNCuyo, FAUBA, UNNE, UNL, UNLPam) y prensa técnica;
+  cada ficha lista sus fuentes. Lo que no tenía fuente local (por ejemplo, el puerro) se completó con
+  prácticas hortícolas estándar y está marcado así. Extracciones de nutrientes, rendimientos y
+  conservación son orientativos (rangos de literatura técnica y UC Davis / USDA Handbook 66).
+- Para fitosanitarios las fichas priorizan el manejo cultural y biológico. Como mucho mencionan
+  opciones de bajo impacto (azufre, cobre, Bt, jabón potásico), sin dosis, y remiten a los productos
+  registrados en SENASA.
+
 ## inputs/ (pendiente, no existe todavía como carpeta de manuales)
 
 Se descartó como capa de manuales estáticos. En su lugar, `inputs/` va a ser una **tool de RAG**

@@ -16,7 +16,13 @@ means the agent can call `load_skill` on the first turn that needs one instead o
 turn discovering it first. `SkillLifecycleMode.BOUNDED` with `max_active_skills=1` means loading
 a second manual automatically evicts whichever was active — appropriate given how large each one
 is; there's no `unload_skill` call for the agent to remember to make.
+
+Besides the manuals, every crop of the catalog has a short technical sheet (`specific/cultivos/`,
+~4–5k tokens each) exposed the same way, one skill per crop (`ficha-<slug>`): small enough that
+swapping them in and out is cheap, and specific enough that the model can pick the right one from
+the crop name in the question.
 """
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -58,6 +64,34 @@ _MANUALS: dict[str, tuple[str, str]] = {
 }
 
 
+# One short sheet per catalog crop (knowledge_base/specific/cultivos/<slug>.md, slug = the
+# stage_templates key). Files starting with "_" (the blank template) aren't skills. The description
+# is built from the sheet's own title line, `# Nombre — *Científico* (Familia)`, so adding a crop is
+# just dropping a new file in the folder.
+_CROPS_DIR = _SPECIFIC_DIR / "cultivos"
+_CROP_TITLE = re.compile(r"^# (?P<name>.+?) — (?P<scientific>\*.+\*) \((?P<family>[^()]+)\)\s*$")
+
+
+def _crop_sheet_skill(path: Path) -> Skill:
+    title = path.read_text(encoding="utf-8").splitlines()[0]
+    m = _CROP_TITLE.match(title)
+    if not m:
+        raise ValueError(f"{path.name}: first line must be '# Nombre — *Científico* (Familia)', got {title!r}")
+    name, scientific = m["name"], m["scientific"].replace("*", "")
+    return Skill(
+        frontmatter=Frontmatter(
+            name=f"ficha-{path.stem}",
+            description=(
+                f"Ficha técnica de {name} ({scientific}, {m['family']}) para Argentina: variedades y "
+                "tipos, composición nutricional, clima, suelo, fertilización, riego y Kc, siembra, etapas, "
+                "plagas, enfermedades, fisiopatías, asociaciones y rotación, cosecha y poscosecha. Cargar "
+                f"para preguntas puntuales sobre {name.lower()}; para manejo general de huerta, usar los manuales."
+            ),
+        ),
+        instructions=path.read_text(encoding="utf-8"),
+    )
+
+
 def _load_manual_skills() -> list[Skill]:
     skills = []
     for filename, (name, description) in _MANUALS.items():
@@ -69,6 +103,10 @@ def _load_manual_skills() -> list[Skill]:
                 frontmatter=Frontmatter(name=name, description=description),
                 instructions=path.read_text(encoding="utf-8"),
             )
+        )
+    if _CROPS_DIR.is_dir():
+        skills.extend(
+            _crop_sheet_skill(path) for path in sorted(_CROPS_DIR.glob("*.md")) if not path.name.startswith("_")
         )
     return skills
 
