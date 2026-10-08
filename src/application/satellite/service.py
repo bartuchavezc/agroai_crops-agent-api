@@ -5,6 +5,7 @@ the alert reads as "your zone changed" rather than an arbitrary absolute number.
 daily tile-pull batch — matching future.md's own design note on keeping this efficient.
 """
 import logging
+import os
 from datetime import timedelta
 from typing import Optional
 from uuid import UUID
@@ -31,6 +32,15 @@ logger = logging.getLogger(__name__)
 # (render) even when a clear, still-recent pass exists a bit further back. Shared by check_field and
 # get_or_render_image so both queries always look at the same period.
 _LOOKBACK_DAYS = 30
+
+
+def reuse_hours() -> float:
+    """How old a stored NDVI/NDWI reading can be and still answer an agent question without a new Copernicus call
+    (each call spends processing credits). `SATELLITE_MAX_AGE_HOURS`, default 12; Sentinel-2 revisits every ~5 days."""
+    try:
+        return float(os.environ.get("SATELLITE_MAX_AGE_HOURS", "12"))
+    except ValueError:
+        return 12.0
 
 
 def _lookback_window() -> tuple[str, str]:
@@ -74,13 +84,23 @@ class ZoneSatelliteService:
         self.alerts = alert_service
         self.rules = rules_engine
 
-    async def check_field(self, actor: Actor, field_id: UUID) -> ZoneSatelliteStatus:
+    async def check_field(
+        self, actor: Actor, field_id: UUID, max_age_hours: Optional[float] = None
+    ) -> ZoneSatelliteStatus:
+        """Live NDVI/NDWI check (stores a reading, may raise alerts). With `max_age_hours`, a stored reading at most
+        that old is returned instead — no Copernicus call, nothing written — which is what the agent uses."""
         field = await self.farm.get_field(actor, field_id)
         if field.latitude is None or field.longitude is None:
             raise InvalidInputError(f"Field '{field.name}' has no coordinates; satellite status needs one.")
 
         recent = await self.repo.recent(actor.account_id, field_id, limit=5)
         baseline = _baseline_ndvi(list(recent))
+
+        if max_age_hours is not None:
+            limit = timedelta(hours=max_age_hours)
+            fresh = next((r for r in recent if r.ndvi_mean is not None and utcnow() - r.captured_at <= limit), None)
+            if fresh is not None:
+                return self._status_from_stored(field, fresh, [r for r in recent if r is not fresh])
 
         if not self.copernicus.configured:
             return ZoneSatelliteStatus(
@@ -150,6 +170,29 @@ class ZoneSatelliteService:
             alerts=[m.message for m in matches],
             boundary_scoped=boundary_scoped,
             pixel_count_caveat=_pixel_count_caveat(stats.pixel_count) if boundary_scoped else None,
+        )
+
+    def _status_from_stored(self, field: FieldRead, reading: ZoneSatelliteReading, older: list) -> ZoneSatelliteStatus:
+        """The status for a stored reading, judged against the readings before it, without touching alerts."""
+        baseline = _baseline_ndvi(older)
+        rule_ctx = {"ndvi_mean": reading.ndvi_mean, "ndwi_mean": reading.ndwi_mean}
+        if baseline is not None and reading.ndvi_mean is not None:
+            rule_ctx["ndvi_drop"] = round(baseline - reading.ndvi_mean, 3)
+        matches = self.rules.evaluate(rule_ctx, categories=["satellite"])
+        age_hours = int((utcnow() - reading.captured_at).total_seconds() // 3600)
+        assessment = " ".join(m.message for m in matches) or (
+            "Sin señales de estrés generalizado en la zona (NDVI/NDWI en rango habitual)."
+        )
+        boundary_scoped = bool(field.boundary)
+        return ZoneSatelliteStatus(
+            field_id=field.id,
+            field_name=field.name,
+            reading=ZoneSatelliteReadingRead.model_validate(reading),
+            baseline_ndvi_mean=round(baseline, 3) if baseline is not None else None,
+            assessment=f"(Lectura guardada de hace {age_hours} h, reutilizada sin nueva consulta.) {assessment}",
+            alerts=[m.message for m in matches],
+            boundary_scoped=boundary_scoped,
+            pixel_count_caveat=_pixel_count_caveat(reading.pixel_count) if boundary_scoped else None,
         )
 
     async def get_or_render_image(self, actor: Actor, field_id: UUID, force: bool = False) -> Optional[str]:

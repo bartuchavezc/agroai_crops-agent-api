@@ -6,8 +6,9 @@ from typing import List
 from uuid import UUID
 
 from ..domain.models import User
-from ..domain.schemas import UserCreate, UserRead
+from ..domain.schemas import UserCreate, UserLocaleUpdate, UserRead
 from ..adapters.user_repository import UserRepositoryInterface
+from src.shared.domain.locale import default_locale, default_timezone
 from src.shared.utils.errors import UserAlreadyExistsError
 
 
@@ -108,3 +109,13 @@ class UserService:
             account = await self.account_service.get_account(user.account_id)
         
         return user, account
+
+    async def update_locale(self, current: UserRead, change: UserLocaleUpdate) -> UserRead | None:
+        """Apply a `PATCH /auth/me`. Switching country without sending a timezone/locale moves them to that
+        country's defaults, so an Argentine user who becomes Mexican doesn't keep Buenos Aires time."""
+        country = change.country or current.country
+        country_changed = country != current.country
+        timezone = change.timezone or (default_timezone(country) if country_changed else current.timezone)
+        locale = change.locale or (default_locale(country) if country_changed else current.locale)
+        user = await self.user_repository.update_locale(current.id, country, timezone, locale)
+        return UserRead.model_validate(user) if user else None

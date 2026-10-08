@@ -62,6 +62,24 @@ DEFAULT_CONFIG = {
         "embedding_model": "gemini-embedding-001",
         "embedding_dimensions": 768,
         "max_image_side": 1536,
+        # Explicit context caching bills storage ($/M tokens/hour) and doesn't exist on the free tier; it only
+        # pays off with many model calls per conversation-hour. Off: Gemini's implicit caching applies on its own.
+        "explicit_cache": False,
+        # Gemini 3 reasoning depth for the chat agent: minimal | low | medium | high ("" = the model's default).
+        # Reasoning tokens are billed as output.
+        "chat_thinking_level": "low",
+        # None = the model default (1.0); Google recommends leaving it for Gemini 3 (lower can loop/degrade).
+        "chat_temperature": None,
+    },
+    "agent": {
+        # Preflight: before the chat model answers, a cheap router picks the skills and read-only tools the message
+        # needs, they all run in parallel, and the model answers once with everything in hand.
+        "preflight": True,
+        # Cap (in estimated tokens, ~4 chars each) on the knowledge + data the preflight puts in front of the model.
+        "preflight_max_tokens": 60000,
+        # Crop analyses (diagnosis, periodic, zone): after the first pass, when it found something worth it (a risk, a
+        # disease, low confidence), search the web on it and refine the analysis at the highest reasoning depth.
+        "analysis_deep": True,
     },
     "storage": {
         "base_data_path": str(PROJECT_ROOT / "data" / "uploads"),
@@ -164,6 +182,15 @@ def _apply_env_overrides(config: dict) -> None:
     if env("GEMINI_FALLBACK_MODELS") is not None:
         gemini["fallback_models"] = [m.strip() for m in env("GEMINI_FALLBACK_MODELS").split(",") if m.strip()]
     gemini["embedding_model"] = env("GEMINI_EMBEDDING_MODEL", gemini["embedding_model"])
+    gemini["explicit_cache"] = _env_bool("GEMINI_EXPLICIT_CACHE", gemini["explicit_cache"])
+    gemini["chat_thinking_level"] = env("GEMINI_CHAT_THINKING_LEVEL", gemini["chat_thinking_level"])
+    if env("GEMINI_CHAT_TEMPERATURE") not in (None, ""):
+        gemini["chat_temperature"] = float(env("GEMINI_CHAT_TEMPERATURE"))
+
+    agent = config["agent"]
+    agent["preflight"] = _env_bool("AGENT_PREFLIGHT", agent["preflight"])
+    agent["preflight_max_tokens"] = int(env("AGENT_PREFLIGHT_MAX_TOKENS", agent["preflight_max_tokens"]))
+    agent["analysis_deep"] = _env_bool("ANALYSIS_DEEP", agent["analysis_deep"])
 
     storage = config["storage"]
     storage["base_data_path"] = env("BASE_DATA_PATH", storage["base_data_path"])

@@ -154,6 +154,24 @@ class FarmService:
             return None
         return context.model_dump(mode="json") if context else None
 
+    async def ensure_soilgrids(self, actor: Actor, field_id: UUID) -> FieldRead:
+        """The field with the SoilGrids estimate in its cached soil_context, fetching it the first time it is needed
+        (analyses, the soil tool): a local lookup in the imported SoilGrids tiles. Best-effort; any user of the account
+        may trigger it, since it only fills a cache."""
+        field = await self.get_field(actor, field_id)
+        if field.latitude is None or field.longitude is None:
+            return field
+        current = field.soil_context.model_dump(mode="json") if field.soil_context else None
+        try:
+            updated = await self.soil_context.add_soilgrids(current, field.latitude, field.longitude)
+        except Exception:
+            logger.exception("SoilGrids lookup failed")
+            return field
+        if updated is None or updated == current:
+            return field
+        row = await self.repo.update_field(actor.account_id, field_id, {"soil_context": updated})
+        return FieldRead.model_validate(row) if row else field
+
     # ---------- fields ----------
 
     async def list_fields(self, actor: Actor) -> list[FieldRead]:

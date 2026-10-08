@@ -79,3 +79,10 @@ uv run ruff check src tests
 ```
 
 Nueva migración: `uv run alembic revision --autogenerate -m "..."` (revisar el archivo generado).
+
+## Datos que hay que cargar después de migrar
+
+- `uv run python -m src.scripts.seed_products`: registros de productos (SENASA, HRAC).
+- `uv run python -m src.scripts.import_soilgrids --dir raw_data/downloads/soilgrids`: SoilGrids (pH, carbono, nitrógeno,
+  CEC) en tiles geocodificados dentro de Postgres. Sin esto no hay estimación de suelo por coordenadas.
+- `uv run python -m src.scripts.eval_agent_routing`: evaluación opcional con el modelo real (gasta cuota).

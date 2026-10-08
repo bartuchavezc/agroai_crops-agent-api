@@ -4,3 +4,8 @@
 .env
 .venv/
 data/
+
+# Datos crudos y scripts de scraping locales
+/raw_data/
+/scripts/
+/urls

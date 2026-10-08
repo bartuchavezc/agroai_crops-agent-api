@@ -47,7 +47,10 @@ class AgentContainer(containers.DeclarativeContainer):
         rules_engine=application.rules_engine,
         profile_service=profile_service,
         notification_service=application.notification_service,
+        satellite_repository=application.zone_satellite_repository,
+        search=search_provider,
         max_image_side=config.gemini.max_image_side,
+        deep_default=config.agent.analysis_deep,
     )
 
     tool_deps = providers.Singleton(
@@ -82,4 +85,6 @@ class AgentContainer(containers.DeclarativeContainer):
         reports_service=application.reports_service,
         timezone_name=config.app.timezone,
         max_image_side=config.gemini.max_image_side,
+        preflight_enabled=config.agent.preflight,
+        preflight_max_tokens=config.agent.preflight_max_tokens,
     )

@@ -33,6 +33,9 @@ class RetryLayoutPhotoRequest(BaseModel):
 class ImageAnalysisRequest(BaseModel):
     report_id: UUID
     image_identifier: Optional[str] = None
+    # Web-research second pass of a crop analysis: omitted = the deployment default (ANALYSIS_DEEP); it only runs when
+    # the first pass found something worth it.
+    deep: Optional[bool] = None
 
 
 @router.post("", summary="Diagnose a crop photo (Gemini multimodal, structured output)")
@@ -42,7 +45,7 @@ async def analyze_image(
     actor: Actor = Depends(get_actor),
     diagnosis: DiagnosisService = Depends(Provide["agent.diagnosis_service"]),
 ):
-    return await diagnosis.analyze(actor, body.report_id, body.image_identifier)
+    return await diagnosis.analyze(actor, body.report_id, body.image_identifier, deep=body.deep)
 
 
 class HarvestVerdictRequest(BaseModel):

@@ -8,7 +8,9 @@ from uuid import UUID
 
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+from src.shared.domain.locale import DEFAULT_COUNTRY, default_locale, default_timezone, validate_timezone
 
 from .models import BCRYPT_MAX_PASSWORD_BYTES
 
@@ -28,6 +30,15 @@ class UserBase(BaseModel):
     email: EmailStr
     first_name: str | None = None
     last_name: str | None = None
+    # Where the person is: sets the agent's voice and local time. Timezone/locale default from the country.
+    country: Literal["AR", "MX"] = DEFAULT_COUNTRY
+    timezone: str | None = None
+    locale: str | None = Field(default=None, pattern=r"^[a-z]{2}-[A-Z]{2}$")
+
+    @field_validator("timezone")
+    @classmethod
+    def _iana_timezone(cls, value: str | None) -> str | None:
+        return validate_timezone(value) if value else value
 
 
 class SignupRequest(UserBase):
@@ -42,6 +53,19 @@ class MemberCreate(UserBase):
     role: Literal["tecnico", "staff"] = "staff"
 
 
+class UserLocaleUpdate(BaseModel):
+    """`PATCH /auth/me`: change where I am. Omitted fields stay as they are; changing the country alone resets the
+    timezone and locale to that country's defaults unless they are sent too."""
+    country: Literal["AR", "MX"] | None = None
+    timezone: str | None = None
+    locale: str | None = Field(default=None, pattern=r"^[a-z]{2}-[A-Z]{2}$")
+
+    @field_validator("timezone")
+    @classmethod
+    def _iana_timezone(cls, value: str | None) -> str | None:
+        return validate_timezone(value) if value else value
+
+
 class MemberRoleUpdate(BaseModel):
     role: Literal["tecnico", "staff"]
 
@@ -51,6 +75,12 @@ class UserCreate(UserBase):
     password: str
     account_id: UUID
     role: str
+
+    @model_validator(mode="after")
+    def _fill_locale_defaults(self):
+        self.timezone = self.timezone or default_timezone(self.country)
+        self.locale = self.locale or default_locale(self.country)
+        return self
 
 
 class UserRead(UserBase):

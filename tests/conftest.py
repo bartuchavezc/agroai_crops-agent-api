@@ -22,6 +22,8 @@ TEST_DATABASE_URL = ADMIN_URL.rsplit("/", 1)[0].replace("postgresql://", "postgr
 
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["DEV_MODE"] = "true"
+# The chat tests script the main model; the preflight router is its own Gemini call, switched on by its tests.
+os.environ["AGENT_PREFLIGHT"] = "false"
 os.environ["ALLOW_PUBLIC_SIGNUP"] = "true"
 os.environ.setdefault("BASE_DATA_PATH", str(ROOT / "data" / "test_uploads"))
 os.environ.setdefault("OPENWEATHER_API_KEY", "")
