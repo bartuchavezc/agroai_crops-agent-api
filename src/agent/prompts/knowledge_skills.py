@@ -13,19 +13,25 @@ conversation.
 `SkillDiscoveryMode.EAGER` puts the (short) skill descriptions directly in the system prompt
 instead of behind a `list_skills` call: fine for a catalog this small and slow-growing, and it
 means the agent can call `load_skill` on the first turn that needs one instead of spending a
-turn discovering it first. `SkillLifecycleMode.BOUNDED` with `max_active_skills=1` means loading
-a second manual automatically evicts whichever was active — appropriate given how large each one
-is; there's no `unload_skill` call for the agent to remember to make.
+turn discovering it first.
+
+Lifecycle follows two layers (see `specific_manuals_toolset`): the big manuals are the *field-type*
+layer — `BOUNDED` with `max_active_skills=1`, so loading a second manual evicts the first (one field type
+at a time, no `unload_skill` to remember). The per-crop skills (`ficha-*`, `plagas-*`) are `PERSISTENT`:
+no cap and never evicted, because a question about a whole cajón/parcela involves several crops at once and
+a user usually works with several. The model can release one it no longer needs with `unload_skill`.
 
 Besides the manuals, every crop of the catalog has a short technical sheet (`specific/cultivos/`,
 ~4–5k tokens each) exposed the same way, one skill per crop (`ficha-<slug>`): small enough that
-swapping them in and out is cheap, and specific enough that the model can pick the right one from
-the crop name in the question.
+carrying several at once is cheap, and specific enough that the model can pick the right one from
+the crop name in the question. Each crop can also have a companion `plagas-<slug>` skill (general pest
+and disease identification, `specific/plagas/<slug>.md`) that carries no products or doses.
 """
 import re
 from functools import lru_cache
 from pathlib import Path
 
+from google.adk.features import FeatureName, override_feature_enabled
 from google.adk.skills import Frontmatter, Skill
 from google.adk.tools.skill_toolset import (
     SkillDiscoveryMode,
@@ -69,6 +75,7 @@ _MANUALS: dict[str, tuple[str, str]] = {
 # is built from the sheet's own title line, `# Nombre — *Científico* (Familia)`, so adding a crop is
 # just dropping a new file in the folder.
 _CROPS_DIR = _SPECIFIC_DIR / "cultivos"
+_PLAGUES_DIR = _SPECIFIC_DIR / "plagas"
 _CROP_TITLE = re.compile(r"^# (?P<name>.+?) — (?P<scientific>\*.+\*) \((?P<family>[^()]+)\)\s*$")
 
 
@@ -86,6 +93,32 @@ def _crop_sheet_skill(path: Path) -> Skill:
                 "tipos, composición nutricional, clima, suelo, fertilización, riego y Kc, siembra, etapas, "
                 "plagas, enfermedades, fisiopatías, asociaciones y rotación, cosecha y poscosecha. Cargar "
                 f"para preguntas puntuales sobre {name.lower()}; para manejo general de huerta, usar los manuales."
+                + (
+                    f" Para identificar una plaga o enfermedad de {name.lower()} en detalle, cargar también "
+                    f"plagas-{path.stem}."
+                    if (_PLAGUES_DIR / path.name).is_file()
+                    else ""
+                )
+            ),
+        ),
+        instructions=path.read_text(encoding="utf-8"),
+    )
+
+
+def _plagues_skill(path: Path) -> Skill:
+    title = path.read_text(encoding="utf-8").splitlines()[0]
+    m = _CROP_TITLE.match(title)
+    if not m:
+        raise ValueError(f"{path.name}: first line must be '# Nombre — *Científico* (Familia)', got {title!r}")
+    name, scientific = m["name"], m["scientific"].replace("*", "")
+    return Skill(
+        frontmatter=Frontmatter(
+            name=f"plagas-{path.stem}",
+            description=(
+                f"Guía de identificación de plagas y enfermedades de {name} ({scientific}): cómo reconocer cada "
+                "una (síntomas, daño, ciclo y condiciones que la favorecen), cómo monitorearla y qué medidas "
+                "culturales y biológicas existen. Sin productos ni dosis: esos salen de las tablas de registro y "
+                f"de la búsqueda web con fuente. Cargar para diagnosticar o describir un problema de {name.lower()}."
             ),
         ),
         instructions=path.read_text(encoding="utf-8"),
@@ -108,20 +141,35 @@ def _load_manual_skills() -> list[Skill]:
         skills.extend(
             _crop_sheet_skill(path) for path in sorted(_CROPS_DIR.glob("*.md")) if not path.name.startswith("_")
         )
+    if _PLAGUES_DIR.is_dir():
+        skills.extend(
+            _plagues_skill(path) for path in sorted(_PLAGUES_DIR.glob("*.md")) if not path.name.startswith("_")
+        )
     return skills
 
 
 @lru_cache(maxsize=1)
 def specific_manuals_toolset() -> SkillToolset:
-    """Cached like `core_knowledge_base()`: the manuals are static within a deployed container."""
+    """Cached like `core_knowledge_base()`: the manuals are static within a deployed container.
+
+    Two lifecycle layers: the manuals (field type: horticultura, huerta orgánica, later granos/vid/flores) are
+    BOUNDED with a cap of 1; every other skill (`ficha-*`, `plagas-*`) uses the PERSISTENT default, which ADK
+    exempts from the cap and never evicts.
+
+    Turns on ADK's experimental SKILL_LIFECYCLE feature (off by default). Without it the toolset still applies
+    the cap, but it neither offers `unload_skill` nor strips a released skill's text from later requests, so
+    every manual or sheet ever loaded would keep riding along in the conversation history.
+    """
+    override_feature_enabled(FeatureName.SKILL_LIFECYCLE, True)
     return SkillToolset(
         skills=_load_manual_skills(),
         discovery_mode=SkillDiscoveryMode.EAGER,
         lifecycle_config=SkillLifecycleConfig(
-            default_mode=SkillLifecycleMode.BOUNDED,
+            default_mode=SkillLifecycleMode.PERSISTENT,
             max_active_skills=1,
+            skill_overrides={name: SkillLifecycleMode.BOUNDED for name, _ in _MANUALS.values()},
         ),
-        # These skills are plain manual text with no scripts or extra resources attached, and
-        # bounded lifecycle already evicts the previous manual on load, so nothing else is needed.
-        tool_filter=["load_skill"],
+        # Plain text skills with no scripts or resources. `unload_skill` lets the model drop a persistent crop
+        # skill it is done with, so a long conversation doesn't keep carrying every sheet it ever opened.
+        tool_filter=["load_skill", "unload_skill"],
     )

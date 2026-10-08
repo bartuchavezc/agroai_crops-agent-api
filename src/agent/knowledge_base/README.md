@@ -41,12 +41,20 @@ contenido) va inyectado en el system prompt vía `SkillDiscoveryMode.EAGER` — 
 que el resto de `_static_instruction` — y el modelo llama a la tool `load_skill` con el manual que
 le parezca más relevante a la pregunta del usuario, recién ahí trayendo el texto completo.
 
-`SkillLifecycleConfig(default_mode=BOUNDED, max_active_skills=1)` hace que cargar un manual
-nuevo desaloje automáticamente al anterior — no hace falta que el agente se acuerde de
-descargarlo. El desalojo no borra nada de la conversación persistida (queda para el historial),
-pero el propio request-processor de ADK reescribe, en cada turno posterior, la respuesta vieja de
-`load_skill` por un aviso corto ("este manual ya no está cargado") antes de mandarla al modelo —
-así el manual no queda pesando en cada turno siguiente solo porque se cargó una vez.
+### Capas y ciclo de vida de los skills
+
+Dos capas con reglas distintas (`specific_manuals_toolset()` en `knowledge_skills.py`):
+
+| Capa | Skills | Ciclo de vida | Por qué |
+|---|---|---|---|
+| **Tipo de campo** | los manuales (`manual-horticultura`, `huerta-organica`; más adelante granos, vid, flores) | `BOUNDED`, `max_active_skills=1` | Son enormes (100k+ tokens) y un campo es de un solo tipo: cargar otro desaloja al anterior |
+| **Cultivo** | `ficha-<cultivo>` y `plagas-<cultivo>` | `PERSISTENT`: sin tope, nunca se desalojan solos | Una consulta por un cajón o parcela involucra varios cultivos a la vez, y el usuario suele tener varios. Son chicos (~5k tokens) |
+
+El modelo suelta con `unload_skill` los de cultivo que ya no usa. Para que `unload_skill` exista y para que
+ADK reescriba, en los turnos posteriores, la respuesta vieja de `load_skill` por un aviso corto
+(en vez de reenviar el texto completo en cada turno), hay que tener encendido el flag experimental
+`SKILL_LIFECYCLE` de ADK, que viene apagado: `specific_manuals_toolset()` lo enciende con
+`override_feature_enabled`.
 
 Archivos:
 - `00_manual_horticultura.md` — Manual de Horticultura, 1er año (INTA / Ministerio de
@@ -93,6 +101,25 @@ De dónde salen los datos:
 - Para fitosanitarios las fichas priorizan el manejo cultural y biológico. Como mucho mencionan
   opciones de bajo impacto (azufre, cobre, Bt, jabón potásico), sin dosis, y remiten a los productos
   registrados en SENASA.
+
+
+### specific/plagas/
+
+Una **guía de identificación de plagas y enfermedades por cultivo** (`<slug>.md`, mismo slug que la ficha),
+expuesta como skill `plagas-<slug>`. Se arma con `_plantilla.md` y sigue su estructura fija: diagnóstico rápido
+por síntoma, hongos y oomicetos, bacterias, virus, nematodos, insectos y ácaros, problemas menos frecuentes,
+enemigos naturales y claves para el agente; una entrada por problema (reconocimiento, daño, ciclo y condiciones,
+monitoreo, manejo cultural y biológico, presencia).
+
+Reglas: **sin productos, dosis, plazos ni umbrales de una región** — eso sale de las tablas de productos
+(`phyto_products` / `phyto_product_uses`) y de la búsqueda web con fuente. Síntesis propia en español a partir de
+las fuentes, no traducción literal. La ficha del cultivo (`cultivos/<slug>.md`) sigue teniendo su resumen de
+plagas y enfermedades (secciones 10–11); si existe la guía, la descripción de la ficha manda a cargarla también.
+
+Primera guía: `tomate.md`, a partir de UC IPM (identificación y biología, sin las tablas de plaguicidas, que son
+de California) más *Tuta absoluta* desde las fuentes de INTA de la ficha. Texto crudo de UC IPM para redactar las
+siguientes: `scripts/ucipm_to_text.py` (HTML en `raw_data/html/<cultivo>/` → `raw_data/text/<cultivo>/`).
+`tests/unit/test_knowledge_skills.py` verifica secciones, ausencia de dosis y que cada guía tenga su ficha.
 
 ## inputs/ (pendiente, no existe todavía como carpeta de manuales)
 
