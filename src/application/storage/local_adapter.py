@@ -61,9 +61,10 @@ class LocalFileRepository:
 
     def _write(self, namespace: str, identifier: str, data: bytes, metadata: Dict[str, Any]) -> None:
         validate_identifier(identifier)
+        meta_identifier = validate_identifier(f"{identifier}.meta.json")
         self._dir(namespace)
         self._inside(namespace, identifier).write_bytes(data)
-        self._inside(namespace, f"{identifier}.meta.json").write_text(json.dumps(metadata))
+        self._inside(namespace, meta_identifier).write_text(json.dumps(metadata))
 
     async def save_file(
         self, namespace: str, file_name: Optional[str], file_data: bytes, content_type: Optional[str] = None
