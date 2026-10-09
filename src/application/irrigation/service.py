@@ -18,6 +18,7 @@ from src.application.farm.service import FarmService
 from src.providers.weather.service import WeatherService
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
+from src.shared.domain.locale import today_in
 from src.shared.utils.errors import InvalidInputError
 
 from .penman_monteith import build_et0_inputs, reference_et0_mm
@@ -26,6 +27,29 @@ from .schemas import CycleIrrigation, FieldIrrigationResult, IrrigationStatus
 logger = logging.getLogger(__name__)
 
 RECENT_IRRIGATION_WINDOW_DAYS = 3
+FORECAST_HORIZON_DAYS = 7
+DEFICIT_THRESHOLD_MM = 2.0  # the same net balance the `irrigation_deficit` rule alerts on
+MAX_BANKED_MM = 25.0  # what a root zone holds at most: heavier rain than this runs off or drains
+
+
+def next_irrigation(
+    net_mm: float, etc_mm: float, status: IrrigationStatus, rain_mm_by_day: list[float], today: date
+) -> tuple[Optional[date], Optional[float]]:
+    """When the water balance next crosses the deficit threshold, and how much to apply then.
+
+    `net_mm` is today's balance (crop demand minus what was irrigated recently), `rain_mm_by_day` the forecast rain
+    starting today. If watering is already due, it is today. Otherwise the balance grows by the demand each day and
+    shrinks with the rain; the demand of the future days is taken equal to today's (there is no ET0 forecast).
+    """
+    if status == "regar":
+        return today, round(max(net_mm, 0.0), 1)
+    balance = net_mm - (rain_mm_by_day[0] if rain_mm_by_day else 0.0)
+    for offset in range(1, FORECAST_HORIZON_DAYS):
+        rain = rain_mm_by_day[offset] if offset < len(rain_mm_by_day) else 0.0
+        balance = max(balance + etc_mm - rain, -MAX_BANKED_MM)
+        if balance > DEFICIT_THRESHOLD_MM:
+            return today + timedelta(days=offset), round(balance, 1)
+    return None, None
 
 
 def _irrigation_mm(events, area_m2: Optional[float], crop_cycle_id: Optional[UUID] = None) -> float:
@@ -64,12 +88,14 @@ class EvapotranspirationService:
         weather_service: WeatherService,
         alert_service: AlertService,
         rules_engine: RulesEngine,
+        field_rules=None,
     ):
         self.farm = farm_service
         self.farm_repo = farm_repository
         self.weather = weather_service
         self.alerts = alert_service
         self.rules = rules_engine
+        self.field_rules = field_rules  # FieldAlertRulesService: what each field switched off or tuned
 
     async def _et0_and_rain(self, latitude: float, longitude: float) -> tuple[Optional[float], float]:
         daily = await self.weather.daily_forecast(latitude, longitude, 1)
@@ -89,12 +115,25 @@ class EvapotranspirationService:
         rain_mm = today_forecast.precipitation_mm if today_forecast and today_forecast.precipitation_mm else 0.0
         return et0, rain_mm
 
-    def _status_for(self, net_mm: float, rain_forecast_mm: float) -> tuple[IrrigationStatus, str]:
-        rain_rules = self.rules.evaluate({"precipitation_mm": rain_forecast_mm, "date": "hoy"}, categories=["forecast"])
+    async def _rain_by_day(self, latitude: float, longitude: float) -> list[float]:
+        """Forecast rain (mm) per day starting today; empty if the forecast isn't available."""
+        try:
+            daily = await self.weather.daily_forecast(latitude, longitude, FORECAST_HORIZON_DAYS)
+        except Exception:
+            logger.exception("Daily forecast unavailable for the irrigation outlook")
+            return []
+        return [d.precipitation_mm or 0.0 for d in daily]
+
+    def _status_for(
+        self, net_mm: float, rain_forecast_mm: float, overrides: Optional[dict] = None
+    ) -> tuple[IrrigationStatus, str]:
+        rain_rules = self.rules.evaluate(
+            {"precipitation_mm": rain_forecast_mm, "date": "hoy"}, categories=["forecast"], overrides=overrides
+        )
         heavy_rain = next((r for r in rain_rules if r.rule_id == "forecast_heavy_rain"), None)
         if heavy_rain:
             return "no_regar_lluvia", heavy_rain.message
-        matches = self.rules.evaluate({"net_mm": net_mm}, categories=["irrigation"])
+        matches = self.rules.evaluate({"net_mm": net_mm}, categories=["irrigation"], overrides=overrides)
         if matches:
             return ("regar" if matches[0].rule_id == "irrigation_deficit" else "cubierto"), matches[0].message
         return "cubierto", "Riego cubierto."
@@ -105,6 +144,8 @@ class EvapotranspirationService:
             raise InvalidInputError(f"Field '{field.name}' has no coordinates; irrigation guidance needs one.")
 
         et0, rain_forecast_mm = await self._et0_and_rain(field.latitude, field.longitude)
+        rain_by_day = await self._rain_by_day(field.latitude, field.longitude)
+        overrides = await self.field_rules.overrides(field_id) if self.field_rules else {}
         since = utcnow() - timedelta(days=RECENT_IRRIGATION_WINDOW_DAYS)
         irrigation_events = await self.farm.list_events(
             actor, field_id=field_id, event_type="irrigation", since=since, limit=200
@@ -115,7 +156,7 @@ class EvapotranspirationService:
 
         cycles: list[CycleIrrigation] = []
         kc_values: list[float] = []
-        today = date.today()
+        today = today_in(actor.timezone)
         for cycle in active_cycles:
             crop_master = await self.farm.get_crop_master(actor, cycle.crop_master_id)
             progress = _cycle_progress_pct(cycle, crop_master, today)
@@ -128,7 +169,8 @@ class EvapotranspirationService:
             etc_mm = round(et0 * kc, 1)
             recent = _irrigation_mm(irrigation_events, field.area_m2, crop_cycle_id=cycle.id)
             net = round(etc_mm - recent, 1)
-            status, message = self._status_for(net, rain_forecast_mm)
+            status, message = self._status_for(net, rain_forecast_mm, overrides)
+            next_day, suggested = next_irrigation(net, etc_mm, status, rain_by_day, today)
             cycles.append(
                 CycleIrrigation(
                     crop_cycle_id=cycle.id,
@@ -139,6 +181,8 @@ class EvapotranspirationService:
                     net_mm=net,
                     status=status,
                     message=message,
+                    suggested_mm=suggested,
+                    next_irrigation_date=next_day,
                 )
             )
 
@@ -151,13 +195,16 @@ class EvapotranspirationService:
             field_etc = round(et0 * field_kc, 1)
             field_recent = _irrigation_mm(irrigation_events, field.area_m2)
             field_net = round(field_etc - field_recent, 1)
-            status, message = self._status_for(field_net, rain_forecast_mm)
+            status, message = self._status_for(field_net, rain_forecast_mm, overrides)
             result.field_kc = field_kc
             result.field_etc_mm = field_etc
             result.field_recent_irrigation_mm = field_recent
             result.field_net_mm = field_net
             result.field_status = status
             result.field_message = message
+            result.next_irrigation_date, result.suggested_mm = next_irrigation(
+                field_net, field_etc, status, rain_by_day, today
+            )
         return result
 
     async def run_proactive_alerts(self) -> dict:
@@ -193,7 +240,8 @@ class EvapotranspirationService:
             ]
             field_kc = sum(kcs) / len(kcs)
             net = round(et0 * field_kc - recent, 1)
-            status, message = self._status_for(net, rain_forecast_mm)
+            overrides = await self.field_rules.overrides(field.id) if self.field_rules else {}
+            status, message = self._status_for(net, rain_forecast_mm, overrides)
             if status != "regar":
                 continue
             start = utcnow()

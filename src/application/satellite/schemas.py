@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
 
@@ -29,6 +29,12 @@ class ZoneSatelliteStatus(BaseModel):
     alerts: list[str] = []
     boundary_scoped: bool = False
     pixel_count_caveat: Optional[str] = None
+    # The last clear pass against the one before it (raw NDVI means of the two passes).
+    previous_ndvi_mean: Optional[float] = None
+    previous_date: Optional[date] = None
+    ndvi_delta: Optional[float] = None
+    # A pass counts as clear (used) only with at least this fraction of the field's pixels cloud-free.
+    min_valid_fraction: Optional[float] = None
     # The field's series read against its own history (see application/satellite/analytics.py
     # SeriesAnalysis): last clear pass, every index vs its normal/last year, season stage, radar
     # continuity signal and data-quality caveats.

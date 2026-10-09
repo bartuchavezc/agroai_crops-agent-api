@@ -89,6 +89,35 @@ async def test_series_upsert_status_and_endpoints(client, signup, container):
     assert (await client.get(f"{SAT}/fields/{field_id}/series", headers=other["headers"])).status_code == 404
 
 
+async def test_status_without_refresh_is_a_pure_read_and_carries_the_delta(client, signup, container):
+    owner = await signup("satellite-pure")
+    h = owner["headers"]
+    r = await client.post(f"{FARM}/fields", headers=h, json={"name": "Lote", "latitude": -34.6, "longitude": -58.4})
+    field_id = UUID(r.json()["id"])
+    account_id = UUID(owner["account"]["id"])
+    today = utcnow().date()
+    rows = _seed_rows(today)
+    rows[-1]["ndvi_mean"], rows[-2]["ndvi_mean"] = 0.30, 0.45  # the last clear pass fell 0.15 from the one before
+    await container.application.satellite_series_repository().upsert_many(account_id, field_id, SOURCE_S2, rows)
+
+    async def alert_count():
+        async with container.db_session_factory()() as session:
+            return (await session.execute(
+                text("SELECT count(*) FROM alerts WHERE field_id = :f"), {"f": field_id}
+            )).scalar_one()
+
+    pure = await client.get(f"{SAT}/fields/{field_id}/status?refresh=false", headers=h)
+    assert pure.status_code == 200, pure.text
+    body = pure.json()
+    assert body["ndvi_delta"] == -0.15 and body["previous_ndvi_mean"] == 0.45 and body["previous_date"]
+    assert body["min_valid_fraction"] == 0.6
+    assert body["alerts"]  # the rules are evaluated and returned...
+    assert await alert_count() == 0  # ...but nothing is written
+
+    await client.get(f"{SAT}/fields/{field_id}/status", headers=h)  # the default read keeps its old behavior
+    assert await alert_count() >= 1
+
+
 async def test_usage_ledger_accumulates_per_kind(container):
     repo = container.application.satellite_series_repository()
     before = await repo.usage_this_month()
@@ -98,3 +127,49 @@ async def test_usage_ledger_accumulates_per_kind(container):
     after = await repo.usage_this_month()
     assert math.isclose(after["batch"] - before.get("batch", 0.0), 2.0)
     assert "on_demand" in after
+
+
+async def test_series_with_several_metrics_a_range_and_discarded_passes(client, signup, container):
+    owner = await signup("satellite-multi")
+    h = owner["headers"]
+    r = await client.post(f"{FARM}/fields", headers=h, json={"name": "Lote", "latitude": -34.6, "longitude": -58.4})
+    field_id = UUID(r.json()["id"])
+    account_id = UUID(owner["account"]["id"])
+    today = utcnow().date()
+    rows = _seed_rows(today)
+    # a fully clouded date and a thin one, recorded with their causes
+    rows += [
+        {"observed_on": today - timedelta(days=61), "total_pixels": 120, "valid_pixels": 0, "valid_fraction": 0.0,
+         "cloud_fraction": 0.9, "shadow_fraction": 0.1, "nodata_fraction": 0.0},
+        {"observed_on": today - timedelta(days=56), "total_pixels": 120, "valid_pixels": 30, "valid_fraction": 0.25,
+         "ndvi_mean": 0.4, "ndmi_mean": 0.1, "cloud_fraction": 0.0, "shadow_fraction": 0.7, "nodata_fraction": 0.05},
+    ]
+    keys = set().union(*[row.keys() for row in rows])
+    rows = [{key: row.get(key) for key in keys} for row in rows]
+    await container.application.satellite_series_repository().upsert_many(account_id, field_id, SOURCE_S2, rows)
+
+    start = (today - timedelta(days=90)).isoformat()
+    body = (await client.get(f"{SAT}/fields/{field_id}/series", headers=h, params={
+        "metrics": "ndvi,ndmi", "since": start, "until": (today - timedelta(days=30)).isoformat(),
+        "include_masked": "true",
+    })).json()
+    assert body["metrics"] == ["ndvi", "ndmi"] and set(body["weekly_by_metric"]) == {"ndvi", "ndmi"}
+    assert body["weekly"] == body["weekly_by_metric"]["ndvi"] and body["min_valid_fraction"] == 0.6
+    assert body["until"] == (today - timedelta(days=30)).isoformat()
+    assert max(p["date"] for p in body["passes"]) <= body["until"] and min(p["date"] for p in body["passes"]) >= start
+    by_date = {p["date"]: p for p in body["passes"]}
+    cloudy = by_date[(today - timedelta(days=61)).isoformat()]
+    assert (cloudy["discarded"], cloudy["discard_reason"], cloudy["ndvi_mean"]) == (True, "clouds", None)
+    thin = by_date[(today - timedelta(days=56)).isoformat()]
+    assert (thin["discarded"], thin["discard_reason"]) == (True, "shadow")
+    assert all(p["ndmi_mean"] is not None for p in body["passes"] if not p["discarded"])
+    assert any(not p["discarded"] for p in body["passes"])
+
+    default = (await client.get(f"{SAT}/fields/{field_id}/series", headers=h, params={"since": start})).json()
+    default_dates = {p["date"] for p in default["passes"]}
+    assert (today - timedelta(days=61)).isoformat() not in default_dates  # fully masked: opt-in
+    assert (today - timedelta(days=56)).isoformat() in default_dates  # thin but measured
+    single = (await client.get(f"{SAT}/fields/{field_id}/series?metric=ndre", headers=h)).json()  # old contract
+    assert single["metric"] == "ndre" and single["weekly"] and "passes" in single
+    bad = await client.get(f"{SAT}/fields/{field_id}/series?metrics=ndvi,nope", headers=h)
+    assert bad.status_code in (400, 422)

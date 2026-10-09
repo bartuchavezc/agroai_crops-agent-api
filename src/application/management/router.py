@@ -11,6 +11,7 @@ from src.shared.utils.routing import route_with_and_without_slash as _both
 from .schemas import (
     BudgetEntryCreate,
     BudgetEntryRead,
+    BudgetCategory,
     BudgetEntryUpdate,
     BudgetSummary,
     RoadmapItemCreate,
@@ -101,9 +102,18 @@ async def add_budget_entry(
 @inject
 async def get_budget_summary(
     field_id: IdFilter = None, since: Optional[str] = None, until: Optional[str] = None,
+    cycle_id: Optional[UUID] = None, crop_master_id: Optional[UUID] = None,
     actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT),
 ):
-    return await management.get_budget_summary(actor, field_id=field_id, since=since, until=until)
+    return await management.get_budget_summary(
+        actor, field_id=field_id, since=since, until=until, cycle_id=cycle_id, crop_master_id=crop_master_id
+    )
+
+
+@router.get("/budget/categories", response_model=List[BudgetCategory], summary="Budget Categories")
+@inject
+async def budget_categories(actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT)):
+    return management.budget_categories(actor)
 
 
 @router.put("/budget/{entry_id}", response_model=BudgetEntryRead, summary="Update Budget Entry")

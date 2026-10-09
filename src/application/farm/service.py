@@ -444,6 +444,8 @@ class FarmService:
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
         limit: int = 50,
+        zone_id: Optional[UUID] = None,
+        before: Optional[datetime] = None,
     ) -> list[FieldEventRead]:
         items = await self.repo.list_events(
             actor.account_id,
@@ -453,6 +455,8 @@ class FarmService:
             since=since,
             until=until,
             limit=min(max(limit, 1), 500),
+            zone_id=zone_id,
+            before=before,
         )
         return [FieldEventRead.model_validate(e) for e in items]
 
@@ -524,6 +528,7 @@ class FarmService:
                 ActiveCycleSummary(
                     id=cycle.id,
                     crop_name=crop.name,
+                    crop_i18n=crop.i18n or {},
                     variety=crop.variety,
                     status=cycle.status,
                     planting_date=cycle.planting_date,

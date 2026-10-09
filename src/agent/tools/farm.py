@@ -60,14 +60,18 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def list_recent_events(
-        field: Optional[str] = None, event_type: Optional[str] = None, days: int = 14, limit: int = 30
+        field: Optional[str] = None, event_type: Optional[str] = None, days: int = 14, limit: int = 30,
+        zone: Optional[str] = None,
     ) -> dict:
         """List registered field events (irrigation, sowing, treatments, sightings, harvests...)
-        from the last `days` days."""
-        field_id = (await resolve_field(deps, ctx, field)).id if field else None
+        from the last `days` days. zone: only that zone's, e.g. 'cantero 3' (needs the field)."""
+        target = await resolve_field(deps, ctx, field) if (field or zone) else None
+        field_id = target.id if target else None
+        zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
         events = await deps.farm.list_events(
             ctx.actor,
             field_id=field_id,
+            zone_id=zone_id,
             event_type=event_type,
             since=utcnow() - timedelta(days=max(1, min(days, 365))),
             limit=limit,
@@ -266,8 +270,10 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         growth_period_days: Optional[int] = None,
         planting_season: Optional[str] = None,
         harvest_season: Optional[str] = None,
+        names_by_locale: Optional[dict[str, str]] = None,
     ) -> dict:
-        """Add a crop/variety to this account's catalog when find_crop_in_catalog has no suitable entry."""
+        """Add a crop/variety to this account's catalog when find_crop_in_catalog has no suitable entry.
+        names_by_locale: what it is called elsewhere, e.g. {"es-MX": "jitomate"}, so it is found by either name."""
         crop = await deps.farm.create_crop_master(
             ctx.actor,
             CropMasterCreate(
@@ -278,6 +284,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 growth_period_days=growth_period_days,
                 planting_season=planting_season,
                 harvest_season=harvest_season,
+                i18n=names_by_locale or {},
             ),
         )
         return {"created_crop": compact(crop)}
@@ -292,11 +299,16 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         expected_harvest_date: Optional[str] = None,
         notes: Optional[str] = None,
         zone: Optional[str] = None,
+        plant_count: Optional[int] = None,
+        expected_yield_kg: Optional[float] = None,
+        expected_price: Optional[float] = None,
     ) -> dict:
         """Start a crop cycle (a crop planted/planned in a field). Resolves the crop from the catalog by name,
         adding it to the account catalog if missing. status: planned|planted|growing. Dates YYYY-MM-DD.
         If expected_harvest_date is omitted it is estimated from the crop's growth period.
-        zone: the field's zone it grows in, e.g. 'cantero 3' or 'invernadero 1' (see list_zones / create_zone)."""
+        zone: the field's zone it grows in, e.g. 'cantero 3' or 'invernadero 1' (see list_zones / create_zone).
+        plant_count, expected_yield_kg, expected_price (per kg): optional, they feed the cost per plant and the
+        break-even in get_budget_summary."""
         target = await resolve_field(deps, ctx, field)
         zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
         matches = await deps.farm.find_crop_masters(ctx.actor, crop_name, variety)
@@ -322,6 +334,9 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 planting_date=planted,
                 expected_harvest_date=expected,
                 notes=notes,
+                plant_count=plant_count,
+                expected_yield_kg=expected_yield_kg,
+                expected_price=expected_price,
             ),
         )
         return {

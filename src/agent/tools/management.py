@@ -177,12 +177,16 @@ def management_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def get_budget_summary(
-        field: Optional[str] = None, since: Optional[str] = None, until: Optional[str] = None
+        field: Optional[str] = None, since: Optional[str] = None, until: Optional[str] = None,
+        crop_cycle_id: Optional[str] = None,
     ) -> dict:
         """Totals (gastos/ingresos/balance) by category, for one field ("ninguno" = entries with no field) or
-        the whole account. Gives real substance to "are we meeting our goals" — cost vs. harvest."""
+        the whole account. Gives real substance to "are we meeting our goals" — cost vs. harvest.
+        crop_cycle_id: one crop cycle's id; adds cost per plant, break-even (kg) and expected margin when the cycle
+        has plant count, expected yield and price loaded (null otherwise)."""
         summary = await deps.management.get_budget_summary(
-            ctx.actor, field_id=await r.field_filter(field), since=since, until=until
+            ctx.actor, field_id=await r.field_filter(field), since=since, until=until,
+            cycle_id=UUID(crop_cycle_id) if crop_cycle_id else None,
         )
         return compact(summary)
 

@@ -44,3 +44,13 @@ def test_locale_helpers():
     with pytest.raises(ValueError):
         validate_timezone("Mars/Olympus")
     assert all(today_in(tz) for tz in ("America/Mexico_City", "garbage", None))  # bad/missing zone -> default
+
+
+def test_colombia_has_its_own_voice_knowledge_and_sources():
+    co = voice_for("CO")
+    assert "tuteo" in co and "ICA" in co and "ahuyama" in co and "COP" in co and co != voice_for("AR")
+    assert "español de Colombia (tuteo, sin voseo)" in localize("Respondé en español rioplatense.", "CO")
+    modules = modules_for("CO", "guardian", set(), [])
+    assert "## Agronomía general (Colombia)" in modules and "piso térmico" in modules
+    assert "Agronomía general (Argentina)" not in modules and "Agronomía general (México)" not in modules
+    assert default_timezone("CO") == "America/Bogota" and default_locale("CO") == "es-CO"

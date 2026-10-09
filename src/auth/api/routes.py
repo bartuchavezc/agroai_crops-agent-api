@@ -8,6 +8,7 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from ..services.account_service import AccountService
+from src.shared.domain.locale import default_currency
 from src.shared.utils.errors import UserAlreadyExistsError
 
 from ..domain.models import ROLE_OWNER
@@ -73,7 +74,7 @@ async def signup(
         or " ".join(p for p in (signup_req.first_name, signup_req.last_name) if p)
         or signup_req.email.split("@")[0]
     )
-    account = await account_service.create_account(name=account_name)
+    account = await account_service.create_account(name=account_name, currency=default_currency(signup_req.country))
     try:
         user = await user_service.create_user(
             user_create_dto=UserCreate(

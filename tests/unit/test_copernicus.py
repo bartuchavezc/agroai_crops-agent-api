@@ -125,3 +125,29 @@ def test_bounds_builds_a_closed_geojson_polygon_from_lat_lon_pairs():
 def test_bounds_ignores_a_too_short_polygon():
     bounds = CopernicusAdapter._bounds(-34.6, -58.4, [(-34.60, -58.40), (-34.61, -58.40)])
     assert "bbox" in bounds
+
+
+def _quality_interval(day, cloud, shadow, unusable, samples=100, no_data=0, geometry=None):
+    def band(mean):
+        stats = {"mean": mean, "min": 0, "max": 1, "stDev": 0.1, "sampleCount": samples, "noDataCount": no_data}
+        if geometry is not None:
+            stats["geometryPixelCount"] = geometry
+        return {"stats": stats}
+
+    bands = {"B0": band(cloud), "B1": band(shadow), "B2": band(unusable)}
+    return {"interval": {"from": f"{day}T00:00:00Z"}, "outputs": {"scl": {"bands": bands}}}
+
+
+def test_quality_parses_the_share_of_each_cause_per_date():
+    payload = {"data": [
+        _quality_interval("2026-01-05", 0.62, 0.1, 0.0),
+        _quality_interval("2026-01-10", 0.0, 0.0, 0.0),
+        _quality_interval("2026-01-15", 1.2, -0.1, "NaN"),  # out-of-range values are clamped, NaN is unknown
+        _quality_interval("2026-01-20", 0.5, 0.5, 0.0, samples=100, no_data=100),  # no scene data: dropped
+        {"interval": {"from": "2026-01-25T00:00:00Z"}, "error": {"message": "boom"}, "outputs": {}},
+    ]}
+    rows = CopernicusAdapter._parse_quality(payload)
+    assert [(q.observed_on.day, q.cloud_fraction, q.shadow_fraction, q.nodata_fraction) for q in rows] == [
+        (5, 0.62, 0.1, 0.0), (10, 0.0, 0.0, 0.0), (15, 1.0, 0.0, None),
+    ]
+    assert rows[0].total_pixels == 100

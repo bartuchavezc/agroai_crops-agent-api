@@ -29,6 +29,7 @@ from src.application.farm.service import FarmService
 from src.application.reports.service import ReportsService
 from src.application.storage.service import StorageService
 from src.auth.services.profile_service import ProfileService
+from src.shared.domain.locale import localized
 from src.shared.domain.actor import Actor
 from src.shared.utils.errors import NotFoundError
 from src.shared.utils.errors import (
@@ -192,14 +193,14 @@ class AgentRunner:
                 modules_for(actor.country, profile_name, crop_families, field_texts),
                 style_for(profile_name),
                 voice_for(actor.country),
-                self._account_structure(overview),
+                self._account_structure(overview, actor.locale),
             )
             if block
         ]
         return "\n\n".join(blocks)
 
     @staticmethod
-    def _account_structure(overview) -> str:
+    def _account_structure(overview, locale: Optional[str] = None) -> str:
         """The account's fields, zones and active crops: slow-changing, so it rides in the system instruction (after
         everything shared) where the API's prefix cache can reuse it turn after turn, instead of being repeated in
         every user message. What changes within a conversation (clock, alerts) stays in `_account_snapshot`."""
@@ -211,7 +212,7 @@ class AgentRunner:
             where = f" en {f.city}" if f.city else ""
             coords = f" [{f.latitude:.3f}, {f.longitude:.3f}]" if f.latitude is not None else " [sin coordenadas]"
             crops = ", ".join(
-                f"{c.crop_name}{' ' + c.variety if c.variety else ''} "
+                f"{localized(c.crop_name, c.crop_i18n, locale)}{' ' + c.variety if c.variety else ''} "
                 f"({c.status}{', ' + c.zone_label if c.zone_label else ''})"
                 for c in item.active_cycles
             ) or "sin cultivos activos"
@@ -320,7 +321,7 @@ class AgentRunner:
                 user_id=actor.user_id,
                 country=actor.country,
                 message=message,
-                account_text=f"{self._account_structure(overview)}\n\n{context_snapshot}",
+                account_text=f"{self._account_structure(overview, actor.locale)}\n\n{context_snapshot}",
                 recent=recent,
                 tools={t.__name__: t for t in tools},
                 skills=skill_catalog(),

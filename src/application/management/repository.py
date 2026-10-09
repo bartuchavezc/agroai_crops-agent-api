@@ -4,7 +4,8 @@ from uuid import UUID
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.auth.domain.models import User
+from src.application.farm.models import CropCycle
+from src.auth.domain.models import Account, User
 
 from .models import BudgetEntry, RoadmapItem, ShoppingListItem
 
@@ -105,14 +106,26 @@ class ManagementRepository:
     async def delete_shopping_item(self, account_id: UUID, item_id: UUID) -> bool:
         return await self._soft_delete(ShoppingListItem, account_id, item_id)
 
+    async def account_currency(self, account_id: UUID) -> str:
+        async with self.session_factory() as session:
+            return (await session.execute(select(Account.currency).where(Account.id == account_id))).scalar() or "ARS"
+
     # ---------- budget ----------
 
     async def list_budget_entries(
         self, account_id: UUID, field_id: IdFilter = None,
         since: Optional[str] = None, until: Optional[str] = None, type: Optional[str] = None,
+        crop_cycle_id: Optional[UUID] = None, crop_master_id: Optional[UUID] = None,
     ) -> Sequence[BudgetEntry]:
         stmt = select(BudgetEntry).where(BudgetEntry.account_id == account_id, BudgetEntry.deleted_at.is_(None))
         stmt = _where_id(stmt, BudgetEntry.field_id, field_id)
+        if crop_cycle_id:
+            stmt = stmt.where(BudgetEntry.crop_cycle_id == crop_cycle_id)
+        if crop_master_id:
+            cycles = select(CropCycle.id).where(
+                CropCycle.account_id == account_id, CropCycle.crop_master_id == crop_master_id
+            )
+            stmt = stmt.where(BudgetEntry.crop_cycle_id.in_(cycles))
         if since:
             stmt = stmt.where(BudgetEntry.date >= since)
         if until:

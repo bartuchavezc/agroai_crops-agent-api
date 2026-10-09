@@ -3,7 +3,7 @@ from typing import Optional
 
 from src.auth.services.profile_calculator import ProfileType
 
-from . import knowledge_ar, knowledge_mx
+from . import knowledge_ar, knowledge_co, knowledge_mx
 
 
 def modules_for(country: Optional[str], profile: Optional[ProfileType], crop_families: set[str],
@@ -11,6 +11,8 @@ def modules_for(country: Optional[str], profile: Optional[ProfileType], crop_fam
     """Facts for the account: the regional module set of its country, plus what its crops call for."""
     if country == "MX":
         return knowledge_mx.modules_for_account_mx(profile, crop_families, field_texts)
+    if country == "CO":
+        return knowledge_co.modules_for_account_co(profile, crop_families, field_texts)
     return knowledge_ar.modules_for_account(profile, crop_families, field_texts)
 
 

@@ -2,6 +2,7 @@
 Reports persistence, scoped by account.
 """
 import uuid
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -18,7 +19,10 @@ from .schemas import Report, ReportCreate, ReportUpdate
 
 class ReportModel(Base):
     __tablename__ = "reports"
-    __table_args__ = (Index("ix_reports_account_created", "account_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_reports_account_created", "account_id", "created_at"),
+        Index("ix_reports_zone_created", "zone_id", "created_at"),
+    )
 
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id = Column(PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
@@ -73,6 +77,9 @@ class SQLAlchemyReportsRepository:
         skip: int = 0,
         limit: int = 100,
         zone_id: Optional[UUID] = None,
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+        status: Optional[str] = None,
     ) -> List[Report]:
         stmt = select(ReportModel).where(ReportModel.account_id == account_id)
         if field_id:
@@ -89,6 +96,12 @@ class SQLAlchemyReportsRepository:
             stmt = stmt.where(ReportModel.zone_id == zone_id)
         if report_type:
             stmt = stmt.where(ReportModel.report_type == report_type)
+        if status:
+            stmt = stmt.where(ReportModel.status == status)
+        if since:
+            stmt = stmt.where(ReportModel.created_at >= since)
+        if until:
+            stmt = stmt.where(ReportModel.created_at <= until)
         stmt = stmt.order_by(ReportModel.created_at.desc()).offset(skip).limit(limit)
         async with self.session_factory() as session:
             return [Report.model_validate(r) for r in (await session.execute(stmt)).scalars().all()]

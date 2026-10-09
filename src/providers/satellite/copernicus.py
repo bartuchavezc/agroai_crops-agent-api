@@ -7,11 +7,11 @@ free tier (10k processing units/month). Calls:
     was cloud-free; Sentinel-1 GRD gives VV/VH radar backscatter for the cloudy stretches. One request
     covers up to a year of passes, so a multi-year history is a handful of calls per field. Zone/field
     level signal (10m/pixel), not per-plant precision.
-  - `.render_map(bbox)` — the Process API, only called when an actual image is needed for the chat
-    mini-map/field-view attachment; returns a small colorized-NDVI PNG, never a raw tile.
-  - `.true_color_map(bbox)` — same Process API, true-color instead of NDVI-colorized, used only as the
-    base image a user draws their field boundary over (NDVI coloring would obscure the real visual
-    landmarks needed for that).
+  - `.s2_chip(...)` — the Process API, once per pass (the daily job and the backfill): the field's pixels
+    (bands + scene classification) as a small raster that we store. Every map the app shows is drawn from
+    those stored chips (application/satellite/chips.py), so showing imagery never calls Copernicus.
+  - `.true_color_map(bbox)` — the Process API, true color, used only as the base image a user draws their
+    field boundary over, before the field has any stored imagery.
 
 Every call reports the processing units it spent (the `x-processingunits-spent` response header) so the
 caller can track the monthly budget. Requires COPERNICUS_CLIENT_ID/COPERNICUS_CLIENT_SECRET (registered
@@ -77,6 +77,30 @@ function evaluatePixel(s) {
 }
 """
 
+# Why a pass lost pixels: a second Statistical API request over the same intervals, whose mask is "the scene has
+# data here" (not "and it is clear"), so the share of each class among the field's pixels can be read: B0 clouds
+# (SCL 8 medium and 9 high probability, 10 thin cirrus), B1 cloud shadow (3), B2 no usable surface (0 no data,
+# 1 saturated/defective, 11 snow). The means are fractions in [0, 1]. Kept apart from the indices request so a
+# problem here can never cost the series itself.
+_S2_QUALITY_EVALSCRIPT = """
+//VERSION=3
+function setup() {
+  return {
+    input: [{ bands: ["SCL", "dataMask"] }],
+    output: [
+      { id: "scl", bands: 3, sampleType: "FLOAT32" },
+      { id: "dataMask", bands: 1 },
+    ],
+  };
+}
+function evaluatePixel(s) {
+  let cloud = (s.SCL == 8 || s.SCL == 9 || s.SCL == 10) ? 1 : 0;
+  let shadow = s.SCL == 3 ? 1 : 0;
+  let unusable = (s.SCL == 0 || s.SCL == 1 || s.SCL == 11) ? 1 : 0;
+  return { scl: [cloud, shadow, unusable], dataMask: [s.dataMask] };
+}
+"""
+
 # Sentinel-1 GRD (radar, sees through clouds): terrain-flattened gamma0 backscatter, linear units. The
 # aggregation is done in linear power (averaging dB values is biased); dB and the VH/VV cross-ratio are
 # derived in Python. RVI (4·VH/(VV+VH)) is computed per pixel. Only a continuity signal for cloudy
@@ -105,48 +129,23 @@ function evaluatePixel(s) {
 S2_INDICES = ("ndvi", "ndre", "ndmi", "evi", "ndwi")
 
 
-# Colorized NDVI map (the standard Sentinel Hub "NDVI" script: red/orange = bare soil or stressed
-# vegetation, yellow = moderate, green = dense healthy vegetation) — a readable field-health map instead
-# of a plain aerial photo, since that's what's actually useful for "how's the zone doing", not the raw
-# true-color image.
-_NDVI_COLORMAP_EVALSCRIPT = """
+# One pass as a small raster: the reflectances the layers need (x 10000), the scene classification and the data
+# mask, 8 unsigned 16-bit bands in the order of application/satellite/chips.BANDS. B8A and B11 are native 20 m and
+# come resampled to the request's pixel size. Nothing is computed here: the indices are derived from the stored
+# bands, so a new layer never needs a new request.
+_S2_CHIP_EVALSCRIPT = """
 //VERSION=3
 function setup() {
-  return { input: ["B04", "B08", "dataMask"], output: { bands: 4 } };
+  return {
+    input: [{ bands: ["B02", "B03", "B04", "B08", "B8A", "B11", "SCL", "dataMask"] }],
+    output: { bands: 8, sampleType: "UINT16" },
+  };
 }
-
-const ramps = [
-  [-0.5, 0x0c0c0c],
-  [-0.2, 0xbfbfbf],
-  [-0.1, 0xdbdbdb],
-  [0, 0xeaeaea],
-  [0.025, 0xfff9cc],
-  [0.05, 0xede8b5],
-  [0.075, 0xddd89b],
-  [0.1, 0xccc682],
-  [0.125, 0xbcb76b],
-  [0.15, 0xafc160],
-  [0.175, 0xa3cc59],
-  [0.2, 0x91bf51],
-  [0.25, 0x7fb247],
-  [0.3, 0x70a33f],
-  [0.35, 0x609635],
-  [0.4, 0x4f892d],
-  [0.45, 0x3f7c23],
-  [0.5, 0x306d1c],
-  [0.55, 0x216011],
-  [0.6, 0x0f540a],
-  [1, 0x004400],
-];
-const visualizer = new ColorRampVisualizer(ramps);
-
-function evaluatePixel(samples) {
-  let ndvi = index(samples.B08, samples.B04);
-  let imgVals = visualizer.process(ndvi);
-  return imgVals.concat(samples.dataMask);
+function evaluatePixel(s) {
+  const r = (v) => Math.max(0, Math.min(65535, Math.round(v * 10000)));
+  return [r(s.B02), r(s.B03), r(s.B04), r(s.B08), r(s.B8A), r(s.B11), s.SCL, s.dataMask];
 }
 """
-
 
 # Plain true-color RGB — used only as a base image for the user to draw their field boundary over, where
 # NDVI's color ramp would hide the real visual landmarks (fences, trees, structures) needed for that.
@@ -183,6 +182,29 @@ class S2Observation:
     evi_mean: Optional[float] = None
     evi_std: Optional[float] = None
     ndwi_mean: Optional[float] = None
+    # Share of the field lost to each cause (filled in by a second request; None when it wasn't made).
+    cloud_fraction: Optional[float] = None
+    shadow_fraction: Optional[float] = None
+    nodata_fraction: Optional[float] = None
+
+
+@dataclass
+class RawChip:
+    """One pass's pixels as Copernicus returned them, and what the request cost."""
+
+    pixels: object  # (bands, height, width) uint16
+    processing_units: Optional[float] = None
+
+
+@dataclass
+class S2Quality:
+    """Share of the field's pixels lost to each cause on one Sentinel-2 date (each in [0, 1])."""
+
+    observed_on: date
+    total_pixels: Optional[int]
+    cloud_fraction: Optional[float]
+    shadow_fraction: Optional[float]
+    nodata_fraction: Optional[float]
 
 
 @dataclass
@@ -393,6 +415,34 @@ class CopernicusAdapter:
 
         return await self._series(body, self._parse_s2, date_from, date_to)
 
+    async def s2_quality(
+        self,
+        latitude: float,
+        longitude: float,
+        date_from: date,
+        date_to: date,
+        polygon: Optional[list[tuple[float, float]]] = None,
+    ) -> Optional[SeriesResult]:
+        """Per Sentinel-2 date, what share of the field was cloud, shadow or unusable (`S2Quality`). Includes the
+        dates the indices request drops for having no clear pixel at all. Same chunking and cost accounting as
+        the series; None when every request fails."""
+        bounds = self._bounds(latitude, longitude, polygon)
+
+        def body(start: date, end: date) -> dict:
+            return {
+                "input": {"bounds": bounds, "data": [{"type": _COLLECTION, "dataFilter": {}}]},
+                "aggregation": {
+                    "timeRange": self._time_range(start, end),
+                    "aggregationInterval": {"of": "P1D"},
+                    "evalscript": _S2_QUALITY_EVALSCRIPT,
+                    "resx": 10,
+                    "resy": 10,
+                },
+                "calculations": {"scl": {"statistics": {"default": {}}}},
+            }
+
+        return await self._series(body, self._parse_quality, date_from, date_to)
+
     async def s1_series(
         self,
         latitude: float,
@@ -535,6 +585,23 @@ class CopernicusAdapter:
         return observations
 
     @classmethod
+    def _parse_quality(cls, payload: dict) -> list[S2Quality]:
+        rows = []
+        for interval in (payload or {}).get("data") or []:
+            observed_on = cls._interval_date(interval)
+            outputs = interval.get("outputs") or {}
+            if observed_on is None or interval.get("error") or "scl" not in outputs:
+                continue
+            bands = [cls._stats(outputs, "scl", f"B{i}") for i in range(3)]
+            total, scene, _ = cls._pixels(bands[0])
+            if not scene:  # no scene data over the field that day
+                continue
+            means = [cls._num(b.get("mean")) for b in bands]
+            rows.append(S2Quality(observed_on, total, *(None if m is None else round(min(max(m, 0.0), 1.0), 4)
+                                                       for m in means)))
+        return rows
+
+    @classmethod
     def _parse_s1(cls, payload: dict, orbit_direction: Optional[str] = None) -> list[S1Observation]:
         observations = []
         for interval in (payload or {}).get("data") or []:
@@ -566,9 +633,10 @@ class CopernicusAdapter:
         return observations
 
     async def _process_image(
-        self, latitude: float, longitude: float, time_from: str, time_to: str, evalscript: str, size_px: int
+        self, latitude: float, longitude: float, time_from: str, time_to: str, evalscript: str, size_px: int,
+        max_cloud: int = 40,
     ) -> Optional[RenderedImage]:
-        """Shared Process API call for render_map/true_color_map — same bbox, timeRange and error
+        """Shared Process API call for true_color_map — same bbox, timeRange and error
         handling, only the evalscript (and therefore the image's styling) differs.
 
         time_from/time_to must be a wide-enough window (see ZoneSatelliteService, currently 30 days):
@@ -586,7 +654,7 @@ class CopernicusAdapter:
                         "type": _COLLECTION,
                         "dataFilter": {
                             "timeRange": {"from": f"{time_from}T00:00:00Z", "to": f"{time_to}T23:59:59Z"},
-                            "maxCloudCoverage": 40,
+                            "maxCloudCoverage": max_cloud,
                             "mosaickingOrder": "leastCC",
                         },
                     }
@@ -613,19 +681,73 @@ class CopernicusAdapter:
             logger.error(f"Copernicus process HTTP error: {e}")
             return None
 
-    async def render_map(
-        self, latitude: float, longitude: float, time_from: str, time_to: str, size_px: int = 512
-    ) -> Optional[RenderedImage]:
-        """Colorized NDVI PNG for the chat mini-map / field satellite view. Only called on demand (see
-        application/satellite/service.py), never as part of a batch, to keep processing-credit use low."""
-        return await self._process_image(latitude, longitude, time_from, time_to, _NDVI_COLORMAP_EVALSCRIPT, size_px)
+    async def s2_chip(self, bbox: list[float], width: int, height: int, day: date) -> Optional["RawChip"]:
+        """The Sentinel-2 pixels of `day` over `bbox` (any scene that day, whatever its cloud estimate: the scene
+        classification inside the chip says which pixels are usable). None on failure. `processing_units` is what the
+        request cost."""
+        token = await self._access_token()
+        if not token:
+            return None
+        body = {
+            "input": {
+                "bounds": {"bbox": bbox, "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"}},
+                "data": [{
+                    "type": _COLLECTION,
+                    "dataFilter": {
+                        "timeRange": self._time_range(day, day), "maxCloudCoverage": 100,
+                        "mosaickingOrder": "leastCC",
+                    },
+                }],
+            },
+            "output": {
+                "width": width, "height": height,
+                "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}],
+            },
+            "evalscript": _S2_CHIP_EVALSCRIPT,
+        }
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    _PROCESS_URL, json=body, headers=headers, timeout=aiohttp.ClientTimeout(total=self.timeout)
+                ) as response:
+                    if response.status != 200:
+                        logger.error(f"Copernicus chip error {response.status}: {await response.text()}")
+                        return None
+                    units = _processing_units(response.headers)
+                    payload = await response.read()
+        except (aiohttp.ClientError, TimeoutError) as e:
+            logger.error(f"Copernicus chip HTTP error: {e}")
+            return None
+        pixels = self.decode_chip_tiff(payload, width, height)
+        return RawChip(pixels, units) if pixels is not None else None
+
+    @staticmethod
+    def decode_chip_tiff(payload: bytes, width: int, height: int, bands: int = 8):
+        """(bands, height, width) uint16 from the response's GeoTIFF, or None if it isn't the raster asked for."""
+        import io
+
+        import numpy as np
+        import tifffile
+
+        try:
+            array = tifffile.imread(io.BytesIO(payload))
+        except Exception:  # noqa: BLE001 - an error body or a truncated download
+            logger.error("Copernicus chip: the response is not a readable GeoTIFF")
+            return None
+        if array.ndim == 3 and array.shape == (height, width, bands):
+            array = np.moveaxis(array, -1, 0)
+        if array.shape != (bands, height, width):
+            logger.error(f"Copernicus chip: unexpected raster shape {array.shape}, wanted {(bands, height, width)}")
+            return None
+        return array.astype("<u2")
 
     async def true_color_map(
         self, latitude: float, longitude: float, time_from: str, time_to: str, size_px: int = 512
     ) -> Optional[RenderedImage]:
         """Plain true-color PNG of the same ~500m box — used only as the base image for a user to draw
         their field's real boundary over (see ZoneSatelliteService.render_delineation_base); never cached
-        as a "reading" like render_map's NDVI image, it's a disposable working image."""
+        as a "reading" like the field's maps, it's a disposable working image."""
         return await self._process_image(latitude, longitude, time_from, time_to, _TRUE_COLOR_EVALSCRIPT, size_px)
 
     async def health_check(self) -> dict:

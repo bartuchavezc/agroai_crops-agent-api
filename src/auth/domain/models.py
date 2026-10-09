@@ -28,6 +28,7 @@ class Account(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
+    currency = Column(String(3), nullable=False, default="ARS", server_default="ARS")  # ISO-4217: the books' money
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 

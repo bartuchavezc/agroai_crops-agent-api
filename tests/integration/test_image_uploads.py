@@ -1,8 +1,11 @@
 """Photo uploads: a phone photo goes through untouched by the user and is stored small; oversized bodies and
 decompression bombs are refused before they can exhaust memory."""
 import io
+from uuid import UUID
 
 from PIL import Image
+
+from src.shared.domain.actor import Actor
 
 UPLOAD = "/api/v1/upload/image"
 
@@ -77,3 +80,71 @@ async def test_corrupt_image_with_valid_magic_bytes_is_refused(client, signup):
     user = await signup("corrupt")
     response = await _upload(client, user, b"\xff\xd8\xff\xe0" + b"garbage" * 100)
     assert response.status_code == 415
+
+
+async def test_thumbnails_are_made_once_kept_next_to_the_original_and_deleted_with_it(client, signup, container):
+    user = await signup("thumb")
+    h = user["headers"]
+    out = io.BytesIO()
+    Image.effect_noise((1200, 800), 50).convert("RGB").save(out, format="JPEG")
+    identifier = (await _upload(client, user, out.getvalue())).json()["image_identifier"]
+    url = f"/api/v1/upload/image/{identifier}"
+
+    small = await client.get(url, headers=h, params={"max_side": 320})
+    assert small.status_code == 200 and small.headers["content-type"] == "image/jpeg"
+    assert "max-age" in small.headers["cache-control"]
+    assert Image.open(io.BytesIO(small.content)).size == (320, 213)  # longest side 320, ratio kept
+    assert len(small.content) < len((await client.get(url, headers=h)).content)
+
+    storage = container.application.file_repository()
+    folder = storage.base_path / user["account"]["id"]
+    stem = identifier.rsplit(".", 1)[0]
+    assert (folder / f"{stem}_t320.jpg").is_file()
+    stamp = (folder / f"{stem}_t320.jpg").stat().st_mtime_ns
+    again = await client.get(url, headers=h, params={"max_side": 320})
+    assert again.content == small.content and (folder / f"{stem}_t320.jpg").stat().st_mtime_ns == stamp  # reused
+
+    tiny = await client.get(url, headers=h, params={"max_side": 1})  # clamped to 32
+    assert max(Image.open(io.BytesIO(tiny.content)).size) == 32
+    assert (await client.get(url, headers=h, params={"max_side": 99999})).status_code == 422
+    assert (await client.get(url, headers=h)).headers["content-type"] == "image/jpeg"  # without max_side: the original
+
+    other = await signup("thumb-other")
+    assert (await client.get(url, headers=other["headers"], params={"max_side": 320})).status_code == 404
+
+    actor = Actor(UUID(user["user"]["id"]), UUID(user["account"]["id"]), "owner")
+    assert await container.application.storage_service().delete_image(actor, identifier)
+    assert not list(folder.glob(f"{stem}*"))  # original, metadata and both thumbnails are gone
+
+
+async def test_storage_never_leaves_the_accounts_folder(container, tmp_path):
+    import pytest
+
+    from src.application.storage.local_adapter import LocalFileRepository
+    from src.shared.utils.errors import InvalidInputError
+
+    repo = LocalFileRepository(str(tmp_path / "files"))
+    (tmp_path / "secret.txt").write_text("nope")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "files" / "acct").mkdir()
+    (tmp_path / "files" / "acct" / "link").symlink_to(outside)  # a symlink out of the account's folder
+
+    for bad in ("../secret.txt", "..", "/etc/passwd", "a/b.jpg", "link", ".hidden", "x" * 200):
+        for call in (repo.get_file_data, repo.delete_file, repo.file_exists):
+            with pytest.raises(InvalidInputError):
+                await call("acct", bad)
+        with pytest.raises(InvalidInputError):
+            await repo.save_file_as("acct", bad, b"x")
+    for bad_namespace in ("..", "../files", "a/b", "/etc"):
+        with pytest.raises(InvalidInputError):
+            await repo.save_file(bad_namespace, "a.jpg", b"x")
+
+    name = await repo.save_file("acct", "photo.jpg", b"pixels", "image/jpeg")
+    data, meta = await repo.get_file_data("acct", name)
+    assert data == b"pixels" and meta["content_type"] == "image/jpeg"
+    stem = name.rsplit(".", 1)[0]
+    await repo.save_file_as("acct", f"{stem}_t320.jpg", b"small")
+    assert repo.derived_files("acct", name) == [f"{stem}_t320.jpg"]
+    assert await repo.delete_file("acct", name) and not list((tmp_path / "files" / "acct").glob(f"{stem}*"))
+    assert (tmp_path / "secret.txt").read_text() == "nope" and not list(outside.iterdir())
