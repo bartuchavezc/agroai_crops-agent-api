@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -46,6 +47,9 @@ class ReportsService:
         skip: int = 0,
         limit: int = 100,
         zone_id: Optional[UUID] = None,
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+        status: Optional[str] = None,
     ) -> List[Report]:
         """crop_cycle_id also matches zone tracking reports that covered that cycle."""
         return await self.repo.list(
@@ -56,6 +60,9 @@ class ReportsService:
             skip=skip,
             limit=min(limit, 500),
             zone_id=zone_id,
+            since=since,
+            until=until,
+            status=status,
         )
 
     async def update_report(self, actor: Actor, report_id: UUID, data: ReportUpdate) -> Report:

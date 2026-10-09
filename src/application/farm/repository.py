@@ -1,14 +1,25 @@
 """
 Farm data access. Every query takes account_id; nothing here is reachable across accounts.
 """
+import json
 from datetime import datetime
 from typing import Any, Iterable, Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import Text, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .models import ACTIVE_CROP_CYCLE_STATUSES, CropCycle, CropMaster, Field, FieldEvent, FieldZone
+
+
+def _like_escape(text: str) -> str:
+    """`text` as a literal inside a LIKE pattern (escape character: backslash)."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def json_escape(text: str) -> str:
+    """`text` as it appears between the quotes of a JSON string (jsonb cast to text keeps non-ASCII characters)."""
+    return json.dumps(text, ensure_ascii=False)[1:-1]
 
 
 class FarmRepository:
@@ -130,7 +141,11 @@ class FarmRepository:
     ) -> Sequence[CropMaster]:
         stmt = select(CropMaster).where(self._visible_crop_masters(account_id))
         if query:
-            stmt = stmt.where(or_(CropMaster.name.ilike(f"%{query}%"), CropMaster.variety.ilike(f"%{query}%")))
+            like = f"%{_like_escape(query)}%"
+            stmt = stmt.where(or_(
+                CropMaster.name.ilike(like, escape="\\"), CropMaster.variety.ilike(like, escape="\\"),
+                cast(CropMaster.i18n, Text).ilike(like, escape="\\"),
+            ))
         stmt = stmt.order_by(CropMaster.name, CropMaster.variety).offset(skip).limit(limit)
         async with self.session_factory() as session:
             return (await session.execute(stmt)).scalars().all()
@@ -148,13 +163,17 @@ class FarmRepository:
     async def find_crop_masters_by_name(
         self, account_id: UUID, name: str, variety: Optional[str] = None
     ) -> Sequence[CropMaster]:
+        # The neutral name, or what the crop is called in another country (i18n: {"es-MX": "Jitomate"}).
+        alias = cast(CropMaster.i18n, Text).ilike(f'%"{_like_escape(json_escape(name))}"%', escape="\\")
         stmt = select(CropMaster).where(
-            self._visible_crop_masters(account_id), func.lower(CropMaster.name) == name.lower()
+            self._visible_crop_masters(account_id), or_(func.lower(CropMaster.name) == name.lower(), alias)
         )
         if variety:
-            stmt = stmt.where(CropMaster.variety.ilike(f"%{variety}%"))
-        # Account-specific entries win over global ones.
-        stmt = stmt.order_by(CropMaster.account_id.is_(None), CropMaster.variety)
+            stmt = stmt.where(CropMaster.variety.ilike(f"%{_like_escape(variety)}%", escape="\\"))
+        # The exact neutral name first, then account-specific entries over global ones.
+        stmt = stmt.order_by(
+            func.lower(CropMaster.name) != name.lower(), CropMaster.account_id.is_(None), CropMaster.variety
+        )
         async with self.session_factory() as session:
             return (await session.execute(stmt)).scalars().all()
 
@@ -293,10 +312,16 @@ class FarmRepository:
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
         limit: int = 50,
+        zone_id: Optional[UUID] = None,
+        before: Optional[datetime] = None,
     ) -> Sequence[FieldEvent]:
         stmt = select(FieldEvent).where(FieldEvent.account_id == account_id)
         if field_id:
             stmt = stmt.where(FieldEvent.field_id == field_id)
+        if zone_id:
+            stmt = stmt.where(FieldEvent.zone_id == zone_id)
+        if before:  # paging back in time: the next page starts after the oldest `occurred_at` already received
+            stmt = stmt.where(FieldEvent.occurred_at < before)
         if crop_cycle_id:
             stmt = stmt.where(FieldEvent.crop_cycle_id == crop_cycle_id)
         if event_type:
@@ -305,7 +330,7 @@ class FarmRepository:
             stmt = stmt.where(FieldEvent.occurred_at >= since)
         if until:
             stmt = stmt.where(FieldEvent.occurred_at <= until)
-        stmt = stmt.order_by(FieldEvent.occurred_at.desc()).limit(limit)
+        stmt = stmt.order_by(FieldEvent.occurred_at.desc(), FieldEvent.id.desc()).limit(limit)
         async with self.session_factory() as session:
             return (await session.execute(stmt)).scalars().all()
 

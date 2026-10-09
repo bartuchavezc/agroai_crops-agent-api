@@ -36,10 +36,14 @@ from .schemas import (
     SunMapRead,
 )
 from .service import FarmService
+from .summary import FieldSummary, FieldSummaryService
+from .timeline import TimelineItem, ZoneTimelineService
 
 router = APIRouter(prefix="/farm-management", tags=["Farm Management"])
 
 FARM = Provide["application.farm_service"]
+TIMELINE = Provide["application.zone_timeline_service"]
+SUMMARY = Provide["application.field_summary_service"]
 SATELLITE = Provide["application.satellite_service"]
 
 
@@ -117,6 +121,25 @@ async def create_zone(
     return await farm.create_zone(actor, field_id, body)
 
 
+@router.get("/zones/{zone_id}", response_model=FieldZoneRead, summary="Get a zone")
+@inject
+async def get_zone(zone_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
+    return await farm.get_zone(actor, zone_id)
+
+
+@router.get("/zones/{zone_id}/timeline", response_model=List[TimelineItem], summary="A zone's history in one list")
+@inject
+async def zone_timeline(
+    zone_id: UUID,
+    before: Optional[datetime] = Query(None, description="Page back in time: the `at` of the last item received"),
+    limit: int = Query(50, ge=1, le=200),
+    actor: Actor = Depends(get_actor),
+    timeline: ZoneTimelineService = Depends(TIMELINE),
+):
+    """Field events of the zone, completed analyses (tracking and soil) and reminders that were done, newest first."""
+    return await timeline.timeline(actor, zone_id, before=before, limit=limit)
+
+
 @router.put("/zones/{zone_id}", response_model=FieldZoneRead, summary="Update a zone (owner/tecnico)")
 @inject
 async def update_zone(
@@ -131,6 +154,16 @@ async def delete_zone(zone_id: UUID, actor: Actor = Depends(get_actor), farm: Fa
     """Its crop cycles stay in the field, without a zone."""
     await farm.delete_zone(actor, zone_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/fields/{field_id}/summary", response_model=FieldSummary, summary="A field's home screen in one call")
+@inject
+async def field_summary(
+    field_id: UUID, actor: Actor = Depends(get_actor), summary: FieldSummaryService = Depends(SUMMARY)
+):
+    """General state, zones with their last analysis and photo, active alerts, today's reminders and the irrigation
+    outlook. The irrigation block is null when the field has no coordinates or the weather data is down."""
+    return await summary.summary(actor, field_id)
 
 
 @router.get("/fields/{field_id}/sun-exposure", response_model=SunExposureRead, summary="Field Sun Exposure")
@@ -258,15 +291,18 @@ async def delete_crop_cycle(cycle_id: UUID, actor: Actor = Depends(get_actor), f
 async def list_events(
     field_id: Optional[UUID] = None,
     crop_cycle_id: Optional[UUID] = None,
+    zone_id: Optional[UUID] = None,
     type: Optional[EventType] = None,
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
+    before: Optional[datetime] = Query(None, description="Page back in time: only events older than this instant"),
     limit: int = Query(50, ge=1, le=500),
     actor: Actor = Depends(get_actor),
     farm: FarmService = Depends(FARM),
 ):
     return await farm.list_events(
-        actor, field_id=field_id, crop_cycle_id=crop_cycle_id, event_type=type, since=since, until=until, limit=limit
+        actor, field_id=field_id, crop_cycle_id=crop_cycle_id, event_type=type, since=since, until=until, limit=limit,
+        zone_id=zone_id, before=before,
     )
 
 

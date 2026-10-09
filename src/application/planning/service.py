@@ -9,14 +9,22 @@ sowings are manager-only, like crop cycles. Reminders without assignee notify th
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 from uuid import UUID
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src.application.farm.schemas import CropCycleCreate
+from src.shared.domain.locale import localized
+from src.shared.domain.messages import adapt
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
 from src.shared.utils.errors import InvalidInputError, NotFoundError, PermissionDeniedError
 
-from .models import CropPlan, PlanSowing, PlanStage, Reminder
+from .calendar import (
+    CalendarItem,
+    CalendarRange,
+    CalendarResponse,
+)
+from .calendar import occurrences as calendar_occurrences
+from .models import CropPlan, PlanSowing, PlanStage, Reminder, ReminderCompletion
 from .repository import IdFilter, PlanningRepository
 from .schemas import (
     CyclePlanProposal,
@@ -40,6 +48,7 @@ from .schemas import (
 )
 from .stage_templates import harvest_window_days, template_for
 
+MAX_CALENDAR_DAYS = 400  # a year view
 REMINDER_HOUR = time(9, 0)  # date-only reminders go off at 09:00 local time
 
 
@@ -86,8 +95,15 @@ class PlanningService:
         self.inventory = inventory_service
         self.tz = ZoneInfo(timezone_name)
 
-    def at_local(self, day: date, at: time = REMINDER_HOUR) -> datetime:
-        return datetime.combine(day, at, tzinfo=self.tz)
+    def _tz(self, actor: Actor) -> ZoneInfo:
+        """The user's own zone (a Colombian's 09:00 reminder is not 09:00 in Buenos Aires); the app's if unknown."""
+        try:
+            return ZoneInfo(actor.timezone) if actor.timezone else self.tz
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            return self.tz
+
+    def at_local(self, day: date, at: time = REMINDER_HOUR, tz: Optional[ZoneInfo] = None) -> datetime:
+        return datetime.combine(day, at, tzinfo=tz or self.tz)
 
     def _aware(self, value: datetime) -> datetime:
         return value if value.tzinfo else value.replace(tzinfo=self.tz)
@@ -125,9 +141,12 @@ class PlanningService:
         plan_id: Optional[UUID] = None,
         assigned_to: IdFilter = None,
         limit: int = 200,
+        zone_id: Optional[UUID] = None,
+        before: Optional[datetime] = None,
     ) -> list[ReminderRead]:
         rows = await self.repo.list_reminders(
-            actor.account_id, status, since, until, field_id, crop_cycle_id, plan_id, assigned_to, min(limit, 500)
+            actor.account_id, status, since, until, field_id, crop_cycle_id, plan_id, assigned_to, min(limit, 500),
+            zone_id=zone_id, before=before,
         )
         return [ReminderRead.model_validate(r) for r in rows]
 
@@ -163,7 +182,16 @@ class PlanningService:
         elif values.get("status") == "pendiente":
             values["completed_at"] = None
         reminder = await self.repo.update(Reminder, actor.account_id, reminder_id, values)
+        if values.get("status") == "hecho" and current.status != "hecho":
+            await self._record_completion(actor, reminder, values["completed_at"])
         return ReminderRead.model_validate(reminder)
+
+    async def _record_completion(self, actor: Actor, reminder: Reminder, at: datetime) -> None:
+        await self.repo.add(ReminderCompletion(
+            account_id=actor.account_id, reminder_id=reminder.id, field_id=reminder.field_id,
+            zone_id=reminder.zone_id, crop_cycle_id=reminder.crop_cycle_id, title=reminder.title,
+            description=reminder.description, completed_at=at, completed_by=actor.user_id,
+        ))
 
     async def complete_reminder(self, actor: Actor, reminder_id: UUID) -> ReminderRead:
         """Done. A recurring one moves on to its next occurrence (finishing the series after `until`)."""
@@ -172,6 +200,7 @@ class PlanningService:
         nxt = next_occurrence(reminder, max(now, reminder.due_at))
         values = {"due_at": nxt} if nxt else {"status": "hecho", "completed_at": now}
         updated = await self.repo.update(Reminder, actor.account_id, reminder_id, values)
+        await self._record_completion(actor, reminder, now)  # also the occurrence of a recurring one
         return ReminderRead.model_validate(updated)
 
     async def delete_reminder(self, actor: Actor, reminder_id: UUID) -> None:
@@ -205,7 +234,54 @@ class PlanningService:
             sent += 1
         return {"notified": sent}
 
-    # ---------- plans ----------
+    async def calendar(
+        self, actor: Actor, since: date, until: date, field_id: Optional[UUID] = None
+    ) -> CalendarResponse:
+        """Everything planned in [since, until] (inclusive dates, the user's zone): reminders with their recurrences
+        expanded, planned sowings, and the stages of active plans (as items on their start day and as ranges)."""
+        if until < since:
+            raise InvalidInputError("`until` must not be before `since`.")
+        if (until - since).days > MAX_CALENDAR_DAYS:
+            raise InvalidInputError(f"The calendar covers at most {MAX_CALENDAR_DAYS} days at a time.")
+        if field_id:
+            await self.farm.get_field(actor, field_id)
+        tz = self._tz(actor)
+        since_dt = datetime.combine(since, time.min, tzinfo=tz)
+        until_dt = datetime.combine(until + timedelta(days=1), time.min, tzinfo=tz)
+        stages, sowings, reminders = await self.repo.calendar_rows(
+            actor.account_id, since, until, since_dt, until_dt, field_id
+        )
+        items: list[CalendarItem] = []
+        for reminder in reminders:
+            for when in calendar_occurrences(
+                reminder.due_at, reminder.recurrence, reminder.interval_days, reminder.until, since_dt, until_dt, tz
+            ):
+                items.append(CalendarItem(
+                    date=when.date(), kind="reminder", source=reminder.source, ref_id=reminder.id,
+                    title=reminder.title, due_at=when, recurring=reminder.recurrence != "none",
+                    field_id=reminder.field_id, zone_id=reminder.zone_id, status=reminder.status,
+                ))
+        for sowing, plan, crop in sowings:
+            items.append(CalendarItem(
+                date=sowing.sow_date, kind="sowing", source=plan.source, ref_id=sowing.id,
+                title=f"Sembrar {localized(crop.name, crop.i18n, actor.locale)}", field_id=plan.field_id,
+                zone_id=sowing.zone_id or plan.zone_id, status=sowing.status,
+            ))
+        ranges: list[CalendarRange] = []
+        for stage, plan in stages:
+            title = adapt(stage.name, actor.locale)
+            end = stage.end_date or stage.start_date
+            if since <= stage.start_date <= until:
+                items.append(CalendarItem(
+                    date=stage.start_date, kind="stage", source=stage.source, ref_id=stage.id, title=title,
+                    stage=stage.stage, field_id=plan.field_id, zone_id=stage.zone_id or plan.zone_id,
+                ))
+            ranges.append(CalendarRange(
+                start=stage.start_date, end=end, ref_id=stage.id, plan_id=plan.id, title=title, stage=stage.stage,
+                field_id=plan.field_id, zone_id=stage.zone_id or plan.zone_id,
+            ))
+        items.sort(key=lambda i: (i.date, i.due_at or datetime.min.replace(tzinfo=tz), i.kind))
+        return CalendarResponse(since=since, until=until, items=items, ranges=ranges)
 
     async def _plan(self, actor: Actor, plan_id: UUID) -> CropPlan:
         plan = await self.repo.get(CropPlan, actor.account_id, plan_id)
@@ -285,7 +361,7 @@ class PlanningService:
                     zone_id=data.zone_id or plan.zone_id,
                     title=f"{plan.name}: {data.name}",
                     description=data.notes,
-                    due_at=self.at_local(data.start_date),
+                    due_at=self.at_local(data.start_date, tz=self._tz(actor)),
                     source="plan",
                     created_by=actor.user_id,
                 )
@@ -321,7 +397,7 @@ class PlanningService:
             zone_id=sowing.zone_id or plan.zone_id,
             title=f"{title} en {where}" if where else title,
             description=f"Siembra planificada en «{plan.name}».",
-            due_at=self.at_local(sowing.sow_date),
+            due_at=self.at_local(sowing.sow_date, tz=self._tz(actor)),
             source="plan",
             created_by=actor.user_id,
         )
@@ -372,7 +448,7 @@ class PlanningService:
             if sowing.status != "pendiente":
                 values = {"status": "hecho" if sowing.status == "sembrado" else "cancelado", "completed_at": utcnow()}
             else:
-                values = {"due_at": self.at_local(sowing.sow_date)}
+                values = {"due_at": self.at_local(sowing.sow_date, tz=self._tz(actor))}
             await self.repo.update(Reminder, actor.account_id, r.id, values)
 
     async def delete_sowing(self, actor: Actor, sowing_id: UUID) -> None:
@@ -389,7 +465,7 @@ class PlanningService:
         if sowing.status == "sembrado":
             raise InvalidInputError("That sowing is already done.")
         plan = await self._plan(actor, sowing.plan_id)
-        sown_on = data.sown_on or utcnow().astimezone(self.tz).date()
+        sown_on = data.sown_on or utcnow().astimezone(self._tz(actor)).date()
         values: dict = {"status": "sembrado", "sow_date": sown_on}
         if data.create_crop_cycle:
             field_id = plan.field_id
@@ -427,8 +503,8 @@ class PlanningService:
         milestones, "posible cosecha" and the expected harvest. Nothing is saved."""
         cycle = await self.farm.get_crop_cycle(actor, cycle_id)
         crop = await self.farm.get_crop_master(actor, cycle.crop_master_id)
-        crop_name = f"{crop.name}{' ' + crop.variety if crop.variety else ''}"
-        sowing = cycle.planting_date or utcnow().astimezone(self.tz).date()
+        crop_name = f"{localized(crop.name, crop.i18n, actor.locale)}{' ' + crop.variety if crop.variety else ''}"
+        sowing = cycle.planting_date or utcnow().astimezone(self._tz(actor)).date()
         tpl = template_for(crop.name, crop.growth_period_days)
         period = crop.growth_period_days or 90
         harvest = cycle.expected_harvest_date or sowing + timedelta(days=period)
@@ -451,6 +527,7 @@ class PlanningService:
                 points.append((day(m.day), m.stage, m.name, f"{crop_name}: {m.reminder}"))
         points.append((harvest_start, "cosecha", "Posible cosecha", f"Posible cosecha de {crop_name}: revisar punto"))
         points.sort(key=lambda p: p[0])
+        points = [(d, st, adapt(n, actor.locale), adapt(t, actor.locale) if t else t) for d, st, n, t in points]
 
         stages = [
             ProposedStage(
@@ -461,15 +538,17 @@ class PlanningService:
             )
             for i, (start, stage, name, _) in enumerate(points)
         ]
-        today = utcnow().astimezone(self.tz).date()
+        today = utcnow().astimezone(self._tz(actor)).date()
         reminders = [
-            ProposedReminder(title=text, due_at=self.at_local(start), description=f"Etapa: {name}")
+            ProposedReminder(title=text, due_at=self.at_local(start, tz=self._tz(actor)), description=f"Etapa: {name}")
             for start, _, name, text in points
             if text and start >= today
         ]
         if harvest >= today:
             reminders.append(
-                ProposedReminder(title=f"Cosecha estimada de {crop_name}", due_at=self.at_local(harvest))
+                ProposedReminder(
+                    title=f"Cosecha estimada de {crop_name}", due_at=self.at_local(harvest, tz=self._tz(actor))
+                )
             )
         return CyclePlanProposal(
             crop_cycle_id=cycle.id,

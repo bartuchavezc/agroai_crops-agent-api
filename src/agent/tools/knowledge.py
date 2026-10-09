@@ -65,9 +65,10 @@ def weather_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         if not daily:
             return {"error": "No SMN forecast loaded for this location (outside Argentina or not ingested yet)."}
         risks = []
+        overrides = await deps.field_rules.overrides(getattr(target, "id", None)) if deps.field_rules else {}
         for day in daily:
             context = {**day.to_dict(), "date": day.date.strftime("%d/%m")}
-            for match in deps.rules.evaluate(context, categories=["forecast"]):
+            for match in deps.rules.evaluate(context, categories=["forecast"], overrides=overrides):
                 risks.append({"date": day.date.isoformat(), "severity": match.severity.value, "message": match.message})
         return {"field_name": target.name, "daily": [d.to_dict() for d in daily], "risks": risks}
 

@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
+from src.shared.domain.locale import localized
 from ..prompts.satellite import SATELLITE_SERIES_GUIDE
 from ..prompts.voice import localize
 from .context import ToolDeps, TurnContext, compact, resolve_field, tool
@@ -82,7 +83,7 @@ def analysis_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         data = await _gather(chosen, target)
         overview = next((o for o in await deps.farm.overview(ctx.actor) if o.field.id == target.id), None)
         crops = ", ".join(
-            f"{c.crop_name}{' ' + c.variety if c.variety else ''} ({c.status}"
+            f"{localized(c.crop_name, c.crop_i18n, ctx.actor.locale)}{' ' + c.variety if c.variety else ''} ({c.status}"
             f"{', sembrado ' + c.planting_date.isoformat() if c.planting_date else ''})"
             for c in (overview.active_cycles if overview else [])
         ) or "sin cultivos activos"

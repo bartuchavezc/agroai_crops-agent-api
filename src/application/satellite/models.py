@@ -26,7 +26,10 @@ SOURCE_S1 = "sentinel1"
 
 class ZoneSatelliteReading(Base):
     __tablename__ = "zone_satellite_readings"
-    __table_args__ = (Index("ix_zone_satellite_readings_field_time", "field_id", "captured_at"),)
+    __table_args__ = (
+        Index("ix_zone_satellite_readings_field_time", "field_id", "captured_at"),
+        Index("ix_zone_satellite_readings_field_image", "field_id", "observed_on", "layer"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
@@ -39,6 +42,9 @@ class ZoneSatelliteReading(Base):
     pixel_count = Column(Integer)  # only set when the reading was scoped to the field's drawn boundary
     source = Column(String(20), nullable=False, default="sentinel2")
     image_identifier = Column(String(255))
+    # Rendered maps: which pass (NULL = the latest at the time) and which layer (NULL = ndvi, as before).
+    observed_on = Column(Date)
+    layer = Column(String(8))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -75,6 +81,10 @@ class FieldSatelliteObservation(Base):
     evi_mean = Column(Float)  # soil/atmosphere-corrected greenness, less saturable than NDVI
     evi_std = Column(Float)
     ndwi_mean = Column(Float)  # open water / waterlogging
+    # Why pixels were lost (share of the field, 0-1; NULL for passes stored before this was recorded).
+    cloud_fraction = Column(Float)
+    shadow_fraction = Column(Float)
+    nodata_fraction = Column(Float)  # no data, saturated/defective or snow
 
     # Sentinel-1 (gamma0, terrain-flattened)
     vv_db_mean = Column(Float)

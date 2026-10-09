@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from typing import Any, Optional
 
-from src.providers.satellite.copernicus import CopernicusAdapter, SeriesResult
+from src.providers.satellite.copernicus import CopernicusAdapter, S2Observation, SeriesResult
 from src.shared.domain.base import utcnow
 
 from .models import SOURCE_S1, SOURCE_S2
@@ -155,12 +155,47 @@ class SatelliteIngestService:
         report.requests += requests
         report.processing_units += units or 0.0
         if result is not None:
-            report.observations += await self.repo.upsert_many(
-                field.account_id, field.id, source, [_row(o) for o in result.observations]
-            )
+            rows = [_row(o) for o in result.observations]
+            if source == SOURCE_S2:
+                rows, quality_units, quality_requests = await self._with_quality(field, start, end, rows, kind)
+                report.requests += quality_requests
+                report.processing_units += quality_units
+            report.observations += await self.repo.upsert_many(field.account_id, field.id, source, rows)
         if self.pause_seconds:
             await asyncio.sleep(self.pause_seconds)
         return result is not None and result.complete
+
+    async def _with_quality(
+        self, field: Any, start: date, end: date, rows: list[dict], kind: str
+    ) -> tuple[list[dict], float, int]:
+        """The Sentinel-2 rows with the cloud / shadow / unusable share of each pass, plus a row for every date the
+        indices request dropped for having no clear pixel (so the series can say *why* a date is missing). Best
+        effort: if the quality request fails the rows are stored as they are and the cost is still recorded."""
+        fetch = getattr(self.copernicus, "s2_quality", None)
+        if fetch is None:
+            return rows, 0.0, 0
+        try:
+            quality = await fetch(field.latitude, field.longitude, start, end, polygon=field.boundary)
+        except Exception:  # noqa: BLE001 - never let this cost the series
+            logger.exception("Sentinel-2 quality request failed")
+            return rows, 0.0, 1
+        if quality is None:
+            return rows, 0.0, 1
+        await self.repo.add_usage(kind, quality.processing_units, quality.requests)
+        by_date = {q.observed_on: q for q in quality.observations}
+        merged = []
+        for row in rows:
+            q = by_date.pop(row["observed_on"], None)
+            if q is not None:
+                row = {**row, "cloud_fraction": q.cloud_fraction, "shadow_fraction": q.shadow_fraction,
+                       "nodata_fraction": q.nodata_fraction}
+            merged.append(row)
+        for q in by_date.values():  # no clear pixel at all that day: nothing to measure, but worth knowing
+            merged.append(_row(S2Observation(
+                observed_on=q.observed_on, total_pixels=q.total_pixels, valid_pixels=0, valid_fraction=0.0,
+                cloud_fraction=q.cloud_fraction, shadow_fraction=q.shadow_fraction, nodata_fraction=q.nodata_fraction,
+            )))
+        return merged, quality.processing_units or 0.0, quality.requests
 
     async def _fetch(self, field: Any, source: str, start: date, end: date) -> Optional[SeriesResult]:
         if source == SOURCE_S2:

@@ -56,6 +56,7 @@ class ToolDeps:
     satellite: ZoneSatelliteService
     storage: StorageService
     nasa_power: NasaPowerAdapter
+    field_rules: Any = None  # FieldAlertRulesService: what each field switched off or tuned
 
 
 @dataclass

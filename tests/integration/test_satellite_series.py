@@ -89,6 +89,35 @@ async def test_series_upsert_status_and_endpoints(client, signup, container):
     assert (await client.get(f"{SAT}/fields/{field_id}/series", headers=other["headers"])).status_code == 404
 
 
+async def test_status_without_refresh_is_a_pure_read_and_carries_the_delta(client, signup, container):
+    owner = await signup("satellite-pure")
+    h = owner["headers"]
+    r = await client.post(f"{FARM}/fields", headers=h, json={"name": "Lote", "latitude": -34.6, "longitude": -58.4})
+    field_id = UUID(r.json()["id"])
+    account_id = UUID(owner["account"]["id"])
+    today = utcnow().date()
+    rows = _seed_rows(today)
+    rows[-1]["ndvi_mean"], rows[-2]["ndvi_mean"] = 0.30, 0.45  # the last clear pass fell 0.15 from the one before
+    await container.application.satellite_series_repository().upsert_many(account_id, field_id, SOURCE_S2, rows)
+
+    async def alert_count():
+        async with container.db_session_factory()() as session:
+            return (await session.execute(
+                text("SELECT count(*) FROM alerts WHERE field_id = :f"), {"f": field_id}
+            )).scalar_one()
+
+    pure = await client.get(f"{SAT}/fields/{field_id}/status?refresh=false", headers=h)
+    assert pure.status_code == 200, pure.text
+    body = pure.json()
+    assert body["ndvi_delta"] == -0.15 and body["previous_ndvi_mean"] == 0.45 and body["previous_date"]
+    assert body["min_valid_fraction"] == 0.6
+    assert body["alerts"]  # the rules are evaluated and returned...
+    assert await alert_count() == 0  # ...but nothing is written
+
+    await client.get(f"{SAT}/fields/{field_id}/status", headers=h)  # the default read keeps its old behavior
+    assert await alert_count() >= 1
+
+
 async def test_usage_ledger_accumulates_per_kind(container):
     repo = container.application.satellite_series_repository()
     before = await repo.usage_this_month()
@@ -98,3 +127,99 @@ async def test_usage_ledger_accumulates_per_kind(container):
     after = await repo.usage_this_month()
     assert math.isclose(after["batch"] - before.get("batch", 0.0), 2.0)
     assert "on_demand" in after
+
+
+async def test_series_with_several_metrics_a_range_and_discarded_passes(client, signup, container):
+    owner = await signup("satellite-multi")
+    h = owner["headers"]
+    r = await client.post(f"{FARM}/fields", headers=h, json={"name": "Lote", "latitude": -34.6, "longitude": -58.4})
+    field_id = UUID(r.json()["id"])
+    account_id = UUID(owner["account"]["id"])
+    today = utcnow().date()
+    rows = _seed_rows(today)
+    # a fully clouded date and a thin one, recorded with their causes
+    rows += [
+        {"observed_on": today - timedelta(days=61), "total_pixels": 120, "valid_pixels": 0, "valid_fraction": 0.0,
+         "cloud_fraction": 0.9, "shadow_fraction": 0.1, "nodata_fraction": 0.0},
+        {"observed_on": today - timedelta(days=56), "total_pixels": 120, "valid_pixels": 30, "valid_fraction": 0.25,
+         "ndvi_mean": 0.4, "ndmi_mean": 0.1, "cloud_fraction": 0.0, "shadow_fraction": 0.7, "nodata_fraction": 0.05},
+    ]
+    keys = set().union(*[row.keys() for row in rows])
+    rows = [{key: row.get(key) for key in keys} for row in rows]
+    await container.application.satellite_series_repository().upsert_many(account_id, field_id, SOURCE_S2, rows)
+
+    start = (today - timedelta(days=90)).isoformat()
+    body = (await client.get(f"{SAT}/fields/{field_id}/series", headers=h, params={
+        "metrics": "ndvi,ndmi", "since": start, "until": (today - timedelta(days=30)).isoformat(),
+        "include_masked": "true",
+    })).json()
+    assert body["metrics"] == ["ndvi", "ndmi"] and set(body["weekly_by_metric"]) == {"ndvi", "ndmi"}
+    assert body["weekly"] == body["weekly_by_metric"]["ndvi"] and body["min_valid_fraction"] == 0.6
+    assert body["until"] == (today - timedelta(days=30)).isoformat()
+    assert max(p["date"] for p in body["passes"]) <= body["until"] and min(p["date"] for p in body["passes"]) >= start
+    by_date = {p["date"]: p for p in body["passes"]}
+    cloudy = by_date[(today - timedelta(days=61)).isoformat()]
+    assert (cloudy["discarded"], cloudy["discard_reason"], cloudy["ndvi_mean"]) == (True, "clouds", None)
+    thin = by_date[(today - timedelta(days=56)).isoformat()]
+    assert (thin["discarded"], thin["discard_reason"]) == (True, "shadow")
+    assert all(p["ndmi_mean"] is not None for p in body["passes"] if not p["discarded"])
+    assert any(not p["discarded"] for p in body["passes"])
+
+    default = (await client.get(f"{SAT}/fields/{field_id}/series", headers=h, params={"since": start})).json()
+    default_dates = {p["date"] for p in default["passes"]}
+    assert (today - timedelta(days=61)).isoformat() not in default_dates  # fully masked: opt-in
+    assert (today - timedelta(days=56)).isoformat() in default_dates  # thin but measured
+    single = (await client.get(f"{SAT}/fields/{field_id}/series?metric=ndre", headers=h)).json()  # old contract
+    assert single["metric"] == "ndre" and single["weekly"] and "passes" in single
+    bad = await client.get(f"{SAT}/fields/{field_id}/series?metrics=ndvi,nope", headers=h)
+    assert bad.status_code in (400, 422)
+
+
+async def test_images_are_rendered_per_pass_and_layer_and_cached(client, signup, container):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from src.providers.satellite.copernicus import RenderedImage
+
+    owner = await signup("satellite-images")
+    h = owner["headers"]
+    r = await client.post(f"{FARM}/fields", headers=h, json={"name": "Lote", "latitude": -34.6, "longitude": -58.4})
+    field_id = UUID(r.json()["id"])
+    account_id = UUID(owner["account"]["id"])
+    today = utcnow().date()
+    clear_day, cloudy_day = today - timedelta(days=10), today - timedelta(days=12)
+    base = {"total_pixels": 100, "ndvi_mean": 0.5, "ndmi_mean": 0.2}
+    await container.application.satellite_series_repository().upsert_many(account_id, field_id, SOURCE_S2, [
+        {**base, "observed_on": clear_day, "valid_pixels": 90, "valid_fraction": 0.9},
+        {"observed_on": cloudy_day, "total_pixels": 100, "valid_pixels": 0, "valid_fraction": 0.0, "ndvi_mean": None,
+         "ndmi_mean": None},
+    ])
+    service = container.application.satellite_service()
+    render = AsyncMock(return_value=RenderedImage(b"\x89PNG-fake", 0.4))
+    def box(lat, lon):
+        return [lon - 0.1, lat - 0.1, lon + 0.1, lat + 0.1]
+
+    fake = SimpleNamespace(configured=True, render_layer=render, render_map=render, bbox_for=box)
+    url = f"{SAT}/fields/{field_id}/image"
+
+    with patch.object(service, "copernicus", fake):
+        first = (await client.get(url, headers=h, params={"layer": "ndmi", "date": clear_day.isoformat()})).json()
+        assert first["image_identifier"] and first["layer"] == "ndmi" and first["date"] == clear_day.isoformat()
+        args = render.await_args.args
+        assert args[2] == "ndmi" and args[3] == args[4] == clear_day.isoformat()
+        assert render.await_args.kwargs["max_cloud"] == 100
+        again = (await client.get(url, headers=h, params={"layer": "ndmi", "date": clear_day.isoformat()})).json()
+        assert again["image_identifier"] == first["image_identifier"] and render.await_count == 1  # cached
+
+        other_layer = (await client.get(url, headers=h, params={"layer": "rgb", "date": clear_day.isoformat()})).json()
+        assert other_layer["image_identifier"] != first["image_identifier"] and render.await_count == 2
+
+        latest = (await client.get(url, headers=h)).json()  # the old contract: latest NDVI
+        assert latest["layer"] == "ndvi" and latest["date"] is None and render.await_args.args[2] == "ndvi"
+        assert render.await_count == 3
+
+        assert (await client.get(url, headers=h, params={"date": cloudy_day.isoformat()})).status_code == 400
+        missing = await client.get(url, headers=h, params={"date": (today - timedelta(days=3)).isoformat()})
+        assert missing.status_code == 404
+        assert (await client.get(url, headers=h, params={"layer": "thermal"})).status_code == 400
+        assert render.await_count == 3  # none of the refusals spent a request

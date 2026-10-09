@@ -263,6 +263,8 @@ class CropMasterBase(BaseModel):
     kc_initial: Optional[float] = PField(default=None, ge=0, le=2, description="FAO-56 Kc, initial stage")
     kc_mid: Optional[float] = PField(default=None, ge=0, le=2, description="FAO-56 Kc, mid-season stage")
     kc_late: Optional[float] = PField(default=None, ge=0, le=2, description="FAO-56 Kc, late-season stage")
+    i18n: Dict[str, str] = PField(default_factory=dict, description="Crop name by locale, e.g. {'es-MX': 'Jitomate'}")
+    variety_i18n: Dict[str, str] = PField(default_factory=dict, description="Variety by locale")
 
 
 class CropMasterCreate(CropMasterBase):
@@ -289,6 +291,9 @@ class CropCycleCreate(BaseModel):
     planting_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
+    plant_count: Optional[int] = PField(default=None, ge=1)
+    expected_yield_kg: Optional[float] = PField(default=None, ge=0)
+    expected_price: Optional[float] = PField(default=None, ge=0, description="Per kg, in the account's currency")
     status: CropCycleStatus = "planned"
     notes: Optional[str] = None
 
@@ -298,6 +303,9 @@ class CropCycleUpdate(BaseModel):
     planting_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
+    plant_count: Optional[int] = PField(default=None, ge=1)
+    expected_yield_kg: Optional[float] = PField(default=None, ge=0)
+    expected_price: Optional[float] = PField(default=None, ge=0, description="Per kg, in the account's currency")
     status: Optional[CropCycleStatus] = None
     notes: Optional[str] = None
 
@@ -311,6 +319,9 @@ class CropCycleRead(ORMModel):
     planting_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
+    plant_count: Optional[int] = PField(default=None, ge=1)
+    expected_yield_kg: Optional[float] = PField(default=None, ge=0)
+    expected_price: Optional[float] = PField(default=None, ge=0, description="Per kg, in the account's currency")
     status: CropCycleStatus
     notes: Optional[str] = None
     created_by: Optional[UUID] = None
@@ -371,6 +382,7 @@ class ActiveCycleSummary(BaseModel):
     expected_harvest_date: Optional[date] = None
     zone_id: Optional[UUID] = None
     zone_label: Optional[str] = None
+    crop_i18n: Dict[str, str] = PField(default_factory=dict)
 
 
 class FieldOverview(BaseModel):

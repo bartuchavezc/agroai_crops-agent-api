@@ -60,6 +60,26 @@ class LocalFileRepository:
         (directory / f"{identifier}.meta.json").write_text(json.dumps(metadata))
         return identifier
 
+    async def save_file_as(
+        self, namespace: str, identifier: str, file_data: bytes, content_type: Optional[str] = None
+    ) -> str:
+        """Store under a name derived from another file's (a thumbnail next to its original). The name goes through
+        the same validation as any identifier, so it cannot point outside the account's folder."""
+        validate_identifier(identifier)
+        directory = self._dir(namespace)
+        (directory / identifier).write_bytes(file_data)
+        (directory / f"{identifier}.meta.json").write_text(json.dumps({
+            "content_type": content_type, "size": len(file_data), "derived": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        return identifier
+
+    def derived_files(self, namespace: str, identifier: str) -> list[Path]:
+        """The thumbnails stored next to `identifier` (`<stem>_t<side>.jpg`)."""
+        validate_identifier(identifier)
+        stem = identifier.rsplit(".", 1)[0]
+        return sorted(self._dir(namespace).glob(f"{stem}_t[0-9]*.jpg"))
+
     async def get_file_data(self, namespace: str, identifier: str) -> Optional[Tuple[bytes, Dict[str, Any]]]:
         validate_identifier(identifier)
         directory = self._dir(namespace)
@@ -78,6 +98,9 @@ class LocalFileRepository:
             return False
         file_path.unlink()
         (directory / f"{identifier}.meta.json").unlink(missing_ok=True)
+        for thumbnail in self.derived_files(namespace, identifier):
+            thumbnail.unlink(missing_ok=True)
+            (directory / f"{thumbnail.name}.meta.json").unlink(missing_ok=True)
         return True
 
     async def file_exists(self, namespace: str, identifier: str) -> bool:

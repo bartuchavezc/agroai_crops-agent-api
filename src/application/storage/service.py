@@ -9,6 +9,9 @@ from .local_adapter import LocalFileRepository
 
 logger = logging.getLogger(__name__)
 
+MIN_THUMBNAIL_SIDE = 32
+MAX_THUMBNAIL_SIDE = 1536
+
 
 class StorageService:
     def __init__(self, file_repository: LocalFileRepository):
@@ -35,6 +38,24 @@ class StorageService:
         """Image bytes downscaled for the model (fewer tokens, smaller session history)."""
         raw, _ = await self.get_image_data(actor, identifier)
         return await shrink_to_jpeg(raw, max_side), "image/jpeg"
+
+    async def get_thumbnail(self, actor: Actor, identifier: str, max_side: int) -> Tuple[bytes, str]:
+        """A JPEG whose longest side is at most `max_side`, made once and kept next to the original
+        (`<id>_t<side>.jpg`): grids and galleries fetch many small images, and decoding a full photo each time is
+        the expensive part. Only the account's own files resolve, and deleting the image deletes its thumbnails."""
+        max_side = min(max(max_side, MIN_THUMBNAIL_SIDE), MAX_THUMBNAIL_SIDE)
+        stem = identifier.rsplit(".", 1)[0]
+        name = f"{stem}_t{max_side}.jpg"
+        cached = await self.file_repository.get_file_data(str(actor.account_id), name)
+        if cached is not None:
+            return cached[0], "image/jpeg"
+        raw, _ = await self.get_image_data(actor, identifier)  # 404 if the original isn't the account's
+        data = await shrink_to_jpeg(raw, max_side)
+        try:
+            await self.file_repository.save_file_as(str(actor.account_id), name, data, "image/jpeg")
+        except Exception:  # noqa: BLE001 - serving beats caching
+            logger.exception("Could not cache the thumbnail")
+        return data, "image/jpeg"
 
     async def delete_image(self, actor: Actor, identifier: str) -> bool:
         return await self.file_repository.delete_file(str(actor.account_id), identifier)

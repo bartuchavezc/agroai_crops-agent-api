@@ -6,7 +6,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel
 
 from src.application.reports.schemas import ReportCreate
@@ -224,9 +224,17 @@ async def upload_zone_tracking(
 @inject
 async def get_image(
     image_identifier: str,
+    max_side: Optional[int] = Query(None, ge=1, le=4096, description="A JPEG thumbnail of at most this many pixels"),
     actor: Actor = Depends(get_actor),
     storage_service=Depends(Provide["application.storage_service"]),
 ):
+    """Without `max_side`, the stored image as it is. With it, a cached JPEG thumbnail (32 to 1536 px)."""
+    if max_side is not None:
+        data, content_type = await storage_service.get_thumbnail(actor, image_identifier, max_side)
+        return Response(
+            content=data, media_type=content_type,
+            headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"},
+        )
     data, metadata = await storage_service.get_image_data(actor, image_identifier)
     return Response(
         content=data,

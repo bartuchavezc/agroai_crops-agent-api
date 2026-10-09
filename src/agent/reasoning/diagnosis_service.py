@@ -22,7 +22,7 @@ from src.application.storage.service import StorageService
 from src.auth.services.profile_service import ProfileService
 from src.providers.weather.service import WeatherService
 from src.shared.domain.actor import Actor
-from src.shared.domain.locale import today_in
+from src.shared.domain.locale import localized, today_in
 from src.shared.utils.errors import InvalidInputError
 
 from ..prompts.analysis import ANALYSIS_GROUNDING, DEEP_REFINE_INSTRUCTION
@@ -61,6 +61,7 @@ class DiagnosisService:
         search=None,
         max_image_side: int = 1536,
         deep_default: bool = True,
+        field_rules=None,
     ):
         self.gemini = gemini
         self.storage = storage_service
@@ -68,6 +69,7 @@ class DiagnosisService:
         self.farm = farm_service
         self.weather = weather_service
         self.rules = rules_engine
+        self.field_rules = field_rules  # FieldAlertRulesService: what each field switched off or tuned
         self.profiles = profile_service
         self.notifications = notification_service
         self.max_image_side = max_image_side
@@ -88,7 +90,9 @@ class DiagnosisService:
         for overview in await self.farm.overview(actor):
             if overview.field.id == field_id and overview.active_cycles:
                 crops = ", ".join(
-                    f"{c.crop_name}{' ' + c.variety if c.variety else ''} ({c.status})" for c in overview.active_cycles
+                    f"{localized(c.crop_name, c.crop_i18n, actor.locale)}"
+                    f"{' ' + c.variety if c.variety else ''} ({c.status})"
+                    for c in overview.active_cycles
                 )
                 lines.append(f"Cultivos activos: {crops}")
         if field.latitude is not None and field.longitude is not None:
@@ -236,6 +240,9 @@ class DiagnosisService:
                 logger.exception(f"Could not mark report {report_id} as failed")
             raise
 
+    async def _rule_overrides(self, field_id) -> dict:
+        return await self.field_rules.overrides(field_id) if (self.field_rules and field_id) else {}
+
     async def _analyze_diagnosis(
         self, actor: Actor, report: Report, image_identifier: Optional[str] = None, deep: Optional[bool] = None
     ) -> dict:
@@ -243,9 +250,10 @@ class DiagnosisService:
         image_bytes, mime_type, image_id = await self._load_image(actor, report, image_identifier)
 
         context_lines, weather = await self._field_context(actor, report.field_id)
+        overrides = await self._rule_overrides(report.field_id)
         weather_rules = self.rules.evaluate(
             {"temperature": weather.get("temperature", 20), "humidity": weather.get("humidity", 50)},
-            categories=["weather", "disease"],
+            categories=["weather", "disease"], overrides=overrides,
         ) if weather else []
         if weather_rules:
             context_lines.append("Alertas por reglas: " + " | ".join(r.message for r in weather_rules))
@@ -280,7 +288,7 @@ class DiagnosisService:
                 f"{x['title']} ({x['url']})" for x in research["sources"][:5])).strip()
 
         area_rules = self.rules.evaluate(
-            {"affected_percentage": diagnosis.affected_area_percent or 0}, categories=["health"]
+            {"affected_percentage": diagnosis.affected_area_percent or 0}, categories=["health"], overrides=overrides
         )
         rule_alerts = [
             {"rule": r.rule_id, "severity": r.severity.value, "message": r.message} for r in weather_rules + area_rules
@@ -422,8 +430,8 @@ class DiagnosisService:
             if events:
                 lines.append("Eventos del ciclo: " + "; ".join(format_event_history(events)))
         zone_events = [
-            e for e in await self.farm.list_events(actor, field_id=report.field_id, limit=50)
-            if e.zone_id == zone.id and e.crop_cycle_id is None
+            e for e in await self.farm.list_events(actor, field_id=report.field_id, zone_id=zone.id, limit=50)
+            if e.crop_cycle_id is None
         ]
         if zone_events:
             lines.append("Eventos de la zona en general: " + "; ".join(format_event_history(zone_events[:20])))

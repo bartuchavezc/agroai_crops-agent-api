@@ -76,6 +76,9 @@ class BudgetEntryCreate(BaseModel):
     field_id: Optional[UUID] = None
     crop_cycle_id: Optional[UUID] = None
     category: Optional[str] = PField(default=None, max_length=100)
+    currency: Optional[str] = PField(
+        default=None, pattern=r"^[A-Z]{3}$", description="ISO-4217; omit for the account's"
+    )
 
 
 class BudgetEntryUpdate(PartialUpdate):
@@ -88,6 +91,9 @@ class BudgetEntryUpdate(PartialUpdate):
     field_id: Optional[UUID] = None
     crop_cycle_id: Optional[UUID] = None
     category: Optional[str] = PField(default=None, max_length=100)
+    currency: Optional[str] = PField(
+        default=None, pattern=r"^[A-Z]{3}$", description="ISO-4217; omit for the account's"
+    )
 
 
 class BudgetEntryRead(ORMModel):
@@ -97,6 +103,7 @@ class BudgetEntryRead(ORMModel):
     crop_cycle_id: Optional[UUID] = None
     description: str
     category: Optional[str] = None
+    currency: Optional[str] = None
     amount: float
     type: BudgetType
     date: date
@@ -110,6 +117,23 @@ class BudgetSummary(BaseModel):
     total_ingresos: float
     balance: float
     by_category: dict[str, float]
+    currency: Optional[str] = None  # the currency of the totals above (the account's)
+    other_currencies: dict[str, float] = PField(
+        default_factory=dict, description="Net balance of entries in other currencies"
+    )
+    # Only with `cycle_id`: how the cycle's cost compares with what it is expected to yield.
+    cycle_id: Optional[UUID] = None
+    crop_master_id: Optional[UUID] = None
+    cost_per_plant: Optional[float] = None
+    break_even_kg: Optional[float] = None
+    expected_revenue: Optional[float] = None
+    margin: Optional[float] = None
+
+
+class BudgetCategory(BaseModel):
+    key: str
+    label: str
+    type: BudgetType
 
 
 # ---------- Roadmap ----------

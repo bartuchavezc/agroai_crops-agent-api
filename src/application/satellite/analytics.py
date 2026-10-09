@@ -436,6 +436,7 @@ class SeriesAnalysis:
     s2_passes: int = 0
     s2_clear_passes: int = 0
     last_pass: Optional[dict] = None
+    previous_pass: Optional[dict] = None  # the clear pass before the last one (same shape, to read the change)
     days_since_last_pass: Optional[int] = None
     metrics: dict[str, dict] = field(default_factory=dict)
     phenology: Optional[dict] = None
@@ -488,6 +489,13 @@ def analyze(
         "ndvi_p10": _r(_num(last, "ndvi_p10")),
         "ndvi_p90": _r(_num(last, "ndvi_p90")),
     }
+    if len(clean) >= 2:
+        before = clean[-2]
+        result.previous_pass = {
+            "date": before.observed_on,
+            "valid_fraction": _r(_num(before, "valid_fraction"), 2),
+            **{f"{m}_mean": _r(_num(before, f"{m}_mean")) for m in METRICS},
+        }
     result.days_since_last_pass = (today - last.observed_on).days
 
     smoothed: dict[str, Optional[SmoothedSeries]] = {}
@@ -579,3 +587,39 @@ def raw_points(observations: Iterable[Any], metrics: Sequence[str]) -> list[dict
          **{m: _r(_num(o, m)) for m in metrics}}
         for o in observations
     ]
+
+
+def discard_reason(observation: Any) -> str:
+    """Why a pass was not used: `clouds`, `shadow` or `nodata` (no data / saturated / snow) when the pass recorded
+    how its pixels were lost, `unknown` for passes stored before that was recorded."""
+    shares = {
+        "clouds": _num(observation, "cloud_fraction"),
+        "shadow": _num(observation, "shadow_fraction"),
+        "nodata": _num(observation, "nodata_fraction"),
+    }
+    known = {reason: share for reason, share in shares.items() if share is not None}
+    if not known or max(known.values()) <= 0:
+        return "unknown"
+    return max(known, key=known.get)
+
+
+def pass_points(observations: Sequence[Any], metrics: Sequence[str], min_valid_fraction: float = 0.6) -> list[dict]:
+    """Every Sentinel-2 date with its values and whether the analysis used it. A pass is discarded when too little of
+    the field was clear to trust it, or when it is an isolated dip well below both neighbours (residual cloud or
+    haze: reported as `clouds`)."""
+    ordered = sorted(observations, key=lambda o: o.observed_on)
+    used = {id(o) for o in clean_s2(ordered, min_valid_fraction)}
+    points = []
+    for o in ordered:
+        is_used = id(o) in used
+        too_cloudy = _num(o, "ndvi_mean") is None or (
+            _num(o, "valid_fraction") is not None and _num(o, "valid_fraction") < min_valid_fraction
+        )
+        points.append({
+            "date": o.observed_on.isoformat(),
+            "valid_fraction": _r(_num(o, "valid_fraction"), 2),
+            **{f"{m}_mean": _r(_num(o, f"{m}_mean")) for m in metrics},
+            "discarded": not is_used,
+            "discard_reason": None if is_used else (discard_reason(o) if too_cloudy else "clouds"),
+        })
+    return points

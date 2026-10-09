@@ -2,7 +2,7 @@
 import uuid
 
 from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Index, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from src.shared.database import Base
 from src.shared.domain.base import utcnow
@@ -16,6 +16,7 @@ class SeedLot(Base):
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     crop_master_id = Column(UUID(as_uuid=True), ForeignKey("crop_masters.id", ondelete="RESTRICT"), nullable=False)
     variety_note = Column(String(255))
+    variety_i18n = Column(JSONB, nullable=False, default=dict, server_default="{}")  # {"es-MX": "..."}
     quantity = Column(Float, nullable=False)
     unit = Column(String(30), nullable=False, default="semillas")
     acquired_date = Column(Date)

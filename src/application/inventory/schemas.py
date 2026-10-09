@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Optional
+from typing import Dict, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field as PField
@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field as PField
 class SeedLotCreate(BaseModel):
     crop_master_id: UUID
     variety_note: Optional[str] = None
+    variety_i18n: Dict[str, str] = PField(default_factory=dict)
     quantity: float = PField(gt=0)
     unit: str = PField(default="semillas", max_length=30)
     acquired_date: Optional[date] = None
@@ -23,6 +24,7 @@ class SeedLotRead(BaseModel):
     account_id: UUID
     crop_master_id: UUID
     variety_note: Optional[str] = None
+    variety_i18n: Dict[str, str] = PField(default_factory=dict)
     quantity: float
     unit: str
     acquired_date: Optional[date] = None
