@@ -115,3 +115,36 @@ async def test_thumbnails_are_made_once_kept_next_to_the_original_and_deleted_wi
     actor = Actor(UUID(user["user"]["id"]), UUID(user["account"]["id"]), "owner")
     assert await container.application.storage_service().delete_image(actor, identifier)
     assert not list(folder.glob(f"{stem}*"))  # original, metadata and both thumbnails are gone
+
+
+async def test_storage_never_leaves_the_accounts_folder(container, tmp_path):
+    import pytest
+
+    from src.application.storage.local_adapter import LocalFileRepository
+    from src.shared.utils.errors import InvalidInputError
+
+    repo = LocalFileRepository(str(tmp_path / "files"))
+    (tmp_path / "secret.txt").write_text("nope")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "files" / "acct").mkdir()
+    (tmp_path / "files" / "acct" / "link").symlink_to(outside)  # a symlink out of the account's folder
+
+    for bad in ("../secret.txt", "..", "/etc/passwd", "a/b.jpg", "link", ".hidden", "x" * 200):
+        for call in (repo.get_file_data, repo.delete_file, repo.file_exists):
+            with pytest.raises(InvalidInputError):
+                await call("acct", bad)
+        with pytest.raises(InvalidInputError):
+            await repo.save_file_as("acct", bad, b"x")
+    for bad_namespace in ("..", "../files", "a/b", "/etc"):
+        with pytest.raises(InvalidInputError):
+            await repo.save_file(bad_namespace, "a.jpg", b"x")
+
+    name = await repo.save_file("acct", "photo.jpg", b"pixels", "image/jpeg")
+    data, meta = await repo.get_file_data("acct", name)
+    assert data == b"pixels" and meta["content_type"] == "image/jpeg"
+    stem = name.rsplit(".", 1)[0]
+    await repo.save_file_as("acct", f"{stem}_t320.jpg", b"small")
+    assert repo.derived_files("acct", name) == [f"{stem}_t320.jpg"]
+    assert await repo.delete_file("acct", name) and not list((tmp_path / "files" / "acct").glob(f"{stem}*"))
+    assert (tmp_path / "secret.txt").read_text() == "nope" and not list(outside.iterdir())
