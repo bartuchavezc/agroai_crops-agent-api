@@ -40,6 +40,7 @@ class LocalFileRepository:
     def _inside(self, namespace: str, name: str = "") -> Path:
         """<base>/<namespace>/<name>, normalized and checked to stay under the account's folder. Every path this class
         touches comes from here, so a crafted name (`..`, an absolute path, a symlink) can never leave it."""
+        validate_identifier(namespace)
         folder = os.path.realpath(os.path.join(self._root, namespace))
         if not folder.startswith(self._root + os.sep):
             raise InvalidInputError("Invalid storage namespace")
