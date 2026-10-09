@@ -73,8 +73,15 @@ está apagado (`SATELLITE_INGEST_ENABLED=false`) hasta medir el costo real con u
 python -m src.scripts.copernicus_measure --field-id <uuid>   # costo real por campo y cuántos entran
 python -m src.batch satellite                                # backfill + pasadas nuevas + alertas, una vez
 python -m src.batch satellite --every-hours 24               # loop (servicio `satellite` del compose)
-python -m src.batch satellite-backfill --years 5             # extender la historia
+python -m src.batch satellite-backfill --years 5             # extender la historia y guardar los píxeles de toda la serie
 ```
+
+**Imágenes: se guardan una vez y se dibujan siempre desde lo nuestro.** Por cada pasada de Sentinel-2 se pide a
+Copernicus un recorte pequeño del campo (bandas + clasificación de nubes SCL) y se guarda comprimido en
+`field_satellite_chips` (`src/application/satellite/chips.py`). El job diario guarda las pasadas de los últimos
+20 días; `satellite-backfill` completa las de toda la serie. Los mapas (`ndvi`, `ndmi`, `ndwi`, `rgb`) se calculan
+localmente con la mediana píxel a píxel de los últimos 15 días, usando solo los píxeles limpios de cada pasada,
+así que mostrar una imagen no llama a Copernicus ni gasta créditos.
 
 ## Puesta en marcha
 

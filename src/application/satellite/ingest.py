@@ -21,7 +21,8 @@ from typing import Any, Optional
 from src.providers.satellite.copernicus import CopernicusAdapter, S2Observation, SeriesResult
 from src.shared.domain.base import utcnow
 
-from .models import SOURCE_S1, SOURCE_S2
+from .chips import chip_bbox, chip_size, encode_chip
+from .models import SOURCE_S1, SOURCE_S2, FieldSatelliteChip
 from .repository import SatelliteSeriesRepository
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,11 @@ logger = logging.getLogger(__name__)
 KIND_BATCH = "batch"
 KIND_ON_DEMAND = "on_demand"
 INCREMENTAL_OVERLAP_DAYS = 15
+# The pixels of a pass are kept (chips.py). The daily job and on-demand syncs fetch the ones of the last days, enough
+# for the 15-day map window plus a margin for late-published scenes; the backfill fetches every pass of the series.
+CHIP_RECENT_DAYS = 20
+CHIP_MIN_VALID_FRACTION = 0.05  # a pass with less clear surface than this adds nothing to a map
+MAX_CHIP_FAILURES = 3  # consecutive failed requests before giving up for this run
 S2_FIRST_DATE = date(2017, 3, 28)  # Sentinel-2 L2A archive start
 S1_FIRST_DATE = date(2014, 10, 3)
 
@@ -38,11 +44,20 @@ class SyncReport:
     field_id: str
     sources: dict[str, str] = field(default_factory=dict)  # source -> what happened
     observations: int = 0
+    chips: int = 0
     processing_units: float = 0.0
     requests: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class ChipReport:
+    fetched: int = 0
+    requests: int = 0
+    processing_units: float = 0.0
+    stopped: Optional[str] = None  # "budget" | "failed" | None (everything asked for was fetched)
 
 
 class BudgetExceeded(Exception):
@@ -90,9 +105,12 @@ class SatelliteIngestService:
         kind: str = KIND_BATCH,
         history_years: Optional[int] = None,
         sources: Optional[list[str]] = None,
+        chips: str = "recent",
     ) -> SyncReport:
         """`field` is a Field row or FieldRead (id, account_id, latitude, longitude, boundary). Raises
-        BudgetExceeded before spending anything once this kind's monthly budget is used up."""
+        BudgetExceeded before spending anything once this kind's monthly budget is used up. `chips`: which passes get
+        their pixels fetched after a Sentinel-2 sync: "recent" (the last CHIP_RECENT_DAYS), "all" (the whole series)
+        or "none"."""
         report = SyncReport(field_id=str(field.id))
         if not self.copernicus.configured or field.latitude is None or field.longitude is None:
             report.sources = {s: "skipped" for s in (sources or self.sources)}
@@ -104,6 +122,55 @@ class SatelliteIngestService:
             if await self.budget_left(kind) <= 0:
                 raise BudgetExceeded(f"Copernicus {kind} budget for this month is used up")
             report.sources[source] = await self._sync_source(field, source, kind, geometry, years, today, report)
+        if SOURCE_S2 in (sources or self.sources) and chips != "none":
+            since = None if chips == "all" else today - timedelta(days=CHIP_RECENT_DAYS)
+            filled = await self.fill_chips(field, kind, since)
+            report.chips += filled.fetched
+            report.requests += filled.requests
+            report.processing_units += filled.processing_units
+        return report
+
+    async def fill_chips(self, field: Any, kind: str = KIND_BATCH, since: Optional[date] = None) -> "ChipReport":
+        """Fetches and stores the pixels of the passes of the series (from `since`; None: all of them) that have no
+        chip yet, newest first, one small request per pass. Stops, keeping what it has, when the month's budget for
+        this kind is used up or requests keep failing; whatever is missing is picked up by the next run."""
+        report = ChipReport()
+        fetch = getattr(self.copernicus, "s2_chip", None)
+        if fetch is None or not self.copernicus.configured or field.latitude is None or field.longitude is None:
+            return report
+        geometry = self.copernicus.geometry_hash(field.latitude, field.longitude, field.boundary)
+        bbox = chip_bbox(field.latitude, field.longitude, field.boundary)
+        width, height = chip_size(bbox)
+        passes = await self.repo.series(field.account_id, field.id, SOURCE_S2, since=since)
+        wanted = {
+            o.observed_on for o in passes
+            if o.ndvi_mean is not None and (o.valid_fraction or 0) >= CHIP_MIN_VALID_FRACTION
+        }
+        missing = sorted(wanted - await self.repo.chip_dates(field.id), reverse=True)
+        failures = 0
+        for day in missing:
+            if await self.budget_left(kind) <= 0:
+                report.stopped = "budget"
+                break
+            raw = await fetch(bbox, width, height, day)
+            report.requests += 1
+            if raw is None:
+                failures += 1
+                if failures >= MAX_CHIP_FAILURES:
+                    report.stopped = "failed"
+                    break
+                continue
+            failures = 0
+            await self.repo.add_usage(kind, raw.processing_units, 1)
+            report.processing_units += raw.processing_units or 0.0
+            await self.repo.add_chip(FieldSatelliteChip(
+                account_id=field.account_id, field_id=field.id, observed_on=day, geometry_hash=geometry,
+                min_lon=bbox[0], min_lat=bbox[1], max_lon=bbox[2], max_lat=bbox[3], width=width, height=height,
+                data=encode_chip(raw.pixels),
+            ))
+            report.fetched += 1
+            if self.pause_seconds:
+                await asyncio.sleep(self.pause_seconds)
         return report
 
     async def _sync_source(

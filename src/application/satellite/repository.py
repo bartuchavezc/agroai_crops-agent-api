@@ -3,13 +3,20 @@ from datetime import date
 from typing import Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.shared.domain.base import utcnow
 
-from .models import CopernicusUsage, FieldSatelliteObservation, FieldSatelliteSync, ZoneSatelliteReading
+from .models import (
+    SOURCE_S2,
+    CopernicusUsage,
+    FieldSatelliteChip,
+    FieldSatelliteObservation,
+    FieldSatelliteSync,
+    ZoneSatelliteReading,
+)
 
 
 class ZoneSatelliteRepository:
@@ -23,25 +30,19 @@ class ZoneSatelliteRepository:
             await session.refresh(reading)
         return reading
 
-    async def latest_image(
-        self, account_id: UUID, field_id: UUID, layer: str = "ndvi", observed_on: Optional[date] = None
-    ) -> Optional[str]:
-        """The most recent reading that actually has a saved image — not necessarily the most recent
-        reading overall, since a stats-only check_field() row has none. `observed_on` picks the map of one
-        pass; without it, the maps rendered "as of the latest pass". Rows from before layers existed
-        (layer NULL) are NDVI."""
-        stmt = select(ZoneSatelliteReading.image_identifier).where(
+    async def map_for(
+        self, account_id: UUID, field_id: UUID, layer: str, observed_on: date, window_days: Optional[int]
+    ) -> Optional[ZoneSatelliteReading]:
+        """The saved map of a layer whose latest pass is `observed_on`, for a window of `window_days` (None: that
+        single pass)."""
+        stmt = select(ZoneSatelliteReading).where(
             ZoneSatelliteReading.account_id == account_id,
             ZoneSatelliteReading.field_id == field_id,
             ZoneSatelliteReading.image_identifier.is_not(None),
-        )
-        stmt = stmt.where(
-            ZoneSatelliteReading.observed_on == observed_on if observed_on
-            else ZoneSatelliteReading.observed_on.is_(None)
-        )
-        stmt = stmt.where(
-            or_(ZoneSatelliteReading.layer == layer, ZoneSatelliteReading.layer.is_(None))
-            if layer == "ndvi" else ZoneSatelliteReading.layer == layer
+            ZoneSatelliteReading.layer == layer,
+            ZoneSatelliteReading.observed_on == observed_on,
+            ZoneSatelliteReading.window_days == window_days if window_days
+            else ZoneSatelliteReading.window_days.is_(None),
         )
         async with self.session_factory() as session:
             return (
@@ -96,6 +97,8 @@ class SatelliteSeriesRepository:
 
     async def delete_field_series(self, field_id: UUID, source: str) -> None:
         async with self.session_factory() as session:
+            if source == SOURCE_S2:  # the chips were cut for the same geometry as the series
+                await session.execute(delete(FieldSatelliteChip).where(FieldSatelliteChip.field_id == field_id))
             await session.execute(
                 delete(FieldSatelliteObservation).where(
                     FieldSatelliteObservation.field_id == field_id, FieldSatelliteObservation.source == source
@@ -162,6 +165,50 @@ class SatelliteSeriesRepository:
                 )
             ).all()
         return {kind: float(units or 0.0) for kind, units in rows}
+
+    # ------------------------------------------------------------ chips
+
+    async def chip_dates(self, field_id: UUID) -> set[date]:
+        async with self.session_factory() as session:
+            rows = await session.execute(
+                select(FieldSatelliteChip.observed_on).where(FieldSatelliteChip.field_id == field_id)
+            )
+            return set(rows.scalars().all())
+
+    async def add_chip(self, chip: FieldSatelliteChip) -> None:
+        """Idempotent on (field, date): a pass fetched twice replaces the first copy."""
+        table = FieldSatelliteChip.__table__
+        values = {c.name: getattr(chip, c.name) for c in table.columns if getattr(chip, c.name) is not None}
+        values.setdefault("id", uuid.uuid4())
+        values.setdefault("created_at", utcnow())
+        stmt = insert(table).values(**values)
+        update_cols = {k: stmt.excluded[k] for k in values if k not in ("id", "account_id", "field_id", "observed_on")}
+        async with self.session_factory() as session:
+            await session.execute(
+                stmt.on_conflict_do_update(index_elements=["field_id", "observed_on"], set_=update_cols)
+            )
+            await session.commit()
+
+    async def chips(
+        self, account_id: UUID, field_id: UUID, since: Optional[date] = None, until: Optional[date] = None
+    ) -> Sequence[FieldSatelliteChip]:
+        stmt = select(FieldSatelliteChip).where(
+            FieldSatelliteChip.account_id == account_id, FieldSatelliteChip.field_id == field_id
+        )
+        if since:
+            stmt = stmt.where(FieldSatelliteChip.observed_on >= since)
+        if until:
+            stmt = stmt.where(FieldSatelliteChip.observed_on <= until)
+        async with self.session_factory() as session:
+            return (await session.execute(stmt.order_by(FieldSatelliteChip.observed_on))).scalars().all()
+
+    async def latest_chip_date(self, account_id: UUID, field_id: UUID) -> Optional[date]:
+        async with self.session_factory() as session:
+            return (await session.execute(
+                select(func.max(FieldSatelliteChip.observed_on)).where(
+                    FieldSatelliteChip.account_id == account_id, FieldSatelliteChip.field_id == field_id
+                )
+            )).scalar_one_or_none()
 
 
 def _month_start() -> date:
