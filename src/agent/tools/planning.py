@@ -64,13 +64,18 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     refs = _Resolvers(deps, ctx)
 
     @tool
-    async def list_reminders(days_ahead: int = 14, include_done: bool = False, field: Optional[str] = None) -> dict:
+    async def list_reminders(
+        days_ahead: int = 14, include_done: bool = False, field: Optional[str] = None, zone: Optional[str] = None
+    ) -> dict:
         """The agenda: pending reminders up to `days_ahead` days from now, overdue ones included (due_at in the
-        past and still pending). include_done also lists the ones already done."""
-        field_id = (await resolve_field(deps, ctx, field)).id if field else None
+        past and still pending). include_done also lists the ones already done. zone: only that zone's, e.g.
+        'cantero 3'."""
+        target = await resolve_field(deps, ctx, field) if (field or zone) else None
+        zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
         until = utcnow() + timedelta(days=max(1, min(days_ahead, 366)))
         items = await deps.planning.list_reminders(
-            ctx.actor, status=None if include_done else "pendiente", until=until, field_id=field_id
+            ctx.actor, status=None if include_done else "pendiente", until=until,
+            field_id=target.id if target else None, zone_id=zone_id,
         )
         return {"now": utcnow().astimezone(ctx.tz).isoformat(), "reminders": compact(items)}
 

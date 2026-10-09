@@ -46,7 +46,7 @@ CROP_PHYSIOLOGY = (
 SOIL_REFERENCES = ("core-fertilizantes-y-enmiendas", "fisiologia-nutricion-mineral-fundamentos")
 
 # Where an analysis looks things up on the web, by country: the official sources first.
-OFFICIAL_SOURCES = {"AR": "INTA SENASA", "MX": "SENASICA INIFAP COFEPRIS"}
+OFFICIAL_SOURCES = {"AR": "INTA SENASA", "MX": "SENASICA INIFAP COFEPRIS", "CO": "ICA AGROSAVIA"}
 MAX_QUERIES = 3
 RESULTS_PER_QUERY = 4
 SNIPPET_CHARS = 700

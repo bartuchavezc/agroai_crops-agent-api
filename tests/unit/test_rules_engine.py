@@ -223,3 +223,46 @@ class TestSatelliteRules:
                "ndvi_below_p10_streak": 0, "ndvi_vs_last_year": 0.02, "ndvi_trend_15d": 0.03,
                "ndvi_normal_trend_15d": 0.02}
         assert rules_engine.evaluate(ctx, categories=["satellite"]) == []
+
+
+class TestFieldOverrides:
+    """What one field changes: a rule switched off, or its own limit."""
+
+    def test_a_threshold_replaces_the_default_limit(self, rules_engine):
+        cold = {"temperature": 4}
+        assert [r.rule_id for r in rules_engine.evaluate(cold, categories=["weather"])] == ["temp_cold_stress"]
+        stricter = {"temp_cold_stress": {"enabled": True, "threshold": 2}}
+        assert rules_engine.evaluate(cold, categories=["weather"], overrides=stricter) == []
+        laxer = {"temp_cold_stress": {"enabled": True, "threshold": 8}}
+        assert rules_engine.evaluate({"temperature": 7}, categories=["weather"], overrides=laxer)
+
+    def test_a_disabled_rule_is_skipped_and_the_others_keep_working(self, rules_engine):
+        hot_and_humid = {"temperature": 38, "humidity": 90}
+        both = ["weather", "disease"]
+        ids = {r.rule_id for r in rules_engine.evaluate(hot_and_humid, categories=both)}
+        assert ids == {"temp_heat_stress", "humidity_fungal_risk"}
+        off = {"temp_heat_stress": {"enabled": False, "threshold": None}}
+        ids = {r.rule_id for r in rules_engine.evaluate(hot_and_humid, categories=both, overrides=off)}
+        assert ids == {"humidity_fungal_risk"}
+
+    def test_rules_defined_against_another_follow_its_limit(self, rules_engine):
+        # frost is "tmin up to 2" but above the severe-frost limit; moving the severe limit moves the boundary
+        tmin = {"tmin": -3.0, "date": "10/10"}
+        assert [r.rule_id for r in rules_engine.evaluate(tmin, categories=["forecast"])] == ["forecast_severe_frost"]
+        lower_severe = {"forecast_severe_frost": {"enabled": True, "threshold": -6}}
+        ids = [r.rule_id for r in rules_engine.evaluate(tmin, categories=["forecast"], overrides=lower_severe)]
+        assert ids == ["forecast_frost"]
+        # irrigation: "covered" is the complement of "deficit", whatever the deficit limit is
+        net = {"net_mm": 4}
+        relaxed = {"irrigation_deficit": {"enabled": True, "threshold": 6}}
+        ids = [r.rule_id for r in rules_engine.evaluate(net, categories=["irrigation"], overrides=relaxed)]
+        assert ids == ["irrigation_covered"]
+
+    def test_describe_lists_every_rule_with_the_range_of_the_adjustable_ones(self, rules_engine):
+        described = {d["rule_id"]: d for d in rules_engine.describe()}
+        cold = described["temp_cold_stress"]
+        assert (cold["default_threshold"], cold["min_threshold"], cold["max_threshold"], cold["unit"]) == (
+            5, -10, 15, "°C"
+        )
+        assert described["affected_critical"]["default_threshold"] is None  # on/off only
+        assert described["irrigation_covered"]["default_threshold"] is None  # follows the deficit rule

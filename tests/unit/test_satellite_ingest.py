@@ -150,3 +150,47 @@ def test_s1_is_synced_too_when_enabled():
     report = run(service.sync_field(field))
     assert {c[0] for c in cop.calls} == {SOURCE_S2, SOURCE_S1}
     assert set(report.sources) == {SOURCE_S2, SOURCE_S1}
+
+
+class FakeQuality:
+    def __init__(self, dates):
+        self.dates = dates
+
+    def result(self):
+        from src.providers.satellite.copernicus import S2Quality
+
+        return SeriesResult(
+            observations=[S2Quality(d, 100, 0.7, 0.2, 0.0) for d in self.dates], processing_units=0.5, requests=1
+        )
+
+
+def test_passes_get_their_loss_causes_and_fully_masked_dates_are_kept_as_discarded_rows():
+    repo, cop, field = FakeRepo(), FakeCopernicus(), _field()
+    cloudy_day = date(2026, 9, 1)
+
+    async def s2_quality(lat, lon, start, end, polygon=None):
+        return FakeQuality([TODAY, cloudy_day]).result()
+
+    cop.s2_quality = s2_quality
+    report = run(_service(repo, cop).sync_field(field))
+    rows = {k[1]: v for k, v in repo.rows.items() if k[2] == SOURCE_S2}
+    clear = rows[TODAY]
+    assert (clear["cloud_fraction"], clear["shadow_fraction"], clear["nodata_fraction"]) == (0.7, 0.2, 0.0)
+    masked = rows[cloudy_day]
+    assert masked["ndvi_mean"] is None and masked["valid_pixels"] == 0 and masked["valid_fraction"] == 0.0
+    assert masked["cloud_fraction"] == 0.7
+    assert repo.usage[KIND_BATCH] == 2.0  # 1.5 for the indices + 0.5 for the quality request
+    assert report.requests == 2
+
+
+def test_a_failing_quality_request_never_costs_the_series():
+    repo, cop, field = FakeRepo(), FakeCopernicus(), _field()
+
+    async def s2_quality(lat, lon, start, end, polygon=None):
+        raise RuntimeError("boom")
+
+    cop.s2_quality = s2_quality
+    report = run(_service(repo, cop).sync_field(field))
+    assert report.sources[SOURCE_S2] == "backfill" and len(repo.rows) == 1
+    row = next(iter(repo.rows.values()))
+    assert row["cloud_fraction"] is None

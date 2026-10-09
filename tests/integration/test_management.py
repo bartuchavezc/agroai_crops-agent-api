@@ -1,4 +1,6 @@
 """Gestión: field + assignee on items, edit, cancel, soft delete, filters, per-field balance."""
+import uuid
+
 MG = "/api/v1/management"
 
 
@@ -127,3 +129,69 @@ async def test_roadmap_assignee_cancel_and_filters(client, signup, add_member):
 
     assert (await client.delete(f"{MG}/roadmap/{task['id']}", headers=tecnico["headers"])).status_code == 204
     assert [i["id"] for i in (await client.get(f"{MG}/roadmap", headers=h)).json()] == [other["id"]]
+
+
+async def test_budget_categories_currency_and_cycle_economics(client, signup):
+    owner = await signup("mg-econ")
+    h = owner["headers"]
+    field = await _field(client, owner, "Huerta")
+    tomato = [c for c in (await client.get("/api/v1/farm-management/crop-masters?q=tomate", headers=h)).json()
+              if c["name"] == "Tomate"][0]
+    cycle = await client.post(
+        "/api/v1/farm-management/crop-cycles", headers=h,
+        json={"field_id": field, "crop_master_id": tomato["id"], "plant_count": 20, "expected_yield_kg": 60,
+              "expected_price": 2.5},
+    )
+    assert cycle.status_code == 201, cycle.text
+    created = cycle.json()
+    assert (created["plant_count"], created["expected_yield_kg"], created["expected_price"]) == (20, 60, 2.5)
+    cycle_id = created["id"]
+
+    # categories: stable keys, labels in the user's locale; a typed label is stored as the key
+    cats = (await client.get(f"{MG}/budget/categories", headers=h)).json()
+    assert {"key": "mano_de_obra", "label": "Mano de obra", "type": "gasto"} in cats
+
+    async def entry(**body):
+        response = await client.post(f"{MG}/budget", headers=h, json={"date": "2026-10-01", **body})
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    seeds = await entry(description="Plantines", amount=40, type="gasto", category="Semillas", crop_cycle_id=cycle_id)
+    assert seeds["category"] == "semillas"
+    await entry(description="Abono", amount=20, type="gasto", category="mi categoría", crop_cycle_id=cycle_id)
+    await entry(description="Venta", amount=100, type="ingreso", crop_cycle_id=cycle_id)
+    await entry(description="Algo en pesos mexicanos", amount=999, type="gasto", currency="MXN")  # another money
+    await entry(description="Gasto suelto", amount=7, type="gasto")
+
+    summary = (await client.get(f"{MG}/budget/summary?cycle_id={cycle_id}", headers=h)).json()
+    assert summary["currency"] == "ARS" and summary["total_gastos"] == 60 and summary["balance"] == 40
+    assert summary["by_category"]["semillas"] == -40 and summary["by_category"]["mi categoría"] == -20
+    assert summary["cost_per_plant"] == 3.0 and summary["break_even_kg"] == 24.0
+    assert summary["expected_revenue"] == 150.0 and summary["margin"] == 90.0
+
+    whole = (await client.get(f"{MG}/budget/summary", headers=h)).json()
+    assert whole["total_gastos"] == 67 and whole["other_currencies"] == {"MXN": -999.0}  # never mixed in
+    assert whole["cost_per_plant"] is None and whole["break_even_kg"] is None  # only a single cycle has them
+    by_crop = (await client.get(f"{MG}/budget/summary?crop_master_id={tomato['id']}", headers=h)).json()
+    assert by_crop["total_gastos"] == 60
+
+    bare = await client.post(
+        "/api/v1/farm-management/crop-cycles", headers=h, json={"field_id": field, "crop_master_id": tomato["id"]}
+    )
+    nothing = (await client.get(f"{MG}/budget/summary?cycle_id={bare.json()['id']}", headers=h)).json()
+    assert nothing["break_even_kg"] is None and nothing["margin"] is None and nothing["cost_per_plant"] is None
+
+
+async def test_accounts_keep_their_books_in_the_owners_currency(client, container):
+    async def signed(country):
+        email = f"cur-{country.lower()}-{uuid.uuid4().hex[:6]}@example.com"
+        response = await client.post(
+            "/api/v1/auth/signup", json={"email": email, "password": "secret-pass-1", "country": country}
+        )
+        headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
+        field = await client.post("/api/v1/farm-management/fields", headers=headers, json={"name": "H"})
+        await client.post(f"{MG}/budget", headers=headers,
+                          json={"date": "2026-10-01", "description": "x", "amount": 5, "type": "gasto"})
+        return (await client.get(f"{MG}/budget/summary", headers=headers)).json()["currency"], field.status_code
+
+    assert (await signed("CO"))[0] == "COP" and (await signed("MX"))[0] == "MXN" and (await signed("AR"))[0] == "ARS"

@@ -4,6 +4,7 @@ from uuid import UUID
 from src.shared.domain.actor import Actor
 from src.shared.utils.errors import InvalidInputError, NotFoundError, PermissionDeniedError
 
+from .categories import catalog, normalize_category
 from .models import BudgetEntry, RoadmapItem, ShoppingListItem
 from .repository import IdFilter, ManagementRepository
 from .schemas import (
@@ -94,8 +95,14 @@ class ManagementService:
         )
         return [BudgetEntryRead.model_validate(i) for i in items]
 
+    @staticmethod
+    def budget_categories(actor: Actor) -> list[dict]:
+        """The suggested categories (stable key + label in the user's locale)."""
+        return catalog(actor.locale)
+
     async def add_budget_entry(self, actor: Actor, data: BudgetEntryCreate) -> BudgetEntryRead:
         values = data.model_dump()
+        values["category"] = normalize_category(values.get("category"))
         await self._check_refs(actor, values)
         entry = await self.repo.create_budget_entry(BudgetEntry(account_id=actor.account_id, **values))
         return BudgetEntryRead.model_validate(entry)
@@ -103,6 +110,8 @@ class ManagementService:
     async def update_budget_entry(self, actor: Actor, entry_id: UUID, data: BudgetEntryUpdate) -> BudgetEntryRead:
         _require_manager(actor)
         values = data.model_dump(exclude_unset=True)
+        if "category" in values:
+            values["category"] = normalize_category(values["category"])
         await self._check_refs(actor, values)
         entry = await self.repo.update_budget_entry(actor.account_id, entry_id, values)
         if entry is None:
@@ -115,25 +124,53 @@ class ManagementService:
             raise NotFoundError(f"Budget entry {entry_id} not found.")
 
     async def get_budget_summary(
-        self, actor: Actor, field_id: IdFilter = None, since: Optional[str] = None, until: Optional[str] = None
+        self, actor: Actor, field_id: IdFilter = None, since: Optional[str] = None, until: Optional[str] = None,
+        cycle_id: Optional[UUID] = None, crop_master_id: Optional[UUID] = None,
     ) -> BudgetSummary:
-        entries = await self.repo.list_budget_entries(actor.account_id, field_id=field_id, since=since, until=until)
-        total_gastos = sum(e.amount for e in entries if e.type == "gasto")
-        total_ingresos = sum(e.amount for e in entries if e.type == "ingreso")
-        by_category: dict[str, float] = {}
+        cycle = await self.farm.get_crop_cycle(actor, cycle_id) if cycle_id and self.farm is not None else None
+        if crop_master_id and self.farm is not None:
+            await self.farm.get_crop_master(actor, crop_master_id)
+        entries = await self.repo.list_budget_entries(
+            actor.account_id, field_id=field_id, since=since, until=until,
+            crop_cycle_id=cycle_id, crop_master_id=crop_master_id,
+        )
+        currency = await self.repo.account_currency(actor.account_id)
+        # The totals are in the account's currency; entries in another one are reported apart, never mixed in.
+        own = [e for e in entries if e.currency in (None, currency)]
+        other: dict[str, float] = {}
         for e in entries:
+            if e.currency not in (None, currency):
+                other[e.currency] = other.get(e.currency, 0.0) + (e.amount if e.type == "ingreso" else -e.amount)
+        total_gastos = sum(e.amount for e in own if e.type == "gasto")
+        total_ingresos = sum(e.amount for e in own if e.type == "ingreso")
+        by_category: dict[str, float] = {}
+        for e in own:
             key = e.category or "sin categoría"
             signed = e.amount if e.type == "ingreso" else -e.amount
             by_category[key] = by_category.get(key, 0.0) + signed
         period = f"{since or '...'} a {until or 'hoy'}"
-        return BudgetSummary(
+        summary = BudgetSummary(
             period=period,
             field_id=field_id if isinstance(field_id, UUID) else None,
             total_gastos=round(total_gastos, 2),
             total_ingresos=round(total_ingresos, 2),
             balance=round(total_ingresos - total_gastos, 2),
             by_category={k: round(v, 2) for k, v in by_category.items()},
+            currency=currency,
+            other_currencies={k: round(v, 2) for k, v in other.items()},
+            cycle_id=cycle_id,
+            crop_master_id=crop_master_id,
         )
+        if cycle is not None:
+            # Only a single cycle has an expected yield and price to read the cost against; missing data -> null.
+            if cycle.plant_count:
+                summary.cost_per_plant = round(total_gastos / cycle.plant_count, 2)
+            if cycle.expected_price:
+                summary.break_even_kg = round(total_gastos / cycle.expected_price, 2)
+            if cycle.expected_yield_kg is not None and cycle.expected_price is not None:
+                summary.expected_revenue = round(cycle.expected_yield_kg * cycle.expected_price, 2)
+                summary.margin = round(summary.expected_revenue - total_gastos, 2)
+        return summary
 
     # ---------- roadmap ----------
 

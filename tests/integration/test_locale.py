@@ -72,3 +72,16 @@ async def test_members_share_the_owners_place_unless_they_say_otherwise(client):
 
     other = await client.post("/api/v1/auth/users", headers=headers, json=member(country="AR"))
     assert (other.json()["country"], other.json()["timezone"]) == ("AR", "America/Argentina/Buenos_Aires")
+
+
+async def test_colombia_is_a_served_country_with_its_own_defaults(client):
+    response, _ = await _signup(client, country="CO")
+    assert response.status_code == 200, response.text
+    headers, user = await _me(client, response)
+    assert (user["country"], user["timezone"], user["locale"]) == ("CO", "America/Bogota", "es-CO")
+
+    other, _ = await _signup(client)
+    other_headers, _ = await _me(client, other)
+    moved = await client.patch("/api/v1/auth/me", headers=other_headers, json={"country": "CO"})
+    assert moved.status_code == 200, moved.text
+    assert (moved.json()["timezone"], moved.json()["locale"]) == ("America/Bogota", "es-CO")

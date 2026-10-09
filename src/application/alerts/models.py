@@ -1,6 +1,17 @@
 import uuid
 
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from src.shared.database import Base
@@ -35,3 +46,19 @@ class AlertModel(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     acknowledged_at = Column(DateTime(timezone=True))
     acknowledged_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class FieldAlertRule(Base):
+    """What one field changed about an alert rule: switched off, or its own limit. Rules not listed here behave as
+    the engine defines them; the unique key keeps one override per rule and field."""
+    __tablename__ = "field_alert_rules"
+    __table_args__ = (UniqueConstraint("field_id", "rule_id", name="uq_field_alert_rules_field_rule"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), nullable=False, index=True)
+    rule_id = Column(String(100), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    threshold = Column(Float)  # NULL = the rule's default
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))

@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field as PField, field_validator
@@ -20,6 +20,7 @@ def _seed_unit(value: str) -> str:
 class SeedLotCreate(BaseModel):
     crop_master_id: UUID
     variety_note: Optional[str] = PField(default=None, max_length=255)
+    variety_i18n: Dict[str, str] = PField(default_factory=dict)
     quantity: float = PField(gt=0)
     unit: str = PField(default="semillas", max_length=30, description="semillas | gramos")
     thousand_seed_weight_g: Optional[float] = PField(default=None, gt=0, le=100000)
@@ -94,6 +95,7 @@ class SeedLotRead(BaseModel):
     account_id: UUID
     crop_master_id: UUID
     variety_note: Optional[str] = None
+    variety_i18n: Dict[str, str] = PField(default_factory=dict)
     quantity: float
     unit: str
     thousand_seed_weight_g: Optional[float] = None

@@ -3,7 +3,7 @@ from datetime import date
 from typing import Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -23,21 +23,29 @@ class ZoneSatelliteRepository:
             await session.refresh(reading)
         return reading
 
-    async def latest_image(self, account_id: UUID, field_id: UUID) -> Optional[str]:
+    async def latest_image(
+        self, account_id: UUID, field_id: UUID, layer: str = "ndvi", observed_on: Optional[date] = None
+    ) -> Optional[str]:
         """The most recent reading that actually has a saved image — not necessarily the most recent
-        reading overall, since a stats-only check_field() row has none."""
+        reading overall, since a stats-only check_field() row has none. `observed_on` picks the map of one
+        pass; without it, the maps rendered "as of the latest pass". Rows from before layers existed
+        (layer NULL) are NDVI."""
+        stmt = select(ZoneSatelliteReading.image_identifier).where(
+            ZoneSatelliteReading.account_id == account_id,
+            ZoneSatelliteReading.field_id == field_id,
+            ZoneSatelliteReading.image_identifier.is_not(None),
+        )
+        stmt = stmt.where(
+            ZoneSatelliteReading.observed_on == observed_on if observed_on
+            else ZoneSatelliteReading.observed_on.is_(None)
+        )
+        stmt = stmt.where(
+            or_(ZoneSatelliteReading.layer == layer, ZoneSatelliteReading.layer.is_(None))
+            if layer == "ndvi" else ZoneSatelliteReading.layer == layer
+        )
         async with self.session_factory() as session:
             return (
-                await session.execute(
-                    select(ZoneSatelliteReading.image_identifier)
-                    .where(
-                        ZoneSatelliteReading.account_id == account_id,
-                        ZoneSatelliteReading.field_id == field_id,
-                        ZoneSatelliteReading.image_identifier.is_not(None),
-                    )
-                    .order_by(ZoneSatelliteReading.captured_at.desc())
-                    .limit(1)
-                )
+                await session.execute(stmt.order_by(ZoneSatelliteReading.captured_at.desc()).limit(1))
             ).scalar_one_or_none()
 
 

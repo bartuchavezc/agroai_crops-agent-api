@@ -26,7 +26,7 @@ class AccountService:
         """
         return await self.account_repository.get_by_id(account_id)
 
-    async def create_account(self, name: str) -> Account:
+    async def create_account(self, name: str, currency: str = "ARS") -> Account:
         """
         Create a new account.
 
@@ -42,4 +42,4 @@ class AccountService:
         if not self.account_repository:
             raise RuntimeError("Account repository is not configured")
 
-        return await self.account_repository.create(name)
+        return await self.account_repository.create(name, currency)

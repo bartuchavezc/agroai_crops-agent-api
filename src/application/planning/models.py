@@ -103,6 +103,7 @@ class Reminder(Base):
         CheckConstraint(f"recurrence IN {RECURRENCES}", name="reminder_recurrence_valid"),
         CheckConstraint(f"source IN {SOURCES}", name="reminder_source_valid"),
         Index("ix_reminders_account_due", "account_id", "due_at"),
+        Index("ix_reminders_zone_due", "zone_id", "due_at"),
         Index("ix_reminders_status_due", "status", "due_at"),
     )
 
@@ -129,3 +130,25 @@ class Reminder(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True))
+
+
+class ReminderCompletion(Base):
+    """One row per time a reminder was done. A recurring reminder only moves on to its next occurrence, so without
+    this there would be no record of the earlier ones (the zone timeline reads it). Title and place are copied: the
+    record survives the reminder being edited or deleted."""
+    __tablename__ = "reminder_completions"
+    __table_args__ = (
+        Index("ix_reminder_completions_zone_done", "zone_id", "completed_at"),
+        Index("ix_reminder_completions_account_done", "account_id", "completed_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    reminder_id = Column(UUID(as_uuid=True), ForeignKey("reminders.id", ondelete="SET NULL"))
+    field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
+    crop_cycle_id = Column(UUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"))
+    title = Column(String(255), nullable=False)
+    description = Column(Text)
+    completed_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    completed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))

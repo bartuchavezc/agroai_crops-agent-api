@@ -6,10 +6,11 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULT_COUNTRY = "AR"
-COUNTRIES = ("AR", "MX")
+COUNTRIES = ("AR", "MX", "CO")
 _DEFAULTS = {
     "AR": {"timezone": "America/Argentina/Buenos_Aires", "locale": "es-AR"},
     "MX": {"timezone": "America/Mexico_City", "locale": "es-MX"},
+    "CO": {"timezone": "America/Bogota", "locale": "es-CO"},
 }
 
 
@@ -19,6 +20,13 @@ def default_timezone(country: str) -> str:
 
 def default_locale(country: str) -> str:
     return _DEFAULTS.get(country, _DEFAULTS[DEFAULT_COUNTRY])["locale"]
+
+
+def localized(neutral: str, i18n: dict | None, locale: str | None) -> str:
+    """A catalog name in the user's locale: `i18n[locale]`, then `i18n["es"]`, then the neutral value (same order as
+    the web app's `localizedLabel`)."""
+    names = i18n or {}
+    return names.get(locale or "") or names.get("es") or neutral
 
 
 def validate_timezone(name: str) -> str:
@@ -37,3 +45,11 @@ def today_in(timezone: str | None) -> date:
     except (ZoneInfoNotFoundError, ValueError, OSError):
         tz = ZoneInfo(default_timezone(DEFAULT_COUNTRY))
     return datetime.now(tz).date()
+
+
+_CURRENCIES = {"AR": "ARS", "MX": "MXN", "CO": "COP"}
+
+
+def default_currency(country: str | None) -> str:
+    """ISO-4217 code of the money people in that country keep their books in."""
+    return _CURRENCIES.get(country or DEFAULT_COUNTRY, _CURRENCIES[DEFAULT_COUNTRY])

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Literal, Optional, Union
 from uuid import UUID
 
@@ -29,14 +29,34 @@ from .schemas import (
     StageRead,
     StageUpdate,
 )
+from .calendar import CalendarResponse
+from .progress import CycleProgress, CycleProgressService
 from .service import PlanningService
 
 router = APIRouter(prefix="/planning", tags=["Planning"])
 
 PLANNING = Provide["application.planning_service"]
+PROGRESS = Provide["application.cycle_progress_service"]
 
 # assigned_to filter: a member id ("mine": theirs + unassigned), or "none" for unassigned only.
 IdFilter = Optional[Union[UUID, Literal["none"]]]
+
+
+# ---------- calendar ----------
+
+@router.get("/calendar", response_model=CalendarResponse, summary="Reminders, sowings and stages in a date range")
+@inject
+async def calendar(
+    since: date,
+    until: date,
+    field_id: Optional[UUID] = None,
+    actor: Actor = Depends(get_actor),
+    planning: PlanningService = Depends(PLANNING),
+):
+    """Dates are the user's local days (inclusive). Recurring reminders come already expanded into their
+    occurrences (from the current one on: earlier ones were never recorded); stages come as items on their start
+    day and as `ranges`. At most 400 days at a time."""
+    return await planning.calendar(actor, since, until, field_id)
 
 
 # ---------- reminders ----------
@@ -51,13 +71,16 @@ async def list_reminders(
     crop_cycle_id: Optional[UUID] = None,
     plan_id: Optional[UUID] = None,
     assigned_to: IdFilter = None,
+    zone_id: Optional[UUID] = None,
+    before: Optional[datetime] = Query(None, description="History: reminders due before this instant, newest first"),
     limit: int = Query(200, ge=1, le=500),
     actor: Actor = Depends(get_actor),
     planning: PlanningService = Depends(PLANNING),
 ):
-    """Ordered by due_at (the current occurrence of recurring ones)."""
+    """Ordered by due_at (the current occurrence of recurring ones); newest first when `before` is given."""
     return await planning.list_reminders(
-        actor, status_filter, since, until, field_id, crop_cycle_id, plan_id, assigned_to, limit
+        actor, status_filter, since, until, field_id, crop_cycle_id, plan_id, assigned_to, limit,
+        zone_id=zone_id, before=before,
     )
 
 
@@ -234,6 +257,19 @@ async def preview_cycle_plan(
     cycle_id: UUID, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
 ):
     return await planning.propose_cycle_plan(actor, cycle_id)
+
+
+@router.get(
+    "/crop-cycles/{cycle_id}/progress", response_model=CycleProgress,
+    summary="Expected vs. real progress of a crop cycle",
+)
+@inject
+async def cycle_progress(
+    cycle_id: UUID, actor: Actor = Depends(get_actor), progress: CycleProgressService = Depends(PROGRESS)
+):
+    """expected_pct, current stage and next stage from the dates and the stage plan; ok/late/affected from the latest
+    completed analysis that covered the cycle (unknown when there is none)."""
+    return await progress.progress(actor, cycle_id)
 
 
 @router.post(

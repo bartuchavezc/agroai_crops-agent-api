@@ -18,7 +18,7 @@ Los errores de dominio responden `{"detail": "...", "error_code": "..."}`.
 | POST | `/auth/login` | Email sin distinguir mayúsculas. Los 401 repetidos por IP los banea fail2ban (`deploy/fail2ban`) |
 | POST | `/auth/password` | Cambia la propia contraseña; invalida todos los tokens anteriores y devuelve uno nuevo |
 | GET | `/auth/me` | `{user, account}`; `user` incluye `country`, `timezone` y `locale` |
-| PATCH | `/auth/me` | `{country?, timezone?, locale?}`: dónde está la persona. Define la voz del agente (voseo argentino / tuteo mexicano), el hemisferio, las autoridades de referencia y la hora local. Cambiar solo el país lleva zona horaria y locale a los de ese país |
+| PATCH | `/auth/me` | `{country?: AR\|MX\|CO, timezone?, locale?}`: dónde está la persona. Define la voz del agente (voseo argentino / tuteo mexicano o colombiano), el hemisferio, las autoridades de referencia y la hora local. Cambiar solo el país lleva zona horaria y locale a los de ese país |
 | GET / POST | `/auth/users` | Miembros de la cuenta / alta de `tecnico` o `staff` (solo owner). Si el alta no manda `country`, el miembro hereda país, zona horaria y locale del owner |
 | GET | `/auth/users/{id}` | Solo misma cuenta |
 | PATCH | `/auth/users/{id}/role` | Solo owner |
@@ -46,13 +46,13 @@ traen foto, y la herramienta `expert_field_analysis` del agente (lectura de clim
 | GET | `/farm-management/overview` | Campos + ciclos activos + última actividad |
 | GET / POST | `/farm-management/fields` | POST: owner/tecnico |
 | GET / PUT / DELETE | `/farm-management/fields/{id}` | PUT/DELETE: owner/tecnico |
-| GET / POST | `/farm-management/crop-masters?q=` | Catálogo global + de la cuenta |
+| GET / POST | `/farm-management/crop-masters?q=` | Catálogo global + de la cuenta. `q` también busca por los nombres de otros países (`i18n`: `{"es-MX": "Jitomate"}`, `variety_i18n`); `name`/`variety` siguen siendo el valor neutro y el respaldo |
 | GET / DELETE | `/farm-management/crop-masters/{id}` | Solo se borran los de la cuenta |
 | GET / POST | `/farm-management/fields/{id}/zones` | Zonas del campo (`cajon`, `cantero`, `invernadero`, `hidroponia`), numeradas por tipo: `{type, number?, name?, notes?, layout_object_id?}` → `label` "Cantero 3". POST: owner/tecnico; sin `number` toma el siguiente libre |
 | PUT / DELETE | `/farm-management/zones/{id}` | owner/tecnico. Al borrar, sus ciclos quedan en el campo sin zona |
 | GET / POST | `/farm-management/crop-cycles?field_id=&status=&zone_id=` | POST: owner/tecnico. `zone_id` opcional (de una zona del mismo campo) |
 | GET / PUT / DELETE | `/farm-management/crop-cycles/{id}` | |
-| GET / POST | `/farm-management/events?field_id=&type=&since=` | Cualquier rol registra eventos |
+| GET / POST | `/farm-management/events?field_id=&zone_id=&crop_cycle_id=&type=&since=&until=&before=&limit=` | Cualquier rol registra eventos. `zone_id` filtra por zona; `before=<occurred_at del último recibido>` pagina hacia atrás (más nuevos primero) |
 | PUT / DELETE | `/farm-management/events/{id}` | Autor u owner/tecnico |
 
 Tipos de evento: `sowing, transplant, irrigation, fertilization, treatment, pruning, weeding, pest_sighting,
@@ -78,7 +78,7 @@ disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, plan
 | POST | `/upload/image` | multipart `image_file`, opcional `field_id`, `crop_cycle_id` → `{report_id, image_identifier}` |
 | POST | `/upload/zone-tracking` | Seguimiento diario de una zona: multipart `zone_id` + 1-4 `image_files` → un reporte `periodic` con `zone_id`, `crop_cycle_ids` (ciclos activos de la zona) e `image_identifiers`; se analiza en segundo plano (`raw_analysis_data.llm_structured_zone`: resumen + una evaluación por cultivo) |
 | POST | `/analyze` | `{report_id, image_identifier?, deep?}` → diagnóstico estructurado (Gemini multimodal). El análisis recibe fisiología vegetal, la ficha y la guía de plagas de cada cultivo del lote, NDVI/NDWI históricos, clima de 30 días, suelo y registros previos. `deep` (por defecto `ANALYSIS_DEEP`, activo) agrega una segunda pasada que busca fuentes en la web (Tavily) y refina el análisis; las fuentes quedan en `raw_analysis_data.research` y el diagnóstico las cita en `additional_notes`. Los análisis de suelo no usan `deep` |
-| GET / POST | `/reports?field_id=&crop_cycle_id=&zone_id=&report_type=` | `crop_cycle_id` incluye los seguimientos de zona que cubrieron ese ciclo |
+| GET / POST | `/reports?field_id=&crop_cycle_id=&zone_id=&report_type=&since=&until=` | `crop_cycle_id` incluye los seguimientos de zona que cubrieron ese ciclo |
 | GET / PUT / DELETE | `/reports/{id}` | `raw_analysis_data.llm_structured_diagnosis` |
 
 ## Planificación y recordatorios
@@ -89,9 +89,11 @@ ese integrante, si no a toda la cuenta.
 
 | Método | Ruta | Notas |
 |---|---|---|
-| GET / POST | `/planning/reminders?status=&since=&until=&field_id=&crop_cycle_id=&plan_id=&assigned_to=` | `{title, due_at, description?, recurrence: none\|daily\|weekly\|every_n_days, interval_days?, until?, assigned_to?, field_id?, zone_id?, crop_cycle_id?, plan_id?}`. `assigned_to=<id>` = los suyos + los sin asignar; `none` = sin asignar |
+| GET / POST | `/planning/reminders?status=&since=&until=&field_id=&zone_id=&crop_cycle_id=&plan_id=&assigned_to=&before=` | `{title, due_at, description?, recurrence: none\|daily\|weekly\|every_n_days, interval_days?, until?, assigned_to?, field_id?, zone_id?, crop_cycle_id?, plan_id?}`. `assigned_to=<id>` = los suyos + los sin asignar; `none` = sin asignar |
 | PUT / DELETE | `/planning/reminders/{id}` | PUT parcial (posponer = cambiar `due_at`). DELETE: manager o quien lo creó |
-| POST | `/planning/reminders/{id}/complete` | Uno recurrente pasa a su próxima ocurrencia (y termina después de `until`) |
+| POST | `/planning/reminders/{id}/complete` | Uno recurrente pasa a su próxima ocurrencia (y termina después de `until`). Cada vez que se completa queda registrado (lo lee la línea de tiempo de la zona) |
+| GET | `/planning/calendar?since=&until=&field_id=` | Fechas locales inclusivas, hasta 400 días. `items`: recordatorios con sus recurrencias expandidas (desde la ocurrencia actual: las anteriores no se guardaron), siembras planificadas y etapas en su día de inicio; `ranges`: las etapas de planes activos como tramos |
+| GET | `/planning/crop-cycles/{id}/progress` | `expected_pct`, `current_stage`, `next_stage_at` (según el plan del ciclo o la plantilla del cultivo) y `status` ok\|late\|affected\|unknown con `reason` y `evidence_report_id` (último análisis completado que cubrió el ciclo) |
 | GET / POST | `/planning/plans?field_id=&status=` | `{name, kind: ciclo\|largo, field_id?, zone_id?, start_date?, end_date?, notes?, stages[], sowings[]}`; cada siembra crea su recordatorio |
 | GET / PUT / DELETE | `/planning/plans/{id}` | GET con `stages`, `sowings`, `reminders`. Archivar o borrar cancela los recordatorios pendientes |
 | POST | `/planning/plans/{id}/stages` | `{name, stage, start_date, end_date?, remind?}` — `PUT/DELETE /planning/stages/{id}` |
@@ -107,10 +109,10 @@ ese integrante, si no a toda la cuenta.
 ## Satélite (Copernicus)
 | Método | Ruta | Notas |
 |---|---|---|
-| GET | `/satellite/fields/{id}/status` | Última pasada sin nubes + `analysis` (cada índice vs lo normal de esa semana y vs el año pasado, tendencia, etapa de la curva, señal de radar, advertencias) + alertas. Actualiza la serie desde Copernicus solo si tiene más de 12 h y hay cupo on-demand |
-| GET | `/satellite/fields/{id}/series?metric=ndvi&since=` | Serie guardada (sin llamar a Copernicus): tabla semanal (crudo, suavizado, normal p10/p50/p90, año pasado), pasadas y radar. `metric`: ndvi, ndre, ndmi, evi, ndwi |
+| GET | `/satellite/fields/{id}/status?refresh=` | `refresh=false`: lectura pura (sin llamar a Copernicus ni escribir alertas). Trae `previous_ndvi_mean`, `previous_date`, `ndvi_delta` y `min_valid_fraction`. Última pasada sin nubes + `analysis` (cada índice vs lo normal de esa semana y vs el año pasado, tendencia, etapa de la curva, señal de radar, advertencias) + alertas. Actualiza la serie desde Copernicus solo si tiene más de 12 h y hay cupo on-demand |
+| GET | `/satellite/fields/{id}/series?metric=ndvi&metrics=&since=&until=` | Serie guardada (sin llamar a Copernicus): tabla semanal (crudo, suavizado, normal p10/p50/p90, año pasado), pasadas y radar. `metrics=ndvi,ndmi` devuelve `weekly_by_metric` (y `weekly` es la primera). Cada pasada de `passes` trae `discarded` y `discard_reason` (`clouds`\|`shadow`\|`nodata`; `unknown` en pasadas guardadas antes de registrar la causa). `until` solo recorta la salida; `include_masked=true` suma las fechas totalmente nubladas (sin valores) |
 | POST | `/satellite/fields/{id}/sync` | Fuerza la actualización de la serie (respeta el cupo mensual) |
-| GET / POST | `/satellite/fields/{id}/image`, `/render-map` | Mapa NDVI coloreado (cacheado / regenerar) |
+| GET / POST | `/satellite/fields/{id}/image?layer=&date=`, `/render-map` | Mapa de una capa (`ndvi`\|`ndmi`\|`rgb`, por defecto ndvi) de una pasada de la serie (`date`, por defecto la última); se renderiza y guarda la primera vez. Fecha que no es una pasada: 404; pasada totalmente nublada: 400 |
 | GET | `/satellite/fields/{id}/boundary-base-image` | Imagen color real para dibujar el borde del campo |
 
 ## Clima
@@ -149,3 +151,24 @@ Los datos salen de las tablas `soilgrids_grids` y `soilgrids_tiles` de la propia
 las grillas cargadas no hay estimación. Hay que importar los rasters en cada ambiente después de migrar:
 
     uv run python -m src.scripts.import_soilgrids --dir raw_data/downloads/soilgrids [--depths ...] [--regions ...]
+
+## Rediseño del front: lo que se agregó
+
+Todo es aditivo: parámetros y campos opcionales; un cliente que no los usa no nota diferencia.
+
+| Método | Ruta | |
+|---|---|---|
+| GET | `/farm-management/fields/{id}/summary` | El inicio del campo en una llamada: `status` (ok\|attention\|alert\|unknown) y `status_reasons`, `zones` (con sus cultivos activos y `last_analysis`: resumen, salud, foto), `unzoned_cycles`, `alerts` activas, `reminders_today` (pendientes hasta el fin del día local, vencidos incluidos) e `irrigation` (null si no hay coordenadas o no hay datos del clima) |
+| GET | `/farm-management/zones/{id}`, `/zones/{id}/timeline?before=&limit=` | Eventos, análisis completados y recordatorios hechos de la zona, en una lista `{kind: event\|analysis\|reminder, at, title, detail, ref_id, type}`, más nuevos primero |
+| GET | `/irrigation/fields/{id}/recommendation` | Ahora con `suggested_mm` y `next_irrigation_date` (también por cultivo): el día en que el balance hídrico supera el umbral de déficit, con el pronóstico de lluvia (`null` si no hace falta en 7 días) |
+| GET / PATCH | `/alerts/fields/{id}/alert-rules[/{rule_id}]` | Cada regla con `enabled`, `threshold` vigente, `default_threshold`, rango y unidad. PATCH (owner/tecnico): `{enabled?}` o `{threshold?}` (`null` vuelve al valor por defecto). Los jobs, el análisis y el agente lo respetan |
+| GET | `/management/budget/categories` | Categorías sugeridas con clave estable y etiqueta en el idioma de la persona. Un texto que coincide con una clave o etiqueta se guarda como la clave |
+| GET | `/management/budget/summary?cycle_id=&crop_master_id=` | Con `cycle_id`: `cost_per_plant`, `break_even_kg`, `expected_revenue` y `margin` (null si faltan `plant_count`, `expected_yield_kg` o `expected_price` del ciclo). Los totales van en la moneda de la cuenta (`currency`); lo cargado en otra va aparte en `other_currencies` |
+| GET | `/upload/image/{id}?max_side=320` | Miniatura JPEG (32 a 1536 px), generada una vez y guardada junto al original |
+
+Datos nuevos: `crop_cycles.plant_count`, `expected_yield_kg`, `expected_price` (por kg); `accounts.currency`
+(según el país del owner: ARS, MXN, COP) y `budget_entries.currency` (opcional); país `CO`.
+
+Textos del back: los que genera el sistema (alertas, recordatorios, notificaciones) están en español neutro (sin
+voseo); donde el vocabulario difiere por país (por ejemplo almácigo/semillero) se adapta al crear el texto, y los
+nombres de cultivo salen en el idioma de la persona. Los textos ya guardados no se reescriben.

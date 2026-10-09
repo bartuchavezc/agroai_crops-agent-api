@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -32,6 +33,8 @@ async def list_reports(
     crop_cycle_id: Optional[UUID] = None,
     report_type: Optional[str] = None,
     zone_id: Optional[UUID] = None,
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     actor: Actor = Depends(get_actor),
@@ -46,6 +49,8 @@ async def list_reports(
         skip=skip,
         limit=limit,
         zone_id=zone_id,
+        since=since,
+        until=until,
     )
 
 

@@ -1,14 +1,16 @@
 """
 Planning data access. Every query takes account_id, except `due_reminders` (the batch job, all accounts).
 """
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional, Sequence, Type, TypeVar, Union
 from uuid import UUID
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from .models import CropPlan, PlanSowing, PlanStage, Reminder
+from src.application.farm.models import CropMaster
+
+from .models import CropPlan, PlanSowing, PlanStage, Reminder, ReminderCompletion
 
 Row = TypeVar("Row", CropPlan, PlanStage, PlanSowing, Reminder)
 
@@ -150,8 +152,14 @@ class PlanningRepository:
         plan_id: Optional[UUID] = None,
         assigned_to: IdFilter = None,
         limit: int = 200,
+        zone_id: Optional[UUID] = None,
+        before: Optional[datetime] = None,
     ) -> Sequence[Reminder]:
         stmt = select(Reminder).where(Reminder.account_id == account_id, Reminder.deleted_at.is_(None))
+        if zone_id:
+            stmt = stmt.where(Reminder.zone_id == zone_id)
+        if before:  # history: only those due before the oldest one already received
+            stmt = stmt.where(Reminder.due_at < before)
         if status:
             stmt = stmt.where(Reminder.status == status)
         if since:
@@ -169,7 +177,7 @@ class PlanningRepository:
         elif assigned_to:
             # "mine": assigned to me, or to nobody (everyone gets those).
             stmt = stmt.where(or_(Reminder.assigned_to == assigned_to, Reminder.assigned_to.is_(None)))
-        stmt = stmt.order_by(Reminder.due_at).limit(limit)
+        stmt = stmt.order_by(Reminder.due_at.desc() if before else Reminder.due_at, Reminder.id).limit(limit)
         async with self.session_factory() as session:
             return (await session.execute(stmt)).scalars().all()
 
@@ -188,3 +196,51 @@ class PlanningRepository:
         )
         async with self.session_factory() as session:
             return (await session.execute(stmt)).scalars().all()
+
+    async def completions(
+        self, account_id: UUID, zone_id: Optional[UUID] = None, before: Optional[datetime] = None, limit: int = 50
+    ) -> Sequence[ReminderCompletion]:
+        stmt = select(ReminderCompletion).where(ReminderCompletion.account_id == account_id)
+        if zone_id:
+            stmt = stmt.where(ReminderCompletion.zone_id == zone_id)
+        if before:
+            stmt = stmt.where(ReminderCompletion.completed_at < before)
+        stmt = stmt.order_by(ReminderCompletion.completed_at.desc(), ReminderCompletion.id.desc()).limit(limit)
+        async with self.session_factory() as session:
+            return (await session.execute(stmt)).scalars().all()
+
+    async def calendar_rows(
+        self, account_id: UUID, since: date, until: date, since_dt: datetime, until_dt: datetime,
+        field_id: Optional[UUID] = None,
+    ) -> tuple[list[tuple[PlanStage, CropPlan]], list[tuple[PlanSowing, CropPlan, CropMaster]], list[Reminder]]:
+        """What falls in [since, until] (dates, inclusive) / [since_dt, until_dt) (instants): the stages of active
+        plans, the planned or done sowings, and the pending reminders (recurring ones from before the window too:
+        they repeat into it). Reminders already represented by a stage or a sowing are left out."""
+        plan_ok = (CropPlan.account_id == account_id, CropPlan.deleted_at.is_(None), CropPlan.status == "activo")
+        if field_id:
+            plan_ok = (*plan_ok, CropPlan.field_id == field_id)
+        async with self.session_factory() as session:
+            stages = (await session.execute(
+                select(PlanStage, CropPlan).join(CropPlan, CropPlan.id == PlanStage.plan_id).where(
+                    *plan_ok, PlanStage.start_date <= until,
+                    func.coalesce(PlanStage.end_date, PlanStage.start_date) >= since,
+                ).order_by(PlanStage.start_date, PlanStage.position)
+            )).all()
+            sowings = (await session.execute(
+                select(PlanSowing, CropPlan, CropMaster)
+                .join(CropPlan, CropPlan.id == PlanSowing.plan_id)
+                .join(CropMaster, CropMaster.id == PlanSowing.crop_master_id)
+                .where(*plan_ok, PlanSowing.status.in_(("pendiente", "sembrado")), PlanSowing.sow_date >= since,
+                       PlanSowing.sow_date <= until)
+                .order_by(PlanSowing.sow_date)
+            )).all()
+            remind = select(Reminder).where(
+                Reminder.account_id == account_id, Reminder.deleted_at.is_(None), Reminder.status == "pendiente",
+                Reminder.stage_id.is_(None), Reminder.sowing_id.is_(None), Reminder.due_at < until_dt,
+                or_(Reminder.recurrence != "none", Reminder.due_at >= since_dt),
+                or_(Reminder.until.is_(None), Reminder.until >= since),
+            )
+            if field_id:
+                remind = remind.where(Reminder.field_id == field_id)
+            reminders = (await session.execute(remind.order_by(Reminder.due_at))).scalars().all()
+        return [(a, b) for a, b in stages], [(a, b, c) for a, b, c in sowings], list(reminders)

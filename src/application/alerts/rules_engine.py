@@ -6,7 +6,7 @@ that should not be left to LLM "guessing".
 """
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -56,8 +56,15 @@ class Rule:
     category: str = ""
     crops: List[str] = field(default_factory=list)
     regions: List[str] = field(default_factory=list)
+    # A tunable rule reads its limit from `ctx["_th"]` (the default below, or what a field set for itself);
+    # `ctx["_ths"]` has the effective limit of every rule, for rules defined against another one.
+    threshold: Optional[float] = None
+    threshold_range: Optional[Tuple[float, float]] = None
+    unit: str = ""
     
-    def evaluate(self, context: Dict[str, Any]) -> RuleResult:
+    def evaluate(
+        self, context: Dict[str, Any], threshold: Optional[float] = None, thresholds: Optional[Dict[str, float]] = None
+    ) -> RuleResult:
         """
         Evaluate the rule against given context.
         
@@ -68,7 +75,8 @@ class Rule:
             RuleResult with evaluation outcome
         """
         try:
-            matched = self.condition(context)
+            effective = self.threshold if threshold is None else threshold
+            matched = self.condition({**context, "_th": effective, "_ths": thresholds or {}})
             
             if matched:
                 # Format message with context
@@ -114,7 +122,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="temp_cold_stress",
             name="Cold Stress Warning",
-            condition=lambda ctx: ctx.get("temperature", 20) < 5,
+            condition=lambda ctx: ctx.get("temperature", 20) < ctx["_th"],
+            threshold=5, threshold_range=(-10, 15), unit="°C",
             severity=Severity.HIGH,
             message_template="Temperatura crítica detectada: {temperature}°C. Riesgo de daño por frío.",
             recommendations=[
@@ -128,7 +137,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="temp_heat_stress",
             name="Heat Stress Warning",
-            condition=lambda ctx: ctx.get("temperature", 20) > 35,
+            condition=lambda ctx: ctx.get("temperature", 20) > ctx["_th"],
+            threshold=35, threshold_range=(25, 50), unit="°C",
             severity=Severity.HIGH,
             message_template="Temperatura elevada: {temperature}°C. Riesgo de estrés térmico.",
             recommendations=[
@@ -143,7 +153,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="humidity_fungal_risk",
             name="Fungal Disease Risk",
-            condition=lambda ctx: ctx.get("humidity", 50) > 85 and ctx.get("temperature", 20) > 15,
+            condition=lambda ctx: ctx.get("humidity", 50) > ctx["_th"] and ctx.get("temperature", 20) > 15,
+            threshold=85, threshold_range=(60, 100), unit="%",
             severity=Severity.MEDIUM,
             message_template="Condiciones favorables para enfermedades fúngicas: {humidity}% humedad, {temperature}°C",
             recommendations=[
@@ -192,7 +203,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="forecast_severe_frost",
             name="Severe Frost Forecast",
-            condition=lambda ctx: ctx.get("tmin") is not None and ctx["tmin"] <= -2,
+            condition=lambda ctx: ctx.get("tmin") is not None and ctx["tmin"] <= ctx["_th"],
+            threshold=-2, threshold_range=(-10, 2), unit="°C",
             severity=Severity.CRITICAL,
             message_template="Helada fuerte pronosticada para el {date}: mínima de {tmin:.1f}°C.",
             recommendations=[
@@ -205,7 +217,9 @@ class RulesEngine:
         self.add_rule(Rule(
             id="forecast_frost",
             name="Frost Risk Forecast",
-            condition=lambda ctx: ctx.get("tmin") is not None and -2 < ctx["tmin"] <= 2,
+            condition=lambda ctx: ctx.get("tmin") is not None
+            and ctx["_ths"].get("forecast_severe_frost", -2) < ctx["tmin"] <= ctx["_th"],
+            threshold=2, threshold_range=(-2, 8), unit="°C",
             severity=Severity.HIGH,
             message_template="Riesgo de helada el {date}: mínima de {tmin:.1f}°C.",
             recommendations=[
@@ -217,7 +231,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="forecast_heat",
             name="Heat Stress Forecast",
-            condition=lambda ctx: ctx.get("tmax") is not None and ctx["tmax"] >= 35,
+            condition=lambda ctx: ctx.get("tmax") is not None and ctx["tmax"] >= ctx["_th"],
+            threshold=35, threshold_range=(25, 50), unit="°C",
             severity=Severity.HIGH,
             message_template="Calor extremo pronosticado el {date}: máxima de {tmax:.1f}°C.",
             recommendations=[
@@ -230,7 +245,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="forecast_fungal_risk",
             name="Fungal Disease Risk Forecast",
-            condition=lambda ctx: (ctx.get("humid_warm_hours") or 0) >= 6,
+            condition=lambda ctx: (ctx.get("humid_warm_hours") or 0) >= ctx["_th"],
+            threshold=6, threshold_range=(1, 24), unit="h",
             severity=Severity.MEDIUM,
             message_template=(
                 "Condiciones favorables para hongos el {date}: ~{humid_warm_hours:.0f} h "
@@ -246,7 +262,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="forecast_heavy_rain",
             name="Heavy Rain Forecast",
-            condition=lambda ctx: (ctx.get("precipitation_mm") or 0) >= 30,
+            condition=lambda ctx: (ctx.get("precipitation_mm") or 0) >= ctx["_th"],
+            threshold=30, threshold_range=(5, 150), unit="mm",
             severity=Severity.MEDIUM,
             message_template="Lluvia fuerte pronosticada el {date}: ~{precipitation_mm:.0f} mm.",
             recommendations=[
@@ -263,7 +280,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="irrigation_deficit",
             name="Irrigation Deficit",
-            condition=lambda ctx: (ctx.get("net_mm") or 0) > 2,
+            condition=lambda ctx: (ctx.get("net_mm") or 0) > ctx["_th"],
+            threshold=2, threshold_range=(0, 10), unit="mm",
             severity=Severity.LOW,
             message_template=(
                 "Falta riego: déficit estimado de {net_mm:.1f} mm respecto a lo que el cultivo necesita hoy."
@@ -274,7 +292,7 @@ class RulesEngine:
         self.add_rule(Rule(
             id="irrigation_covered",
             name="Irrigation Covered",
-            condition=lambda ctx: (ctx.get("net_mm") or 0) <= 2,
+            condition=lambda ctx: (ctx.get("net_mm") or 0) <= ctx["_ths"].get("irrigation_deficit", 2),
             severity=Severity.LOW,
             message_template=(
                 "Riego cubierto: el agua reciente alcanza lo que el cultivo necesita (déficit {net_mm:.1f} mm)."
@@ -291,7 +309,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="satellite_ndvi_drop",
             name="Field NDVI Drop",
-            condition=lambda ctx: (ctx.get("ndvi_drop_15d") or 0) >= 0.15,
+            condition=lambda ctx: (ctx.get("ndvi_drop_15d") or 0) >= ctx["_th"],
+            threshold=0.15, threshold_range=(0.05, 0.5), unit="NDVI",
             severity=Severity.MEDIUM,
             message_template=(
                 "Caída marcada de vegetación: el NDVI suavizado bajó {ndvi_drop_15d:.2f} en los últimos 15 días."
@@ -305,9 +324,10 @@ class RulesEngine:
         self.add_rule(Rule(
             id="satellite_below_normal",
             name="Field Below Its Normal",
-            condition=lambda ctx: (ctx.get("ndvi_below_p10_streak") or 0) >= 2
+            condition=lambda ctx: (ctx.get("ndvi_below_p10_streak") or 0) >= ctx["_th"]
             and (ctx.get("ndvi_normal_years") or 0) >= 2
             and ctx.get("ndvi_vs_normal") is not None,
+            threshold=2, threshold_range=(1, 6), unit="pasadas",
             severity=Severity.MEDIUM,
             message_template=(
                 "Este campo viene por debajo de lo normal para esta época: NDVI {ndvi_vs_normal:+.2f} respecto "
@@ -322,7 +342,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="satellite_worse_than_last_year",
             name="Field Worse Than Last Year",
-            condition=lambda ctx: ctx.get("ndvi_vs_last_year") is not None and ctx["ndvi_vs_last_year"] <= -0.10,
+            condition=lambda ctx: ctx.get("ndvi_vs_last_year") is not None and ctx["ndvi_vs_last_year"] <= ctx["_th"],
+            threshold=-0.10, threshold_range=(-0.5, -0.02), unit="NDVI",
             severity=Severity.LOW,
             message_template=(
                 "Este campo va peor que el año pasado a esta altura: NDVI {ndvi_vs_last_year:+.2f} contra la misma "
@@ -351,9 +372,10 @@ class RulesEngine:
         self.add_rule(Rule(
             id="satellite_canopy_water_stress",
             name="Canopy Water Stress",
-            condition=lambda ctx: (ctx.get("ndmi_below_p10_streak") or 0) >= 2
+            condition=lambda ctx: (ctx.get("ndmi_below_p10_streak") or 0) >= ctx["_th"]
             and (ctx.get("ndmi_normal_years") or 0) >= 2
             and ctx.get("ndmi_vs_normal") is not None,
+            threshold=2, threshold_range=(1, 6), unit="pasadas",
             severity=Severity.MEDIUM,
             message_template=(
                 "Posible estrés hídrico: la humedad del canopeo (NDMI) está bajo lo normal para esta época "
@@ -367,7 +389,8 @@ class RulesEngine:
         self.add_rule(Rule(
             id="satellite_high_ndwi_flood_signal",
             name="Zone NDWI Flood Signal",
-            condition=lambda ctx: (ctx.get("ndwi_mean") if ctx.get("ndwi_mean") is not None else -1) >= 0.2,
+            condition=lambda ctx: (ctx.get("ndwi_mean") if ctx.get("ndwi_mean") is not None else -1) >= ctx["_th"],
+            threshold=0.2, threshold_range=(0.05, 0.6), unit="NDWI",
             severity=Severity.MEDIUM,
             message_template="Posible anegamiento: índice de agua (NDWI) elevado, {ndwi_mean:.2f}.",
             recommendations=[
@@ -408,6 +431,7 @@ class RulesEngine:
         categories: Optional[List[str]] = None,
         crop: Optional[str] = None,
         region: Optional[str] = None,
+        overrides: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[RuleResult]:
         """
         Evaluate all applicable rules against context.
@@ -417,13 +441,23 @@ class RulesEngine:
             categories: Optional category filter
             crop: Optional crop filter
             region: Optional region filter
+            overrides: what one field changed, by rule id: {"enabled": bool, "threshold": float | None}.
+                A disabled rule is skipped; a threshold replaces the rule's default limit.
             
         Returns:
             List of RuleResults for matched rules
         """
         results = []
+        overrides = overrides or {}
+        thresholds = {
+            rule.id: self._effective_threshold(rule, overrides)
+            for rule in self._rules.values() if rule.threshold is not None
+        }
         
         for rule in self._rules.values():
+            if overrides.get(rule.id, {}).get("enabled") is False:
+                continue
+
             # Filter by category
             if categories and rule.category and rule.category not in categories:
                 continue
@@ -437,7 +471,7 @@ class RulesEngine:
                 continue
             
             # Evaluate rule
-            result = rule.evaluate(context)
+            result = rule.evaluate(context, thresholds.get(rule.id), thresholds)
             if result.matched:
                 results.append(result)
         
@@ -452,6 +486,24 @@ class RulesEngine:
         
         return results
     
+    @staticmethod
+    def _effective_threshold(rule: Rule, overrides: Dict[str, Dict[str, Any]]) -> Optional[float]:
+        override = overrides.get(rule.id, {}).get("threshold")
+        return rule.threshold if override is None else override
+
+    def describe(self) -> List[Dict[str, Any]]:
+        """Every rule as the settings screen needs it: what it is, and (if tunable) its default limit and range."""
+        return [
+            {
+                "rule_id": rule.id, "name": rule.name, "category": rule.category, "severity": rule.severity.value,
+                "default_threshold": rule.threshold,
+                "min_threshold": rule.threshold_range[0] if rule.threshold_range else None,
+                "max_threshold": rule.threshold_range[1] if rule.threshold_range else None,
+                "unit": rule.unit or None,
+            }
+            for rule in self._rules.values()
+        ]
+
     def get_recommendations(
         self,
         context: Dict[str, Any],
