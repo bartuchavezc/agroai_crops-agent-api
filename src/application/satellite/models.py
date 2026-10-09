@@ -14,7 +14,18 @@ field per year — so plain (non-hypertable) tables with a composite index are e
 """
 import uuid
 
-from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 
 from src.shared.database import Base
@@ -28,7 +39,7 @@ class ZoneSatelliteReading(Base):
     __tablename__ = "zone_satellite_readings"
     __table_args__ = (
         Index("ix_zone_satellite_readings_field_time", "field_id", "captured_at"),
-        Index("ix_zone_satellite_readings_field_image", "field_id", "observed_on", "layer"),
+        Index("ix_zone_satellite_readings_field_image", "field_id", "observed_on", "layer", "window_days"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -43,8 +54,11 @@ class ZoneSatelliteReading(Base):
     source = Column(String(20), nullable=False, default="sentinel2")
     image_identifier = Column(String(255))
     # Rendered maps: which pass (NULL = the latest at the time) and which layer (NULL = ndvi, as before).
-    observed_on = Column(Date)
+    observed_on = Column(Date)  # the latest pass the map includes (NULL: maps rendered before this existed)
     layer = Column(String(8))
+    window_days = Column(Integer)  # NULL: a single pass; N: the median of the passes of the last N days
+    coverage = Column(Float)  # share of the field's pixels that got a value
+    passes_used = Column(Integer)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -117,3 +131,26 @@ class CopernicusUsage(Base):
     processing_units = Column(Float, nullable=False, default=0.0)
     requests = Column(Integer, nullable=False, default=0)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class FieldSatelliteChip(Base):
+    """The pixels of one Sentinel-2 pass over a field (see chips.py): what every map is drawn from."""
+    __tablename__ = "field_satellite_chips"
+    __table_args__ = (
+        UniqueConstraint("field_id", "observed_on", name="uq_field_satellite_chips_field_date"),
+        Index("ix_field_satellite_chips_field_date", "field_id", "observed_on"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), nullable=False)
+    observed_on = Column(Date, nullable=False)
+    geometry_hash = Column(String(16), nullable=False)  # of the boundary the chip was cut for
+    min_lon = Column(Float, nullable=False)
+    min_lat = Column(Float, nullable=False)
+    max_lon = Column(Float, nullable=False)
+    max_lat = Column(Float, nullable=False)
+    width = Column(Integer, nullable=False)
+    height = Column(Integer, nullable=False)
+    data = Column(LargeBinary, nullable=False)  # chips.encode_chip
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)

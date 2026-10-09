@@ -8,8 +8,10 @@ The series is kept by SatelliteIngestService (daily batch + backfill, see src/ba
 only call Copernicus when the stored series is stale, and within the on-demand share of the monthly
 processing-unit budget.
 """
+import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
@@ -28,6 +30,7 @@ from src.shared.utils.errors import InvalidInputError, NotFoundError
 
 from . import analytics
 from .ingest import KIND_ON_DEMAND, BudgetExceeded, SatelliteIngestService
+from .chips import DEFAULT_WINDOW_DAYS, LAYERS, MAX_WINDOW_DAYS, Chip, chip_bbox, composite, decode_chip, png_bytes
 from .models import SOURCE_S1, SOURCE_S2, ZoneSatelliteReading
 from .overlay import draw_boundary_outline
 from .repository import SatelliteSeriesRepository, ZoneSatelliteRepository
@@ -39,7 +42,7 @@ logger = logging.getLogger(__name__)
 # cloud-masked for a given point, so a short window risks a black no-data image even when a clear,
 # still-recent pass exists a bit further back.
 _LOOKBACK_DAYS = 30
-IMAGE_LAYERS = ("ndvi", "ndmi", "rgb")
+IMAGE_LAYERS = LAYERS
 # First on-demand sync of a field fetches only the current season (fast); the batch completes the history.
 _ON_DEMAND_HISTORY_YEARS = 1
 # No alerts from a series whose last clear pass is older than this: it would describe a stale situation.
@@ -123,6 +126,19 @@ def summarize(analysis: analytics.SeriesAnalysis) -> str:
     if ndvi.get("vs_last_year") is not None:
         parts.append(f"Contra el año pasado: {ndvi['vs_last_year']:+.2f}.")
     return " ".join(parts)
+
+
+@dataclass
+class SatelliteMap:
+    """A map drawn from stored imagery, where it is saved and what it covers."""
+
+    image_identifier: str
+    bbox: list[float]  # [minlon, minlat, maxlon, maxlat] the image covers (row 0 is the north edge)
+    layer: str
+    date: date  # the latest pass included
+    window_days: Optional[int]  # None: that single pass
+    coverage: float  # share of the field's pixels with a value (the rest is transparent)
+    passes_used: int
 
 
 class ZoneSatelliteService:
@@ -374,77 +390,63 @@ class ZoneSatelliteService:
     # ------------------------------------------------------------ images
 
     async def get_or_render_image(
-        self, actor: Actor, field_id: UUID, force: bool = False, layer: str = "ndvi", on_date: Optional[date] = None
-    ) -> Optional[str]:
-        """The field's saved map of a layer (`ndvi`, `ndmi` or `rgb`); renders and persists a new one only if none
-        exists yet (or `force=True` for an explicit "Regenerar imagen"). Without `on_date` it is the map of the
-        latest clear pass; with it, the map of that pass, which must be a Sentinel-2 date in the field's series.
-        Every successful render is saved as its own zone_satellite_readings row (image_identifier set; the numbers
-        live in the field's series), so it survives across requests instead of being regenerated — and re-billed
-        processing units — on every page view."""
+        self, actor: Actor, field_id: UUID, force: bool = False, layer: str = "ndvi", on_date: Optional[date] = None,
+        window_days: Optional[int] = None,
+    ) -> Optional["SatelliteMap"]:
+        """The field's map of a layer (`ndvi`, `ndmi`, `ndwi` or `rgb`), drawn from the pixels we already stored
+        (chips.py): no request to Copernicus, no processing units.
+
+        By default it is the median, pixel by pixel, of the passes of the last `window_days` (15) up to the latest
+        pass we have, using only the pixels each pass saw clearly, so a cloud in one pass is filled from another.
+        Pixels no pass saw clearly stay transparent. With `on_date`, the map of that single pass. The PNG is saved the
+        first time and reused until a newer pass arrives (or `force`). None when the field has no stored imagery yet
+        (it fills in with the daily sync and the backfill); a date with no stored pass is a 404."""
         if layer not in IMAGE_LAYERS:
             raise InvalidInputError(f"Unknown layer '{layer}'. Use one of: {', '.join(IMAGE_LAYERS)}.")
-        field = await self.farm.get_field(actor, field_id)
-        if field.latitude is None or field.longitude is None:
-            raise InvalidInputError(f"Field '{field.name}' has no coordinates.")
+        await self.farm.get_field(actor, field_id)
+        window = None if on_date else min(max(window_days or DEFAULT_WINDOW_DAYS, 1), MAX_WINDOW_DAYS)
         if on_date is not None:
-            await self._require_usable_pass(actor, field, on_date)
-        if not force:
-            existing = await self.repo.latest_image(actor.account_id, field_id, layer=layer, observed_on=on_date)
-            if existing:
-                return existing
-        if not self.copernicus.configured:
-            return None
-        try:
-            if await self.ingest.budget_left(KIND_ON_DEMAND) <= 0:
-                return None
-        except Exception:  # noqa: BLE001 - the budget table being unreachable shouldn't block the map
-            logger.exception("Could not read Copernicus usage")
-        if on_date is not None:
-            start = end = on_date.isoformat()  # that day's pass, whatever the scene-level cloud estimate says
-            max_cloud = 100
+            chips = await self.series_repo.chips(actor.account_id, field_id, since=on_date, until=on_date)
+            if not chips:
+                raise NotFoundError(f"There is no stored imagery of the pass of {on_date.isoformat()}.")
+            end = on_date
         else:
-            start, end = _lookback_window()
-            max_cloud = 40
-        image = await self.copernicus.render_layer(
-            field.latitude, field.longitude, layer, start, end, max_cloud=max_cloud
-        )
-        await self._record_image_usage(image)
-        if not image:
-            return None
+            end = await self.series_repo.latest_chip_date(actor.account_id, field_id)
+            if end is None:
+                return None
+            chips = await self.series_repo.chips(
+                actor.account_id, field_id, since=end - timedelta(days=window), until=end
+            )
+        box = [chips[-1].min_lon, chips[-1].min_lat, chips[-1].max_lon, chips[-1].max_lat]
+        if not force:
+            saved = await self.repo.map_for(actor.account_id, field_id, layer, end, window)
+            if saved is not None:
+                return SatelliteMap(
+                    saved.image_identifier, box, layer, end, window, saved.coverage or 0.0, saved.passes_used or 0
+                )
+
+        def draw():
+            decoded = [Chip(c.observed_on, decode_chip(c.data, c.width, c.height)) for c in chips]
+            made = composite(decoded, layer)
+            return made, png_bytes(made.rgba)
+
+        made, png = await asyncio.to_thread(draw)
         image_identifier = await self.storage.save_image(
-            actor, f"satellite-{field.id}-{layer}.png", image.png, "image/png"
+            actor, f"satellite-{field_id}-{layer}.png", png, "image/png"
         )
         await self.repo.create(
             ZoneSatelliteReading(
-                account_id=actor.account_id, field_id=field.id, captured_at=utcnow(),
-                image_identifier=image_identifier, observed_on=on_date, layer=layer,
+                account_id=actor.account_id, field_id=field_id, captured_at=utcnow(), image_identifier=image_identifier,
+                observed_on=end, layer=layer, window_days=window, coverage=made.coverage, passes_used=made.passes_used,
             )
         )
-        return image_identifier
-
-    async def _require_usable_pass(self, actor: Actor, field: Any, on_date: date) -> None:
-        """Copernicus draws an all-black image for a day with no (usable) pass, silently: check the series first."""
-        passes = await self.series_repo.series(actor.account_id, field.id, SOURCE_S2, since=on_date)
-        match = next((o for o in passes if o.observed_on == on_date), None)
-        if match is None:
-            raise NotFoundError(f"There is no Sentinel-2 pass of {on_date.isoformat()} in the series of this field.")
-        if not match.valid_fraction or match.ndvi_mean is None:
-            raise InvalidInputError(f"The pass of {on_date.isoformat()} was fully covered (clouds): nothing to draw.")
+        return SatelliteMap(image_identifier, box, layer, end, window, made.coverage, made.passes_used)
 
     async def _record_image_usage(self, image) -> None:
         try:
             await self.series_repo.add_usage(KIND_ON_DEMAND, image.processing_units if image else None)
         except Exception:  # noqa: BLE001
             logger.exception("Could not record Copernicus usage")
-
-    async def zone_bbox(self, actor: Actor, field_id: UUID) -> Optional[list[float]]:
-        """The lat/lon box [minlon, minlat, maxlon, maxlat] every zone image covers, so the frontend can
-        overlay the field's boundary on it."""
-        field = await self.farm.get_field(actor, field_id)
-        if field.latitude is None or field.longitude is None:
-            return None
-        return self.copernicus.bbox_for(field.latitude, field.longitude)
 
     async def render_delineation_base(self, actor: Actor, field_id: UUID) -> Optional[tuple[str, list[float]]]:
         """A fresh true-color image (not NDVI-colorized) for the user to draw their field's boundary over,
@@ -475,7 +477,6 @@ class ZoneSatelliteService:
         can tell the user's actual field apart from the surrounding ~500m zone context."""
         raw, mime = await self.storage.get_image_for_model(actor, image_identifier, max_side)
         if field and field.boundary and field.latitude is not None and field.longitude is not None:
-            bbox = self.copernicus.bbox_for(field.latitude, field.longitude)
-            raw = draw_boundary_outline(raw, field.boundary, bbox)
+            raw = draw_boundary_outline(raw, field.boundary, chip_bbox(field.latitude, field.longitude, field.boundary))
             mime = "image/png"
         return raw, mime
