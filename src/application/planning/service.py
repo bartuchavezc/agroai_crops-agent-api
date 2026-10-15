@@ -413,7 +413,7 @@ class PlanningService:
             )
             values["crop_cycle_id"] = cycle.id
         if data.consume_seed_lot and sowing.seed_lot_id and sowing.quantity:
-            await self.inventory.consume_seed_lot(actor, sowing.seed_lot_id, sowing.quantity)
+            await self.inventory.consume_seed_lot(actor, sowing.seed_lot_id, sowing.quantity, sowing.unit)
         updated = await self.repo.update(PlanSowing, actor.account_id, sowing_id, values)
         await self._sync_sowing_reminders(actor, updated)
         if updated.crop_cycle_id:

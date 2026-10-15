@@ -127,6 +127,7 @@ class CropMaster(Base):
     kc_initial = Column(Float)
     kc_mid = Column(Float)
     kc_late = Column(Float)
+    thousand_seed_weight_g = Column(Float)  # typical grams per 1000 seeds; seed lots fall back to it
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 

@@ -263,6 +263,9 @@ class CropMasterBase(BaseModel):
     kc_initial: Optional[float] = PField(default=None, ge=0, le=2, description="FAO-56 Kc, initial stage")
     kc_mid: Optional[float] = PField(default=None, ge=0, le=2, description="FAO-56 Kc, mid-season stage")
     kc_late: Optional[float] = PField(default=None, ge=0, le=2, description="FAO-56 Kc, late-season stage")
+    thousand_seed_weight_g: Optional[float] = PField(
+        default=None, gt=0, le=100000, description="Typical weight of 1000 seeds, in grams"
+    )
 
 
 class CropMasterCreate(CropMasterBase):
