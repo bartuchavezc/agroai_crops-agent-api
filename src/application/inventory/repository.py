@@ -15,7 +15,7 @@ LotWithCrop = tuple[SeedLot, CropMaster]
 
 
 def _norm_variety(value: Optional[str]) -> str:
-    return " ".join((value or "").lower().split())
+    return (value or "").strip().lower()
 
 
 class SeedLotRepository:
@@ -40,8 +40,9 @@ class SeedLotRepository:
         stmt = self._visible(account_id)
         if crop_master_id:
             stmt = stmt.where(SeedLot.crop_master_id == crop_master_id)
-        if query:
-            like = f"%{query.strip()}%"
+        # Every word has to appear somewhere: "tomate platense" finds the crop name plus the lot's variety.
+        for word in (query or "").split():
+            like = f"%{word}%"
             stmt = stmt.where(
                 or_(
                     CropMaster.name.ilike(like),

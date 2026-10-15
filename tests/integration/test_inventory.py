@@ -113,6 +113,7 @@ async def test_tags_search_filters_and_sort(client, signup):
 
     ids = lambda r: [lot["id"] for lot in r.json()]  # noqa: E731
     assert ids(await client.get(f"{INV}?q=platense", headers=h)) == [a["id"]]
+    assert ids(await client.get(f"{INV}?q=tomate%20platense", headers=h)) == [a["id"]]
     assert ids(await client.get(f"{INV}?q=vivero", headers=h)) == [a["id"]]
     assert ids(await client.get(f"{INV}?q=apiaceae", headers=h)) == [b["id"]]
     assert ids(await client.get(f"{INV}?q=producc", headers=h)) == [a["id"]]
