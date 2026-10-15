@@ -91,6 +91,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Copernicus series (Sentinel-2 + Sentinel-1): completes the history and adds the new passes once a day.
+  # Only does real work when SATELLITE_INGEST_ENABLED=true (off by default, see src/config/settings.py —
+  # stays off until the real processing-unit cost per field has been measured).
+  satellite:
+    image: ghcr.io/bartuchavezc/agroai_crops-agent-api:latest
+    command: ["python", "-m", "src.batch", "satellite", "--every-hours", "24"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agroai}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agroai}
+      BASE_DATA_PATH: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:
   uploads:
