@@ -9,6 +9,7 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
 
+from src.agent.reasoning.diagnosis_service import analyze_in_background
 from src.application.reports.schemas import ReportCreate
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
@@ -74,16 +75,6 @@ def validate_image_type(image_bytes: bytes, content_type: str, filename: str) ->
         )
 
 
-async def _analyze_in_background(diagnosis_service, actor: Actor, report_id: UUID) -> None:
-    """Never let a background-task failure surface as an unhandled exception — there's no caller here to
-    return it to. `diagnosis_service.analyze()` already persists ANALYSIS_FAILED on any error, so the UI
-    can show a "Reintentar" button instead of the report staying stuck at "Analizando..." forever."""
-    try:
-        await diagnosis_service.analyze(actor, report_id)
-    except Exception:  # noqa: BLE001 - background task, nothing to return the error to
-        logger.exception(f"Background analysis failed for report {report_id}")
-
-
 async def receive_photo(image_file: UploadFile) -> bytes:
     """Read an uploaded photo (size-capped), check it is a JPEG/PNG/WEBP, and return it normalized: at most
     1536 px per side, JPEG, no metadata. Raises HTTP 413/415 with a message the app can show."""
@@ -123,6 +114,7 @@ async def upload_crop_image(
     field_id: Optional[UUID] = Form(None),
     crop_cycle_id: Optional[UUID] = Form(None),
     report_type: str = Form("diagnosis"),
+    notes: Optional[str] = Form(None, max_length=2000, description="The user's own observations, if any"),
     actor: Actor = Depends(get_actor),
     storage_service=Depends(Provide["application.storage_service"]),
     reports_service=Depends(Provide["application.reports_service"]),
@@ -145,12 +137,13 @@ async def upload_crop_image(
     report = await reports_service.create_report(
         actor,
         ReportCreate(
-            image_identifier=image_identifier, field_id=field_id, crop_cycle_id=crop_cycle_id, report_type=report_type
+            image_identifier=image_identifier, field_id=field_id, crop_cycle_id=crop_cycle_id,
+            report_type=report_type, notes=(notes or "").strip() or None,
         ),
     )
     logger.info(f"Image {image_identifier} uploaded for account {actor.account_id}")
     if report_type in ("periodic", "soil"):
-        background_tasks.add_task(_analyze_in_background, diagnosis_service, actor, report.id)
+        background_tasks.add_task(analyze_in_background, diagnosis_service, actor, report.id)
     return UploadImageResponse(
         report_id=report.id,
         image_identifier=image_identifier,
@@ -174,6 +167,7 @@ async def upload_zone_tracking(
     background_tasks: BackgroundTasks,
     zone_id: UUID = Form(...),
     image_files: List[UploadFile] = File(..., description="1-4 photos of the zone"),
+    notes: Optional[str] = Form(None, max_length=2000, description="The user's own observations, if any"),
     actor: Actor = Depends(get_actor),
     farm_service=Depends(Provide["application.farm_service"]),
     storage_service=Depends(Provide["application.storage_service"]),
@@ -208,10 +202,11 @@ async def upload_zone_tracking(
             zone_id=zone.id,
             crop_cycle_ids=[c.id for c in cycles],
             report_type="periodic",
+            notes=(notes or "").strip() or None,
         ),
     )
     logger.info(f"{len(identifiers)} zone photo(s) uploaded for zone {zone.id}, account {actor.account_id}")
-    background_tasks.add_task(_analyze_in_background, diagnosis_service, actor, report.id)
+    background_tasks.add_task(analyze_in_background, diagnosis_service, actor, report.id)
     return UploadImageResponse(
         report_id=report.id,
         image_identifier=identifiers[0],

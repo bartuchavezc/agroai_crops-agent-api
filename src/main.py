@@ -33,6 +33,7 @@ from src.providers.weather.router import router as weather_router
 from src.shared.database import dispose_database_connections, get_engine
 from src.shared.utils import get_logger
 from src.shared.utils.errors import CropAnalysisError
+from src.shared.utils.trace import new_trace_id, set_trace_id
 
 logger = get_logger(__name__)
 
@@ -111,6 +112,19 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def trace_id_middleware(request: Request, call_next):
+        """A generic fallback correlation id for every request, so no log line is ever without one — an
+        incoming X-Request-Id is honored (useful when the frontend or a proxy already assigns one), and the
+        id is echoed back on the response so a client can report "this is the request that failed". A unit
+        of work with a more meaningful id (a report, a chat turn) overrides this with its own id right at
+        its own entry point (see analyze() and stream_turn()), so logs stay grep-able by that id instead."""
+        trace_id = request.headers.get("x-request-id") or new_trace_id()
+        set_trace_id(trace_id)
+        response = await call_next(request)
+        response.headers["X-Trace-Id"] = trace_id
+        return response
 
     @app.exception_handler(CropAnalysisError)
     async def domain_error_handler(request: Request, exc: CropAnalysisError):

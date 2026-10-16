@@ -38,6 +38,7 @@ from src.shared.utils.errors import (
     ProviderKeyInvalidError,
     ProviderQuotaExceededError,
 )
+from src.shared.utils.trace import set_trace_id
 
 from .conversations.schemas import ConversationCreate
 from .conversations.service import ConversationService
@@ -390,6 +391,12 @@ class AgentRunner:
     async def stream_turn(self, turn: PreparedTurn) -> AsyncIterator[dict]:
         """Run the agent and yield events: meta, tool_call, tool_result, delta, done | error.
         The turn is persisted at the end, or with whatever was generated if the client disconnects."""
+        # The conversation id is the turn's natural correlation key (it's already how usage is logged
+        # below, and how a turn is looked up) — it outlives the original HTTP request on purpose (see
+        # start_stream: the turn keeps running after a client disconnects), so set it explicitly here
+        # rather than relying on whatever the request middleware set.
+        set_trace_id(str(turn.conversation_id))
+        logger.info(f"Chat turn starting conversation={turn.conversation_id} message={turn.message[:120]!r}")
         segments: list[str] = []
         current = ""
         tool_calls: list[ToolCallInfo] = []
@@ -441,9 +448,11 @@ class AgentRunner:
                 plan = await self.preflight.plan(turn.preflight)
                 if plan is not None:
                     for req in plan.tools:
+                        logger.info(f"Preflight tool call name={req.name} args={req.args}")
                         yield {"event": "tool_call", "data": {"name": req.name, "args": json.loads(req.args)}}
                     result = await self.preflight.execute(turn.preflight, plan)
                     for call in result.calls:
+                        logger.info(f"Preflight tool result name={call['name']} ok={call['ok']}")
                         tool_calls.append(ToolCallInfo(**call))
                         yield {"event": "tool_result", "data": {"name": call["name"], "ok": call["ok"]}}
                     content = self._content_with_block(turn, result.block)
@@ -457,6 +466,13 @@ class AgentRunner:
                     raise error_from_event(event.error_code, event.error_message)
                 if not event.partial:
                     usage.add(event.usage_metadata)
+                    if event.usage_metadata:
+                        logger.info(
+                            f"Chat model step model={event.model_version or turn.model_name} "
+                            f"prompt_tokens={event.usage_metadata.prompt_token_count} "
+                            f"output_tokens={event.usage_metadata.candidates_token_count} "
+                            f"thinking_tokens={event.usage_metadata.thoughts_token_count}"
+                        )
                 parts = event.content.parts if event.content and event.content.parts else []
                 text = "".join(p.text for p in parts if p.text and not p.thought)
                 if event.partial:
@@ -470,10 +486,12 @@ class AgentRunner:
                     close_segment()
                     info = ToolCallInfo(name=call.name, args=dict(call.args or {}))
                     tool_calls.append(info)
+                    logger.info(f"Tool call name={call.name} args={dict(call.args or {})}")
                     yield {"event": "tool_call", "data": info.model_dump(mode="json", exclude={"ok"})}
                 for response in event.get_function_responses():
                     payload = response.response or {}
                     ok = not (isinstance(payload, dict) and "error" in payload)
+                    logger.info(f"Tool result name={response.name} ok={ok}")
                     for tc in reversed(tool_calls):
                         if tc.name == response.name:
                             tc.ok = ok

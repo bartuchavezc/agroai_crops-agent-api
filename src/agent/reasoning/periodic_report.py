@@ -103,6 +103,51 @@ class ZonePeriodicReportResult(BaseModel):
     needs_human_expert: bool
 
 
+# ---------- zone tracking, fanned out: one whole-photo overview + one call per crop group + one synthesis
+# (see zone_task_loop.py for the orchestration and zone_grouping.py for how the N results below become one
+# ZonePeriodicReportResult) ----------
+
+class ZoneOverviewResult(BaseModel):
+    """The only pass that sees every photo without being narrowed to one crop group: a whole-zone visual
+    read, not grounded in any crop's ficha."""
+
+    zone_observations: str = Field(description="Impresión visual general de la zona: vigor, uniformidad, "
+                                    "malezas, humedad aparente del sustrato, y cualquier interacción visible "
+                                    "entre cultivos (sombra, amontonamiento, asociación)")
+    unlisted_plants: list[str] = Field(
+        default_factory=list, description="Plantas que se ven en las fotos pero no están registradas en la zona"
+    )
+
+
+class ZoneGroupAssessment(BaseModel):
+    """One group's worth of crops (same ficha técnica, or none), evaluated with only its own reference
+    material and cycle context — not the whole zone's."""
+
+    crops: list[ZoneCropAssessment] = Field(description="Una entrada por cada ciclo de ESTE grupo, listado "
+                                             "en el contexto de este mensaje")
+    group_risk_severity: Literal["low", "medium", "high", "critical"]
+    group_recommendations: list[str] = Field(default_factory=list, description="Para los cultivos de este grupo")
+    group_notes: str = Field(description="Lo que vale la pena pasar a la síntesis de la zona: una observación "
+                              "de contexto, no repitas lo ya dicho en cada cultivo")
+    confidence: float = Field(ge=0, le=1)
+    needs_human_expert: bool
+
+
+class ZoneSynthesisResult(BaseModel):
+    """Text-only, cheap: reasons over the overview + every group's result, never the photos or fichas again.
+    Produces exactly the fields that are inherently cross-cutting judgments, not a per-crop or per-group
+    answer."""
+
+    zone_summary: str = Field(description="¿Cómo viene la zona en conjunto? 2-4 oraciones")
+    interactions: Optional[str] = Field(
+        None, description="Competencia, sombra entre cultivos, asociaciones favorables/desfavorables"
+    )
+    shared_risks: list[str] = Field(default_factory=list, description="Riesgos que afectan a toda la zona")
+    past_actions_assessment: str = Field(description="¿Las decisiones registradas afectaron algo?")
+    objectives_assessment: str
+    recommendations: list[str] = Field(default_factory=list, description="Para la zona en conjunto")
+
+
 def crop_entry(analysis: dict, crop_cycle_id) -> Optional[dict]:
     """The entry of one cycle inside a zone report's structured analysis (llm_structured_zone)."""
     for crop in analysis.get("crops") or []:

@@ -1,10 +1,14 @@
 """
-Logging configuration. A redaction filter masks anything that looks like a Google API key.
+Logging configuration. A redaction filter masks anything that looks like a Google API key, and a trace-id
+filter stamps every record with the current unit of work's correlation id (see trace.py) so one request,
+background analysis, or chat turn can be grepped end to end across every model call and tool call it made.
 """
 import logging
 import os
 import re
 import sys
+
+from .trace import current_trace_id
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
@@ -38,13 +42,20 @@ class RedactingFilter(logging.Filter):
         return True
 
 
+class TraceIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.trace_id = current_trace_id()
+        return True
+
+
 logging.basicConfig(
     level=LOG_LEVEL,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - [trace=%(trace_id)s] - %(message)s",
     stream=sys.stdout,
 )
 for _handler in logging.getLogger().handlers:
     _handler.addFilter(RedactingFilter())
+    _handler.addFilter(TraceIdFilter())
 
 
 # ADK's async generators end their tracing spans from a different context; OpenTelemetry logs a
