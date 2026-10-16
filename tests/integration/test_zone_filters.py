@@ -107,9 +107,9 @@ async def test_reports_filter_by_date_range(client, signup, container):
 
 
 async def test_zone_timeline_merges_events_analyses_and_done_reminders(client, signup, container):
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
-    from .test_zones import _TINY_PNG, _cycle, _zone_result
+    from .test_zones import _TINY_PNG, _cycle, _group_result, _zone_analysis
 
     h = (await signup("timeline"))["headers"]
     field, (zone, other) = await _field_two_zones(client, h)
@@ -124,7 +124,7 @@ async def test_zone_timeline_merges_events_analyses_and_done_reminders(client, s
         "field_id": field["id"], "zone_id": other["id"], "type": "pruning", "occurred_at": base.isoformat(),
     })
 
-    fake = AsyncMock(return_value=_zone_result([(cycle, "Tomate")]))
+    fake = _zone_analysis(_group_result([(cycle, "Tomate")]))
     with patch.object(container.agent.gemini(), "generate_structured", fake):
         up = await client.post(
             "/api/v1/upload/zone-tracking", headers=h, data={"zone_id": zone["id"]},

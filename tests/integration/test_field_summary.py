@@ -6,7 +6,7 @@ from uuid import UUID
 from src.application.farm.summary import field_state
 from src.application.irrigation.schemas import FieldIrrigationResult
 
-from .test_zones import _TINY_PNG, _cycle, _field, _zone_result
+from .test_zones import _TINY_PNG, _cycle, _field, _group_result, _zone_analysis
 
 FARM = "/api/v1/farm-management"
 P = "/api/v1/planning"
@@ -39,8 +39,8 @@ async def test_summary_brings_zones_analysis_alerts_reminders_and_irrigation(cli
     cycle = await _cycle(client, h, field["id"], "tomate", zone_id=zone["id"])
     loose = await _cycle(client, h, field["id"], "lechuga")  # no zone
 
-    with patch.object(container.agent.gemini(), "generate_structured",
-                      AsyncMock(return_value=_zone_result([(cycle, "Tomate")]))):
+    zone_analysis = _zone_analysis(_group_result([(cycle, "Tomate")]))
+    with patch.object(container.agent.gemini(), "generate_structured", zone_analysis):
         up = await client.post(
             "/api/v1/upload/zone-tracking", headers=h, data={"zone_id": zone["id"]},
             files=[("image_files", ("a.png", _TINY_PNG, "image/png"))],

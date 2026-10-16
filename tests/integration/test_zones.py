@@ -150,6 +150,18 @@ def _synthesis_result() -> ZoneSynthesisResult:
     )
 
 
+def _zone_analysis(group: ZoneGroupAssessment) -> AsyncMock:
+    """A fanned-out zone analysis with a single crop group: overview, that group, synthesis."""
+    def _respond(_user_id, *, schema, **_kwargs):
+        if schema is ZoneOverviewResult:
+            return _overview_result()
+        if schema is ZoneSynthesisResult:
+            return _synthesis_result()
+        return group
+
+    return AsyncMock(side_effect=_respond)
+
+
 async def test_zone_tracking_analyzes_every_active_crop_of_the_zone(client, signup, container):
     user = await signup("zone-tracking")
     h = user["headers"]

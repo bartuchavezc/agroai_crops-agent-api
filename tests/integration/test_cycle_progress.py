@@ -1,10 +1,10 @@
 """Crop-cycle progress: expected % and stage from dates and the stage plan; ok/late/affected from the last analysis."""
 from datetime import date, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from src.application.planning.progress import assess, current_and_next, expected_pct
 
-from .test_zones import _TINY_PNG, FARM, _cycle, _field, _zone_result
+from .test_zones import _TINY_PNG, FARM, _cycle, _field, _group_result, _zone_analysis
 
 P = "/api/v1/planning"
 
@@ -51,10 +51,10 @@ async def test_progress_endpoint_uses_the_plan_and_the_latest_zone_analysis(clie
     assert before["expected_pct"] == 25.0 and before["status"] == "unknown" and before["evidence_report_id"] is None
     assert before["current_stage"] is not None and before["next_stage_at"] is not None
 
-    result = _zone_result([(cycle, "Tomate")])
-    result.crops[0].growth_on_track = False
-    result.crops[0].stress_signals = ["hojas amarillas"]
-    with patch.object(container.agent.gemini(), "generate_structured", AsyncMock(return_value=result)):
+    group = _group_result([(cycle, "Tomate")])
+    group.crops[0].growth_on_track = False
+    group.crops[0].stress_signals = ["hojas amarillas"]
+    with patch.object(container.agent.gemini(), "generate_structured", _zone_analysis(group)):
         up = await client.post(
             "/api/v1/upload/zone-tracking", headers=h, data={"zone_id": zone["id"]},
             files=[("image_files", ("a.png", _TINY_PNG, "image/png"))],
