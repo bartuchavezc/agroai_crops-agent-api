@@ -42,9 +42,10 @@ async def run_smn(container, force: bool = False) -> None:
 async def run_satellite(container, years: Optional[int] = None, field_id: Optional[str] = None,
                         sources: Optional[list[str]] = None, force: bool = False) -> None:
     """Keep every field's series complete and fresh (backfill missing history, then the new passes), then
-    raise the series-based alerts. Stops spending once the month's batch budget is used up (alerts still
-    run on the stored data). Disabled unless SATELLITE_INGEST_ENABLED=true or `force` (the explicit
-    backfill command)."""
+    raise the series-based alerts. With `years` (the backfill) it also fetches the pixels of every pass in the
+    series that has none yet; the daily run keeps the last days. Stops spending once the month's batch budget
+    is used up (alerts still run on the stored data). Disabled unless SATELLITE_INGEST_ENABLED=true or `force`
+    (the explicit backfill command)."""
     app = container.application
     if not force and not container.config.satellite.ingest_enabled():
         logger.info("Satellite ingest disabled (SATELLITE_INGEST_ENABLED=false); nothing to do")
@@ -59,7 +60,9 @@ async def run_satellite(container, years: Optional[int] = None, field_id: Option
     for field in fields:
         if not budget_hit:
             try:
-                report = await ingest.sync_field(field, kind=KIND_BATCH, history_years=years, sources=sources)
+                report = await ingest.sync_field(
+                    field, kind=KIND_BATCH, history_years=years, sources=sources, chips="all" if years else "recent"
+                )
                 totals["synced"] += 1
                 totals["observations"] += report.observations
                 totals["processing_units"] += report.processing_units

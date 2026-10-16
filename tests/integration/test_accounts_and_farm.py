@@ -1,4 +1,7 @@
 """Accounts with roles, farm CRUD, account isolation and role permissions."""
+from uuid import UUID
+
+from src.shared.domain.actor import Actor
 
 
 async def test_signup_disabled_returns_403(client, container):
@@ -393,3 +396,30 @@ async def test_get_event_endpoint(client, signup):
     assert (
         await client.get(f"/api/v1/farm-management/events/{event['id']}", headers=other["headers"])
     ).status_code == 404
+
+
+async def test_catalog_names_by_locale_find_the_crop_by_either_name(client, signup, container):
+    owner = await signup("catalogo-i18n")
+    h = owner["headers"]
+    CROPS = "/api/v1/farm-management/crop-masters"
+    listed = (await client.get(f"{CROPS}?q=tomate", headers=h)).json()
+    tomato = [c for c in listed if c["name"] == "Tomate"]
+    assert tomato and tomato[0]["i18n"]["es-MX"] == "Jitomate"  # seeded for the global catalog
+
+    by_alias = await client.get(f"{CROPS}?q=jitomate", headers=h)
+    assert {c["name"] for c in by_alias.json()} == {"Tomate"}
+    by_ahuyama = await client.get(f"{CROPS}?q=ahuyama", headers=h)
+    assert {c["name"] for c in by_ahuyama.json()} == {"Zapallo"}
+
+    # exact lookup (what the agent uses to start a cycle): "jitomate" is the global Tomate, not a new crop
+    actor = Actor(UUID(owner["user"]["id"]), UUID(owner["account"]["id"]), "owner")
+    found = await container.application.farm_service().find_crop_masters(actor, "jitomate")
+    assert found and found[0].name == "Tomate"
+
+    created = await client.post(
+        CROPS, headers=h, json={"name": "Quinoa", "i18n": {"es-CO": "Quinua"}}
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["i18n"] == {"es-CO": "Quinua"} and created.json()["variety_i18n"] == {}
+    by_quinua = await client.get(f"{CROPS}?q=quinua", headers=h)
+    assert {c["name"] for c in by_quinua.json()} == {"Quinoa"}

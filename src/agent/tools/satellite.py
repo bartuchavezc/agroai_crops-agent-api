@@ -37,14 +37,15 @@ def satellite_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         result = compact(status)
         result["interpretation_guide"] = SATELLITE_SERIES_GUIDE
         if include_image:
-            image_identifier = await deps.satellite.get_or_render_image(ctx.actor, target.id)
-            if image_identifier:
+            satellite_map = await deps.satellite.get_or_render_image(ctx.actor, target.id)
+            if satellite_map:
+                image_identifier = satellite_map.image_identifier
                 ctx.attachments.append(
                     {
                         "type": "zone_map",
                         "image_identifier": image_identifier,
                         "field_id": str(target.id),
-                        "caption": f"Mapa NDVI de la zona de {target.name}",
+                        "caption": f"Mapa de vigor (NDVI) de {target.name}",
                     }
                 )
                 result["map_attached"] = True

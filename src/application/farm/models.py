@@ -128,6 +128,9 @@ class CropMaster(Base):
     kc_mid = Column(Float)
     kc_late = Column(Float)
     thousand_seed_weight_g = Column(Float)  # typical grams per 1000 seeds; seed lots fall back to it
+    # Names by locale ({"es-MX": "Jitomate"}); `name`/`variety` stay the neutral value and the fallback.
+    i18n = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    variety_i18n = Column(JSONB, nullable=False, default=dict, server_default="{}")
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -147,6 +150,9 @@ class CropCycle(Base):
     planting_date = Column(Date)
     expected_harvest_date = Column(Date)
     actual_harvest_date = Column(Date)
+    plant_count = Column(Integer)
+    expected_yield_kg = Column(Float)
+    expected_price = Column(Float)  # per kg, in the account's currency
     status = Column(String(20), nullable=False, default="planned")
     notes = Column(Text)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
@@ -162,6 +168,7 @@ class FieldEvent(Base):
         CheckConstraint(f"source IN {EVENT_SOURCES}", name="source_valid"),
         Index("ix_field_events_account_occurred", "account_id", "occurred_at"),
         Index("ix_field_events_field_occurred", "field_id", "occurred_at"),
+        Index("ix_field_events_zone_occurred", "zone_id", "occurred_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

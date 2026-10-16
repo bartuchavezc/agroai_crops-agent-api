@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -15,6 +16,8 @@ class CycleIrrigation(BaseModel):
     net_mm: float
     status: IrrigationStatus
     message: str
+    suggested_mm: Optional[float] = None  # to apply on `next_irrigation_date`
+    next_irrigation_date: Optional[date] = None  # null: no need within the forecast horizon
 
 
 class FieldIrrigationResult(BaseModel):
@@ -28,4 +31,6 @@ class FieldIrrigationResult(BaseModel):
     field_net_mm: Optional[float] = None
     field_status: Optional[IrrigationStatus] = None
     field_message: Optional[str] = None
+    suggested_mm: Optional[float] = None
+    next_irrigation_date: Optional[date] = None
     cycles: list[CycleIrrigation] = []

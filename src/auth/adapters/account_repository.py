@@ -37,9 +37,9 @@ class SQLAlchemyAccountRepository(AccountRepositoryInterface):
             result = await session.execute(select(Account).filter(Account.id == account_id))
             return result.scalars().first()
 
-    async def create(self, name: str) -> Account:
+    async def create(self, name: str, currency: str = "ARS") -> Account:
         """Create a new account."""
-        db_account = Account(name=name)
+        db_account = Account(name=name, currency=currency)
 
         async with self.session_factory() as session:
             async with session.begin():

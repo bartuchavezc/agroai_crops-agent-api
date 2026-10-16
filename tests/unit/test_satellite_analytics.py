@@ -165,3 +165,41 @@ def test_rule_context_feeds_the_rules_and_messages_render(worse):
     else:
         assert "satellite_below_normal" not in ids and "satellite_worse_than_last_year" not in ids
     assert result.to_dict()["last_pass"]["date"]  # JSON-friendly (dates as strings)
+
+
+def _qobs(day, ndvi, valid=1.0, cloud=None, shadow=None, nodata=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        observed_on=day, ndvi_mean=ndvi, ndmi_mean=0.2, valid_fraction=valid, cloud_fraction=cloud,
+        shadow_fraction=shadow, nodata_fraction=nodata,
+    )
+
+
+def test_discard_reason_is_the_biggest_recorded_cause():
+    assert analytics.discard_reason(_qobs(date(2026, 1, 1), None, 0.0, cloud=0.7, shadow=0.2, nodata=0.1)) == "clouds"
+    assert analytics.discard_reason(_qobs(date(2026, 1, 1), None, 0.0, cloud=0.1, shadow=0.6, nodata=0.0)) == "shadow"
+    assert analytics.discard_reason(_qobs(date(2026, 1, 1), None, 0.0, cloud=0.0, shadow=0.0, nodata=0.9)) == "nodata"
+    assert analytics.discard_reason(_qobs(date(2026, 1, 1), None, 0.0)) == "unknown"  # stored before it was recorded
+    assert analytics.discard_reason(_qobs(date(2026, 1, 1), None, 0.0, cloud=0.0, shadow=0.0, nodata=0.0)) == "unknown"
+
+
+def test_pass_points_mark_what_the_analysis_ignored_and_why():
+    d = date(2026, 3, 1)
+    from datetime import timedelta
+
+    passes = [
+        _qobs(d, 0.60),
+        _qobs(d + timedelta(days=5), 0.62),
+        _qobs(d + timedelta(days=10), 0.30),  # an isolated dip between two good passes: residual cloud/haze
+        _qobs(d + timedelta(days=15), 0.64),
+        _qobs(d + timedelta(days=20), None, 0.0, cloud=0.1, shadow=0.8, nodata=0.0),  # fully masked, shadow
+        _qobs(d + timedelta(days=25), 0.55, 0.3, cloud=0.65, shadow=0.0, nodata=0.05),  # too little clear surface
+        _qobs(d + timedelta(days=30), 0.66),
+    ]
+    points = analytics.pass_points(passes, ["ndvi", "ndmi"], 0.6)
+    assert [(p["date"][-5:], p["discarded"], p["discard_reason"]) for p in points] == [
+        ("03-01", False, None), ("03-06", False, None), ("03-11", True, "clouds"), ("03-16", False, None),
+        ("03-21", True, "shadow"), ("03-26", True, "clouds"), ("03-31", False, None),
+    ]
+    assert points[0]["ndvi_mean"] == 0.6 and points[0]["ndmi_mean"] == 0.2 and points[4]["ndvi_mean"] is None
