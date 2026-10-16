@@ -6,7 +6,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
-from src.agent.reasoning.periodic_report import ZoneCropAssessment, ZonePeriodicReportResult
+from src.agent.reasoning.periodic_report import PeriodicReportResult, ZoneGroupAssessment, ZoneOverviewResult
 from src.agent.schemas import SoilRecognitionResult
 from src.application.satellite.models import SOURCE_S2
 from src.application.soil_data.schemas import SoilGridsEstimate, SoilLayerEstimate
@@ -15,7 +15,7 @@ from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
 
 from .test_agent_chat import scripted_model, with_key  # noqa: F401 - fixtures
-from .test_zones import _TINY_PNG, _cycle
+from .test_zones import _TINY_PNG, _cycle, _group_result, _overview_result, _synthesis_result
 
 FARM = "/api/v1/farm-management"
 DAYS = [
@@ -25,20 +25,30 @@ DAYS = [
 ]
 
 
-def _zone_result(cycles, risk="low", confidence=0.8):
-    return ZonePeriodicReportResult(
-        zone_summary="El cantero viene parejo.", overall_health="good",
-        crops=[
-            ZoneCropAssessment(
-                crop_cycle_id=c["id"], crop_name=name, visible_in_photos=True, growth_stage="vegetativo",
-                health_status="good", health_summary="hojas verdes", expected_vs_actual="Acorde",
-                harvest_ready=False, harvest_verdict="Sin frutos",
-            )
-            for c, name in cycles
-        ],
-        past_actions_assessment="ok", objectives_assessment="ok", risk_severity=risk,
-        recommendations=["Atar los tomates"], confidence=confidence, needs_human_expert=False,
+def _periodic_result(risk="low", confidence=0.8, **overrides) -> PeriodicReportResult:
+    data = dict(
+        detected_crop="Tomate", growth_stage="vegetativo", health_status="good", health_summary="hojas verdes",
+        expected_vs_actual="Acorde", growth_on_track=True, stress_signals=[], past_actions_assessment="ok",
+        harvest_ready=False, harvest_verdict="Sin frutos", objectives_assessment="ok", risks=[],
+        risk_severity=risk, recommendations=["Atar los tomates"], confidence=confidence, needs_human_expert=False,
     )
+    data.update(overrides)
+    return PeriodicReportResult(**data)
+
+
+def _respond_by_schema(tomato, lettuce):
+    """A `generate_structured` side_effect for the fanned-out zone flow: answers by schema/prompt content
+    rather than call order, which the scheduler doesn't guarantee."""
+
+    def _respond(_user_id, *, contents, schema, **_kwargs):
+        if schema is ZoneOverviewResult:
+            return _overview_result()
+        if schema is ZoneGroupAssessment:
+            prompt = contents[-1]
+            return _group_result([(tomato, "Tomate")] if tomato["id"] in prompt else [(lettuce, "Lechuga")])
+        return _synthesis_result()
+
+    return _respond
 
 
 def _series(ndvi: float) -> list[dict]:
@@ -81,47 +91,72 @@ async def _track_zone(client, headers, zone):
 
 async def test_crop_analysis_gets_physiology_the_manuals_of_its_crops_and_the_field_data(client, signup, container):
     user, field, zone, cycles, _ = await _zone_with_crops(client, container, signup, "an-crop")
+    (tomato, _), (lettuce, _) = cycles
     weather = container.data_providers.weather_service()
     weather._recent_cache.clear()
-    fake = AsyncMock(return_value=_zone_result(cycles))
+    fake = AsyncMock(side_effect=_respond_by_schema(tomato, lettuce))
     with patch.object(container.agent.gemini(), "generate_structured", fake), \
             patch.object(weather.open_meteo, "recent_daily", AsyncMock(return_value=DAYS)):
         report = await _track_zone(client, user["headers"], zone)
 
-    assert fake.await_count == 1  # a quiet zone: no deep pass
-    system = fake.call_args.kwargs["system_instruction"]
+    # A quiet zone, fanned out: overview + one call per crop group (tomate, lechuga) + synthesis, no deep pass.
+    assert fake.await_count == 4
+    calls = fake.call_args_list
+    tomato_call = next(
+        c for c in calls if c.kwargs["schema"] is ZoneGroupAssessment and tomato["id"] in c.kwargs["contents"][-1]
+    )
+    system = tomato_call.kwargs["system_instruction"]
     physiology = system.index("## Referencia: fisiologia-nutricion-mineral-fundamentos")
-    # physiology first (identical for every analysis: the shared prefix), then the crops in a fixed alphabetical order
-    assert physiology < system.index("## Referencia: ficha-lechuga") < system.index("## Referencia: ficha-tomate")
+    # physiology first (identical for every call: the shared prefix), then this group's OWN ficha only.
+    assert physiology < system.index("## Referencia: ficha-tomate")
     for name in ("fisiologia-macronutrientes-npk-s", "fisiologia-agua-suelo-y-absorcion", "plagas-tomate"):
         assert f"## Referencia: {name}" in system
-    assert "ficha-acelga" not in system  # a crop of another zone isn't this analysis' business
+    # Neither another zone's crop nor the OTHER group's crop of this same zone belong in this call.
+    assert "ficha-acelga" not in system and "ficha-lechuga" not in system
     assert "Material de referencia" in system and "Cómo usar el material de referencia" in system
-    assert fake.call_args.kwargs["thinking_level"] == "medium"
+    assert tomato_call.kwargs["thinking_level"] == "medium"
 
-    prompt = fake.call_args.kwargs["contents"][-1]
+    prompt = tomato_call.kwargs["contents"][-1]
     assert "Datos del campo y registros" in prompt
-    assert "NDVI 0.58" in prompt  # the stored satellite series
+    assert "NDVI 0.58" in prompt  # the stored satellite series, fetched once and shared by every group call
     assert "Clima de los últimos 30 días" in prompt and "balance hídrico" in prompt
     research = report["raw_analysis_data"]["research"]
-    assert research["deep"] is False and "ficha-tomate" in research["references"]
+    assert research["deep"] is False
+    assert "ficha-tomate" in research["references"] and "ficha-lechuga" in research["references"]
 
 
 async def test_deep_pass_searches_the_web_and_refines_with_the_sources(client, signup, container):
-    user, field, zone, cycles, actor = await _zone_with_crops(client, container, signup, "an-deep")
+    # Single-crop periodic tracking, not a zone: the deep/web-research refine pass is out of scope for the
+    # zone's fanned-out calls (see diagnosis_service._zone_group_pass), but unchanged for this path.
+    user = await signup("an-deep")
+    h = user["headers"]
+    field = (await client.post(
+        f"{FARM}/fields", headers=h, json={"name": "Huerta", "latitude": -34.92, "longitude": -57.95}
+    )).json()
+    tomato = await _cycle(client, h, field["id"], "tomate")
+    actor = Actor(UUID(user["user"]["id"]), UUID(user["account"]["id"]), "owner")
+    await container.application.satellite_series_repository().upsert_many(
+        actor.account_id, UUID(field["id"]), SOURCE_S2, _series(0.58)
+    )
     weather = container.data_providers.weather_service()
     weather._recent_cache.clear()
     service = container.agent.diagnosis_service()
-    first = _zone_result(cycles, risk="high", confidence=0.55)
-    refined = _zone_result(cycles, risk="medium", confidence=0.85)
-    refined.zone_summary = "Mancha bacteriana confirmada por las fuentes."
+    first = _periodic_result(risk="high", confidence=0.55)
+    refined = _periodic_result(risk="medium", confidence=0.85)
+    refined.health_summary = "Mancha bacteriana confirmada por las fuentes."
     fake = AsyncMock(side_effect=[first, refined])
     hit = SearchHit(title="INTA: mancha bacteriana en tomate", url="https://inta.gob.ar/mancha", content="Manejo: ...")
     search = AsyncMock(return_value=[hit])
     with patch.object(container.agent.gemini(), "generate_structured", fake), \
             patch.object(weather.open_meteo, "recent_daily", AsyncMock(return_value=DAYS)), \
             patch.object(service.analysis_context, "search", type("S", (), {"search": search})()):
-        report = await _track_zone(client, user["headers"], zone)
+        up = await client.post(
+            "/api/v1/upload/image", headers=h,
+            data={"report_type": "periodic", "field_id": field["id"], "crop_cycle_id": tomato["id"]},
+            files={"image_file": ("a.png", _TINY_PNG, "image/png")},
+        )
+        assert up.status_code == 200, up.text
+        report = (await client.get(f"/api/v1/reports/{up.json()['report_id']}", headers=h)).json()
 
     assert fake.await_count == 2 and search.await_count >= 1
     first_call, second_call = fake.await_args_list

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from src.application.farm.declination import magnetic_to_true_bearing
 from src.application.farm.schemas import LayoutPhoto
+from src.application.reports.schemas import ReportUpdate
 from src.application.storage.router import receive_photo, stored_name
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
@@ -15,7 +16,7 @@ from src.shared.domain.base import utcnow
 from src.shared.utils.errors import PermissionDeniedError
 
 from ..tools import ToolDeps
-from .diagnosis_service import DiagnosisService
+from .diagnosis_service import DiagnosisService, analyze_in_background
 from .layout_jobs import process_layout_photo
 
 router = APIRouter(prefix="/analyze", tags=["Analysis"])
@@ -38,13 +39,34 @@ class ImageAnalysisRequest(BaseModel):
     deep: Optional[bool] = None
 
 
-@router.post("", summary="Diagnose a crop photo (Gemini multimodal, structured output)")
+class QueuedAnalysis(BaseModel):
+    status: str = "queued"
+    report_id: UUID
+
+
+@router.post(
+    "",
+    summary="(Re)analyze a crop photo (Gemini multimodal, structured output)",
+    description="Diagnosis/periodic/soil analyses still run inline (one fast Gemini call). A zone's tracking "
+    "is now several sequential calls (see DiagnosisService._analyze_zone), so that one runs in the "
+    "background instead — poll GET /reports/{report_id} — rather than blocking the request with nothing "
+    "bounding it.",
+)
 @inject
 async def analyze_image(
     body: ImageAnalysisRequest,
+    background_tasks: BackgroundTasks,
     actor: Actor = Depends(get_actor),
+    reports_service=Depends(Provide["application.reports_service"]),
     diagnosis: DiagnosisService = Depends(Provide["agent.diagnosis_service"]),
 ):
+    report = await reports_service.get_report(actor, body.report_id)  # 404s now, not only inside the task
+    if report.zone_id and report.crop_cycle_id is None:
+        await reports_service.update_report(actor, report.id, ReportUpdate(status="PENDING_ANALYSIS"))
+        background_tasks.add_task(
+            analyze_in_background, diagnosis, actor, body.report_id, body.image_identifier, body.deep
+        )
+        return QueuedAnalysis(report_id=body.report_id)
     return await diagnosis.analyze(actor, body.report_id, body.image_identifier, deep=body.deep)
 
 

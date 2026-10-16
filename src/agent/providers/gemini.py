@@ -4,6 +4,7 @@ the environment: every client is built from the calling user's own key.
 """
 import hashlib
 import logging
+import time
 from typing import Any, Optional, Sequence, Type, TypeVar
 from uuid import UUID
 
@@ -123,16 +124,35 @@ class GeminiGateway:
         return types.GenerateContentConfig(**kwargs)
 
     async def _generate(self, client: genai.Client, models: list[str], **kwargs):
-        """generate_content over a chain of models, moving on when one is overloaded."""
+        """generate_content over a chain of models, moving on when one is overloaded. Every attempt is
+        logged — one line per actual call to the model, success or failure, independent of whatever is
+        calling in (analysis, chat, layout, satellite, ...) — so one unit of work's trace id (see trace.py)
+        is enough to see every model call it made."""
         last_exc: BaseException | None = None
         for model in models:
+            started = time.monotonic()
             try:
-                return await client.aio.models.generate_content(model=model, **kwargs)
+                response = await client.aio.models.generate_content(model=model, **kwargs)
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                elapsed = time.monotonic() - started
                 if not _is_retryable(exc):
+                    logger.warning(f"Gemini call model={model} failed in {elapsed:.1f}s ({type(exc).__name__}): {exc}")
                     break
-                logger.warning(f"Gemini model {model} unavailable ({getattr(exc, 'code', '')}); trying next")
+                logger.warning(
+                    f"Gemini call model={model} failed in {elapsed:.1f}s "
+                    f"({getattr(exc, 'code', type(exc).__name__)}); trying next"
+                )
+                continue
+            usage = response.usage_metadata
+            logger.info(
+                f"Gemini call model={model} ok in {time.monotonic() - started:.1f}s "
+                f"prompt_tokens={getattr(usage, 'prompt_token_count', None)} "
+                f"output_tokens={getattr(usage, 'candidates_token_count', None)} "
+                f"thinking_tokens={getattr(usage, 'thoughts_token_count', None)} "
+                f"cached_tokens={getattr(usage, 'cached_content_token_count', None)}"
+            )
+            return response
         raise translate_provider_error(last_exc) from None
 
     async def api_key_for(self, user_id: UUID) -> str:
@@ -198,6 +218,7 @@ class GeminiGateway:
 
     async def embed(self, user_id: UUID, texts: Sequence[str], task_type: str) -> list[list[float]]:
         client = await self.client_for(user_id)
+        started = time.monotonic()
         try:
             response = await client.aio.models.embed_content(
                 model=self.embedding_model,
@@ -207,5 +228,13 @@ class GeminiGateway:
                 ),
             )
         except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"Gemini embed model={self.embedding_model} failed in {time.monotonic() - started:.1f}s "
+                f"({type(exc).__name__}): {exc}"
+            )
             raise translate_provider_error(exc) from None
+        logger.info(
+            f"Gemini embed model={self.embedding_model} ok in {time.monotonic() - started:.1f}s "
+            f"texts={len(texts)} task_type={task_type}"
+        )
         return [list(e.values) for e in response.embeddings]

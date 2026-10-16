@@ -20,6 +20,7 @@ class ReportCreate(BaseModel):
     zone_id: Optional[UUID] = None
     crop_cycle_ids: List[UUID] = Field(default_factory=list, description="Zone tracking: the cycles covered")
     image_identifiers: List[str] = Field(default_factory=list, description="Zone tracking: every photo")
+    notes: Optional[str] = Field(None, max_length=2000, description="The user's own observations, fed to the model")
 
 
 class ReportUpdate(BaseModel):
@@ -44,6 +45,7 @@ class Report(BaseModel):
     zone_id: Optional[UUID] = None
     crop_cycle_ids: List[UUID] = Field(default_factory=list)
     image_identifiers: List[str] = Field(default_factory=list)
+    notes: Optional[str] = None
     created_by: Optional[UUID] = None
     title: Optional[str] = None
     summary: Optional[str] = None

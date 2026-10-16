@@ -28,6 +28,7 @@ class ReportModel(Base):
     zone_id = Column(PGUUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
     crop_cycle_ids = Column(JSONB, nullable=False, default=list, server_default="[]")
     image_identifiers = Column(JSONB, nullable=False, default=list, server_default="[]")
+    notes = Column(Text)  # the user's own observations at submission time, fed to the model as context
     created_by = Column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     title = Column(String(255))
     summary = Column(Text)

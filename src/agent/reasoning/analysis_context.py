@@ -215,13 +215,13 @@ class AnalysisContextBuilder:
 
     # ------------------------------------------------------------ the two kinds
 
-    async def for_crop(self, actor, report, field, crop_names: list[str]) -> AnalysisContext:
-        """Everything a crop analysis (diagnosis / periodic / zone) gets besides the photo and its own cycle context."""
-        text, loaded = self.references_for(self.crop_reference_names(crop_names))
-        lines, ndvi, weather = [], self.ndvi_lines(actor, field), self.weather_lines(field)
+    async def field_data_lines(self, actor, report, field) -> list[str]:
+        """NDVI, weather, previous diagnoses and soil: field-level, not per-crop. A zone analysis that fans out into
+        several per-crop/group calls fetches this ONCE and reuses it across all of them."""
+        lines = []
         results = await asyncio.gather(
-            ndvi,
-            weather,
+            self.ndvi_lines(actor, field),
+            self.weather_lines(field),
             self.previous_reports_lines(
                 actor, field.id, "diagnosis", report.id, "Diagnósticos previos de este campo (más reciente primero):"
             ),
@@ -229,6 +229,12 @@ class AnalysisContextBuilder:
         for block in results:
             lines += block
         lines += self.soil_lines(field)
+        return lines
+
+    async def for_crop(self, actor, report, field, crop_names: list[str]) -> AnalysisContext:
+        """Everything a crop analysis (diagnosis / periodic / zone) gets besides the photo and its own cycle context."""
+        text, loaded = self.references_for(self.crop_reference_names(crop_names))
+        lines = await self.field_data_lines(actor, report, field)
         return AnalysisContext(references=text, loaded=loaded, data_lines=lines)
 
     async def for_soil(self, actor, report, field, crop_names: list[str]) -> AnalysisContext:
