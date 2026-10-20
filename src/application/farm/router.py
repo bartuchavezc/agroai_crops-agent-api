@@ -37,6 +37,7 @@ from .schemas import (
     ZoneRenumber,
 )
 from .service import FarmService
+from .snapshot import FieldSnapshot, FieldSnapshotService
 from .summary import FieldSummary, FieldSummaryService
 from .log import LogPage, LogService
 
@@ -45,6 +46,7 @@ router = APIRouter(prefix="/farm-management", tags=["Farm Management"])
 FARM = Provide["application.farm_service"]
 LOG = Provide["application.log_service"]
 SUMMARY = Provide["application.field_summary_service"]
+SNAPSHOT = Provide["application.field_snapshot_service"]
 SATELLITE = Provide["application.satellite_service"]
 
 
@@ -185,6 +187,19 @@ async def field_summary(
     """General state, zones with their last analysis and photo, active alerts, today's reminders and the irrigation
     outlook. The irrigation block is null when the field has no coordinates or the weather data is down."""
     return await summary.summary(actor, field_id)
+
+
+@router.get("/fields/{field_id}/snapshot", response_model=FieldSnapshot, summary="A field's current state in one read")
+@inject
+async def field_snapshot(
+    field_id: UUID,
+    season: Optional[str] = Query(None, description='Only the lots of this season ("26/27")'),
+    actor: Actor = Depends(get_actor),
+    snapshots: FieldSnapshotService = Depends(SNAPSHOT),
+):
+    """Zones with their active lots, pH and last bitácora entry; every lot by status; the latest entries; the next
+    open tasks; today's reminders and the last completed analysis. Same read as the agent's get_farm_snapshot."""
+    return await snapshots.snapshot(actor, field_id, season)
 
 
 @router.get("/fields/{field_id}/sun-exposure", response_model=SunExposureRead, summary="Field Sun Exposure")

@@ -8,6 +8,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+import pgvector.sqlalchemy
 from sqlalchemy.dialects import postgresql
 
 revision: str = '8c18ff0b5c97'

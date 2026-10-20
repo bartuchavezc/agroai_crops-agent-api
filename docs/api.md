@@ -178,6 +178,7 @@ Todo es aditivo: parámetros y campos opcionales; un cliente que no los usa no n
 | Método | Ruta | |
 |---|---|---|
 | GET | `/farm-management/fields/{id}/summary` | El inicio del campo en una llamada: `status` (ok\|attention\|alert\|unknown) y `status_reasons`, `zones` (con sus cultivos activos y `last_analysis`: resumen, salud, foto), `unzoned_cycles`, `alerts` activas, `reminders_today` (pendientes hasta el fin del día local, vencidos incluidos) e `irrigation` (null si no hay coordenadas o no hay datos del clima) |
+| GET | `/farm-management/fields/{id}/snapshot?season=` | El estado actual del campo (la tarjeta «Estado actual» y la herramienta `get_farm_snapshot`): `zones` (con `lots` activos, `ph` propio o del campo y `last_entry` de la bitácora), `unzoned_lots`, `lots_by_status` (todos los lotes), `recent_log`, `next_tasks` (abiertas por fecha) y `open_tasks`, `reminders_today`, `ph` del campo y `last_analysis` |
 | GET | `/farm-management/zones/{id}` | La zona |
 | GET | `/irrigation/fields/{id}/recommendation` | Ahora con `suggested_mm` y `next_irrigation_date` (también por cultivo): el día en que el balance hídrico supera el umbral de déficit, con el pronóstico de lluvia (`null` si no hace falta en 7 días) |
 | GET / PATCH | `/alerts/fields/{id}/alert-rules[/{rule_id}]` | Cada regla con `enabled`, `threshold` vigente, `default_threshold`, rango y unidad. PATCH (owner/tecnico): `{enabled?}` o `{threshold?}` (`null` vuelve al valor por defecto). Los jobs, el análisis y el agente lo respetan |

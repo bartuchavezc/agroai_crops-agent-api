@@ -30,12 +30,40 @@ from .context import (
 _NO_ZONE = {"ninguna", "ninguno", "sin zona", "none"}
 
 
+SNAPSHOT_PARTS = ("zones", "lots", "recent_log", "tasks", "reminders", "analysis")
+
+
 def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     @tool
     async def list_fields() -> dict:
         """List the account's fields (plots / garden beds) with their active lots and last activity."""
         overview = await deps.farm.overview(ctx.actor)
         return {"fields": compact(overview)}
+
+    @tool
+    async def get_farm_snapshot(
+        field: Optional[str] = None, include: Optional[list[str]] = None, season: Optional[str] = None
+    ) -> dict:
+        """A field's current state in ONE call — start here before reading zones, lots, the bitácora or tasks one by
+        one. include (default all): zones (each with its active lots, pH and last bitácora entry), lots (every lot
+        by status), recent_log, tasks (next open ones), reminders (today's), analysis (the last completed one).
+        season: only that season's lots ("26/27")."""
+        target = await resolve_field(deps, ctx, field)
+        snap = await deps.snapshot.snapshot(ctx.actor, target.id, season)
+        wanted = set(include or SNAPSHOT_PARTS)
+        parts = {
+            "zones": {"zones": snap.zones, "unzoned_lots": snap.unzoned_lots},
+            "lots": {"lots_by_status": snap.lots_by_status},
+            "recent_log": {"recent_log": snap.recent_log},
+            "tasks": {"next_tasks": snap.next_tasks, "open_tasks": snap.open_tasks},
+            "reminders": {"reminders_today": snap.reminders_today},
+            "analysis": {"last_analysis": snap.last_analysis},
+        }
+        result: dict = {"field_name": snap.field_name, "ph": snap.ph}
+        for name in SNAPSHOT_PARTS:
+            if name in wanted:
+                result.update(parts[name])
+        return compact(result)
 
     @tool
     async def list_lots(
@@ -196,6 +224,7 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     return [
         list_fields,
+        get_farm_snapshot,
         list_lots,
         list_zones,
         list_recent_events,

@@ -76,6 +76,7 @@ class AgentContainer(containers.DeclarativeContainer):
         log=application.log_service,
         tasks=application.task_service,
         changes=application.change_set_service,
+        snapshot=application.field_snapshot_service,
     )
     runner = providers.Singleton(
         AgentRunner,

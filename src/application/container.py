@@ -4,6 +4,7 @@ from .alerts.field_rules import FieldAlertRulesService
 from .alerts.forecast_alerts import ForecastAlertService
 from .alerts.rules_engine import RulesEngine
 from .alerts.service import AlertService
+from .farm.snapshot import FieldSnapshotService
 from .farm.summary import FieldSummaryService
 from .changes.service import ChangeSetService
 from .farm.log import LogService
@@ -133,6 +134,10 @@ class ApplicationContainer(containers.DeclarativeContainer):
     )
     log_service = providers.Singleton(
         LogService, farm_service=farm_service, reports_service=reports_service, task_service=task_service
+    )
+    field_snapshot_service = providers.Singleton(
+        FieldSnapshotService, farm_service=farm_service, reports_service=reports_service,
+        planning_service=planning_service, task_service=task_service, log_service=log_service,
     )
     cycle_progress_service = providers.Singleton(
         CycleProgressService, farm_service=farm_service, planning_service=planning_service,
