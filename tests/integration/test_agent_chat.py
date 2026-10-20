@@ -395,25 +395,28 @@ async def test_management_tools_field_assignee_status_and_delete(client, signup,
     field = (await client.post("/api/v1/farm-management/fields", headers=h, json={"name": "Huerta Norte"})).json()
 
     scripted_model.script = [
-        ("call", "add_roadmap_item", {"title": "Atar tomates", "field": "Huerta Norte", "assigned_to": staff["email"]}),
+        ("call", "add_tasks",
+         {"tasks": [{"title": "Atar tomates", "field": "Huerta Norte", "assigned_to": staff["email"]}]}),
         ("text", "Listo."),
     ]
     response = await client.post("/api/v1/chat", headers=h, json={"message": "agendá atar tomates"})
     assert response.json()["metadata"]["tool_calls"][0]["ok"] is True
-    task = (await client.get("/api/v1/management/roadmap", headers=h)).json()[0]
+    task = (await client.get("/api/v1/tasks", headers=h)).json()[0]
     assert task["field_id"] == field["id"] and task["assigned_to"] == staff["user"]["id"]
+    assert task["source"] == "agent"
 
     scripted_model.script = [
-        ("call", "update_roadmap_item", {"item_id": task["id"], "status": "cancelado", "assigned_to": "ninguno"}),
+        ("call", "update_tasks",
+         {"changes": [{"task_id": task["id"], "status": "cancelada", "assigned_to": "ninguno"}]}),
         ("text", "Cancelada."),
     ]
     await client.post("/api/v1/chat", headers=h, json={"message": "cancelala"})
-    task = (await client.get("/api/v1/management/roadmap", headers=h)).json()[0]
-    assert task["status"] == "cancelado" and task["assigned_to"] is None and task["field_id"] == field["id"]
+    task = (await client.get("/api/v1/tasks", headers=h)).json()[0]
+    assert task["status"] == "cancelada" and task["assigned_to"] is None and task["field_id"] == field["id"]
 
-    scripted_model.script = [("call", "remove_roadmap_item", {"item_id": task["id"]}), ("text", "Borrada.")]
+    scripted_model.script = [("call", "remove_task", {"task_id": task["id"]}), ("text", "Borrada.")]
     await client.post("/api/v1/chat", headers=h, json={"message": "sí, borrala"})
-    assert (await client.get("/api/v1/management/roadmap", headers=h)).json() == []
+    assert (await client.get("/api/v1/tasks", headers=h)).json() == []
 
     await with_key(staff)
     scripted_model.script = [("text", "ok")]
@@ -422,7 +425,8 @@ async def test_management_tools_field_assignee_status_and_delete(client, signup,
         f.name for tool in scripted_model.requests[-1].config.tools or [] for f in (tool.function_declarations or [])
     }
     assert "update_shopping_item" in declared and "list_account_members" in declared
-    assert not declared & {"remove_shopping_item", "remove_budget_entry", "remove_roadmap_item", "update_budget_entry"}
+    assert "add_tasks" in declared and "update_tasks" in declared
+    assert not declared & {"remove_shopping_item", "remove_budget_entry", "remove_task", "update_budget_entry"}
 
 
 async def _messages(client, h, conversation_id):

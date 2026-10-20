@@ -111,7 +111,7 @@ class FieldSummaryService:
         tz = ZoneInfo(actor.timezone) if actor.timezone else ZoneInfo("UTC")
         alerts = await self.alerts.get_active_alerts(actor, field_id=field_id)
         reminders = await self.planning.list_reminders(
-            actor, status="pendiente", until=end_of_local_day(today_in(actor.timezone), tz), field_id=field_id,
+            actor, status="activo", until=end_of_local_day(today_in(actor.timezone), tz), field_id=field_id,
             limit=100,
         )
         irrigation = None

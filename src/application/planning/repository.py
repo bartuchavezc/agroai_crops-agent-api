@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.application.farm.models import CropMaster
 
-from .models import CropPlan, PlanSowing, PlanStage, Reminder, ReminderCompletion
+from .models import CropPlan, PlanSowing, PlanStage, Reminder
 
 Row = TypeVar("Row", CropPlan, PlanStage, PlanSowing, Reminder)
 
@@ -124,7 +124,7 @@ class PlanningRepository:
         async with self.session_factory() as session:
             await session.execute(
                 delete(Reminder).where(
-                    Reminder.plan_id == plan_id, Reminder.source == "plan", Reminder.status == "pendiente"
+                    Reminder.plan_id == plan_id, Reminder.source == "plan", Reminder.status == "activo"
                 )
             )
             await session.execute(delete(PlanStage).where(PlanStage.plan_id == plan_id, PlanStage.source == "plan"))
@@ -134,8 +134,8 @@ class PlanningRepository:
         async with self.session_factory() as session:
             await session.execute(
                 update(Reminder)
-                .where(Reminder.account_id == account_id, Reminder.plan_id == plan_id, Reminder.status == "pendiente")
-                .values(status="cancelado")
+                .where(Reminder.account_id == account_id, Reminder.plan_id == plan_id, Reminder.status == "activo")
+                .values(status="terminado")
             )
             await session.commit()
 
@@ -187,25 +187,13 @@ class PlanningRepository:
             select(Reminder)
             .where(
                 Reminder.deleted_at.is_(None),
-                Reminder.status == "pendiente",
+                Reminder.status == "activo",
                 Reminder.due_at <= now,
                 or_(Reminder.notified_at.is_(None), Reminder.notified_at < Reminder.due_at),
             )
             .order_by(Reminder.due_at)
             .limit(limit)
         )
-        async with self.session_factory() as session:
-            return (await session.execute(stmt)).scalars().all()
-
-    async def completions(
-        self, account_id: UUID, zone_id: Optional[UUID] = None, before: Optional[datetime] = None, limit: int = 50
-    ) -> Sequence[ReminderCompletion]:
-        stmt = select(ReminderCompletion).where(ReminderCompletion.account_id == account_id)
-        if zone_id:
-            stmt = stmt.where(ReminderCompletion.zone_id == zone_id)
-        if before:
-            stmt = stmt.where(ReminderCompletion.completed_at < before)
-        stmt = stmt.order_by(ReminderCompletion.completed_at.desc(), ReminderCompletion.id.desc()).limit(limit)
         async with self.session_factory() as session:
             return (await session.execute(stmt)).scalars().all()
 
@@ -235,7 +223,7 @@ class PlanningRepository:
                 .order_by(PlanSowing.sow_date)
             )).all()
             remind = select(Reminder).where(
-                Reminder.account_id == account_id, Reminder.deleted_at.is_(None), Reminder.status == "pendiente",
+                Reminder.account_id == account_id, Reminder.deleted_at.is_(None), Reminder.status == "activo",
                 Reminder.stage_id.is_(None), Reminder.sowing_id.is_(None), Reminder.due_at < until_dt,
                 or_(Reminder.recurrence != "none", Reminder.due_at >= since_dt),
                 or_(Reminder.until.is_(None), Reminder.until >= since),

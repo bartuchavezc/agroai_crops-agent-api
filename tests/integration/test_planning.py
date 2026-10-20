@@ -65,11 +65,21 @@ async def test_due_reminders_become_notifications_once(client, signup, add_membe
     note = next(n for n in await _unread(client, staff) if n["title"] == "Cosechar lechuga")
     assert note["entity_type"] == "reminder" and note["entity_id"] == only_staff.json()["id"]
 
-    # A notified one-off stays pending (overdue) until it's ticked.
-    agenda = (await client.get(f"{P}/reminders?status=pendiente", headers=staff["headers"])).json()
-    assert {r["title"] for r in agenda} == {"Regar el cantero", "Cosechar lechuga", "Más adelante"}
-    done = await client.post(f"{P}/reminders/{everyone.json()['id']}/complete", headers=staff["headers"])
-    assert done.json()["status"] == "hecho" and done.json()["completed_at"]
+    # A reminder only notifies: a one-off is finished once sent, nobody "completes" it.
+    agenda = (await client.get(f"{P}/reminders?status=activo", headers=staff["headers"])).json()
+    assert {r["title"] for r in agenda} == {"Más adelante"}
+    finished = (await client.get(f"{P}/reminders?status=terminado", headers=staff["headers"])).json()
+    assert {r["title"] for r in finished} == {"Regar el cantero", "Cosechar lechuga"}
+    assert (await client.post(f"{P}/reminders/{everyone.json()['id']}/complete", headers=h)).status_code in (404, 405)
+
+    # What the user sees is the notification: dismissed one by one, or the read ones cleared.
+    sh = staff["headers"]
+    assert (await client.delete(f"/api/v1/notifications/{note['id']}", headers=sh)).status_code == 204
+    assert [n["title"] for n in await _unread(client, staff) if n["type"] == "reminder"] == ["Regar el cantero"]
+    assert (await client.put("/api/v1/notifications/read-all", headers=sh)).status_code == 204
+    assert (await client.post("/api/v1/notifications/clear", headers=sh)).json()["cleared"] >= 1
+    assert (await client.get("/api/v1/notifications", headers=sh)).json() == []
+    assert (await client.delete(f"/api/v1/notifications/{note['id']}", headers=sh)).status_code == 404
 
 
 async def test_recurring_reminders_move_to_the_next_occurrence(client, signup, container):
@@ -97,13 +107,17 @@ async def test_recurring_reminders_move_to_the_next_occurrence(client, signup, c
     reminders = {r["title"]: r for r in (await client.get(f"{P}/reminders", headers=h)).json()}
     next_due = datetime.fromisoformat(reminders["Fertilizar"]["due_at"])
     assert abs(next_due - (datetime.fromisoformat(weekly["due_at"]) + timedelta(days=7))) < timedelta(seconds=1)
-    assert reminders["Fertilizar"]["status"] == "pendiente"
-    assert reminders["Revisar plagas"]["status"] == "hecho"  # next one (3 days) would be past `until`
+    assert reminders["Fertilizar"]["status"] == "activo"
+    assert reminders["Revisar plagas"]["status"] == "terminado"  # next one (3 days) would be past `until`
 
-    # Ticking a recurring one early skips to the occurrence after.
-    ticked = (await client.post(f"{P}/reminders/{weekly['id']}/complete", headers=h)).json()
-    assert datetime.fromisoformat(ticked["due_at"]) - next_due == timedelta(days=7)
-    assert ticked["status"] == "pendiente"
+    # Paused, it sends nothing even when due; resumed, it goes on.
+    paused = (await client.put(f"{P}/reminders/{weekly['id']}", headers=h, json={
+        "status": "pausado", "due_at": _iso(start)})).json()
+    assert paused["status"] == "pausado"
+    assert (await container.application.planning_service().run_due_reminders())["notified"] == 0
+    resumed = (await client.put(f"{P}/reminders/{weekly['id']}", headers=h, json={"status": "activo"})).json()
+    assert resumed["status"] == "activo"
+    assert (await container.application.planning_service().run_due_reminders())["notified"] == 1
     assert short["recurrence"] == "every_n_days"
 
 
@@ -139,8 +153,8 @@ async def test_lot_stage_plan_from_template(client, signup):
     assert len(plan["reminders"]) == len(preview["reminders"])
     assert all(r["zone_id"] == zone["id"] and r["lot_id"] == cycle["id"] for r in plan["reminders"])
 
-    # Regenerating replaces, without duplicating; a reminder already done is kept.
-    await client.post(f"{P}/reminders/{plan['reminders'][0]['id']}/complete", headers=h)
+    # Regenerating replaces, without duplicating; a reminder already sent is kept.
+    await client.put(f"{P}/reminders/{plan['reminders'][0]['id']}", headers=h, json={"status": "terminado"})
     await client.post(f"{P}/lots/{cycle['id']}/stage-plan", headers=h)
     again = (await client.get(f"{P}/plans/{applied['plan_id']}", headers=h)).json()
     assert len(again["stages"]) == len(preview["stages"])
@@ -191,14 +205,14 @@ async def test_long_plan_with_staggered_sowings_and_seed_lot(client, signup):
     lots = (await client.get("/api/v1/inventory/seed-lots", headers=h)).json()
     assert lots[0]["quantity"] == 400
     reminders = (await client.get(f"{P}/reminders?plan_id={plan['id']}", headers=h)).json()
-    assert next(r for r in reminders if r["sowing_id"] == sowings[0]["id"])["status"] == "hecho"
+    assert next(r for r in reminders if r["sowing_id"] == sowings[0]["id"])["status"] == "terminado"
     cycle_plans = [p for p in (await client.get(f"{P}/plans", headers=h)).json() if p["lot_id"] == cycle["id"]]
     assert len(cycle_plans) == 1
     assert (await client.post(f"{P}/sowings/{sowings[0]['id']}/sow", headers=h, json={})).status_code == 400
 
     # Archiving the long plan cancels what's still pending.
     await client.put(f"{P}/plans/{plan['id']}", headers=h, json={"status": "archivado"})
-    left = (await client.get(f"{P}/reminders?plan_id={plan['id']}&status=pendiente", headers=h)).json()
+    left = (await client.get(f"{P}/reminders?plan_id={plan['id']}&status=activo", headers=h)).json()
     assert left == []
 
 

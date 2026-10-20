@@ -24,7 +24,7 @@ from .calendar import (
     CalendarResponse,
 )
 from .calendar import occurrences as calendar_occurrences
-from .models import CropPlan, PlanSowing, PlanStage, Reminder, ReminderCompletion
+from .models import CropPlan, PlanSowing, PlanStage, Reminder
 from .repository import IdFilter, PlanningRepository
 from .schemas import (
     CyclePlanProposal,
@@ -174,34 +174,14 @@ class PlanningService:
         await self._check_refs(actor, values)
         if "due_at" in values:
             values["due_at"] = self._aware(values["due_at"])
+            values["notified_at"] = None  # rescheduled: its new occurrence is notified again
         recurrence = values.get("recurrence", current.recurrence)
         if recurrence == "every_n_days" and not values.get("interval_days", current.interval_days):
             raise InvalidInputError("every_n_days needs interval_days.")
-        if values.get("status") == "hecho":
-            values["completed_at"] = utcnow()
-        elif values.get("status") == "pendiente":
-            values["completed_at"] = None
+        if values.get("status") == "activo" and current.status == "terminado" and "due_at" not in values:
+            raise InvalidInputError("To reactivate a finished reminder, give it a new due_at.")
         reminder = await self.repo.update(Reminder, actor.account_id, reminder_id, values)
-        if values.get("status") == "hecho" and current.status != "hecho":
-            await self._record_completion(actor, reminder, values["completed_at"])
         return ReminderRead.model_validate(reminder)
-
-    async def _record_completion(self, actor: Actor, reminder: Reminder, at: datetime) -> None:
-        await self.repo.add(ReminderCompletion(
-            account_id=actor.account_id, reminder_id=reminder.id, field_id=reminder.field_id,
-            zone_id=reminder.zone_id, lot_id=reminder.lot_id, title=reminder.title,
-            description=reminder.description, completed_at=at, completed_by=actor.user_id,
-        ))
-
-    async def complete_reminder(self, actor: Actor, reminder_id: UUID) -> ReminderRead:
-        """Done. A recurring one moves on to its next occurrence (finishing the series after `until`)."""
-        reminder = await self.get_reminder(actor, reminder_id)
-        now = utcnow()
-        nxt = next_occurrence(reminder, max(now, reminder.due_at))
-        values = {"due_at": nxt} if nxt else {"status": "hecho", "completed_at": now}
-        updated = await self.repo.update(Reminder, actor.account_id, reminder_id, values)
-        await self._record_completion(actor, reminder, now)  # also the occurrence of a recurring one
-        return ReminderRead.model_validate(updated)
 
     async def delete_reminder(self, actor: Actor, reminder_id: UUID) -> None:
         reminder = await self.get_reminder(actor, reminder_id)
@@ -225,11 +205,15 @@ class PlanningService:
                 entity_type="reminder",
                 entity_id=reminder.id,
                 field_id=reminder.field_id,
+                zone_id=reminder.zone_id,
+                lot_id=reminder.lot_id,
             )
             values: dict = {"notified_at": now}
             if reminder.recurrence != "none":
                 nxt = next_occurrence(reminder, now)
-                values.update({"due_at": nxt} if nxt else {"status": "hecho", "completed_at": now})
+                values.update({"due_at": nxt} if nxt else {"status": "terminado"})
+            else:
+                values["status"] = "terminado"
             await self.repo.update(Reminder, reminder.account_id, reminder.id, values)
             sent += 1
         return {"notified": sent}
@@ -443,10 +427,10 @@ class PlanningService:
         return SowingRead.model_validate(sowing)
 
     async def _sync_sowing_reminders(self, actor: Actor, sowing: PlanSowing) -> None:
-        reminders = await self.repo.list_reminders(actor.account_id, plan_id=sowing.plan_id, status="pendiente")
+        reminders = await self.repo.list_reminders(actor.account_id, plan_id=sowing.plan_id, status="activo")
         for r in (r for r in reminders if r.sowing_id == sowing.id):
             if sowing.status != "pendiente":
-                values = {"status": "hecho" if sowing.status == "sembrado" else "cancelado", "completed_at": utcnow()}
+                values = {"status": "terminado"}
             else:
                 values = {"due_at": self.at_local(sowing.sow_date, tz=self._tz(actor))}
             await self.repo.update(Reminder, actor.account_id, r.id, values)

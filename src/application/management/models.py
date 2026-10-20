@@ -1,11 +1,12 @@
 """
-Management module: shopping list, budget ledger, roadmap — the "organización, no IA" module from
+Management module: shopping list and budget ledger — the "organización, no IA" module from
 future.md. Same account/Actor pattern as farm/inventory. Every item can be tied to a field (field_id,
-optional: NULL means "general / whole account"); shopping and roadmap items can be assigned to a member.
+optional: NULL means "general / whole account"); shopping items can be assigned to a member. Tasks live in
+src/application/tasks.
 """
 import uuid
 
-from sqlalchemy import CheckConstraint, Column, Date, DateTime, Float, ForeignKey, Index, String, Text
+from sqlalchemy import CheckConstraint, Column, Date, DateTime, Float, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from src.shared.database import Base
@@ -13,7 +14,6 @@ from src.shared.domain.base import utcnow
 
 SHOPPING_STATUSES = ("pendiente", "comprado", "cancelado")
 BUDGET_TYPES = ("gasto", "ingreso")
-ROADMAP_STATUSES = ("pendiente", "en_curso", "hecho", "cancelado")
 
 
 class ShoppingListItem(Base):
@@ -56,27 +56,6 @@ class BudgetEntry(Base):
     amount = Column(Float, nullable=False)
     type = Column(String(10), nullable=False)
     date = Column(Date, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
-    deleted_at = Column(DateTime(timezone=True))
-
-
-class RoadmapItem(Base):
-    __tablename__ = "roadmap_items"
-    __table_args__ = (
-        CheckConstraint(f"status IN {ROADMAP_STATUSES}", name="roadmap_status_valid"),
-        Index("ix_roadmap_items_account_status", "account_id", "status"),
-        Index("ix_roadmap_items_account_assigned", "account_id", "assigned_to"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
-    field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
-    title = Column(String(255), nullable=False)
-    description = Column(Text)
-    target_date = Column(Date)
-    assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
-    status = Column(String(20), nullable=False, default="pendiente")
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True))

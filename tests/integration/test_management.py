@@ -97,40 +97,6 @@ async def test_budget_edit_delete_and_balance_by_field(client, signup, add_membe
     assert (await client.get(f"{MG}/budget/summary?field_id={b}", headers=h)).json()["balance"] == -50
 
 
-async def test_roadmap_assignee_cancel_and_filters(client, signup, add_member):
-    owner = await signup("mg-roadmap")
-    tecnico = await add_member(owner, "tecnico")
-    h = owner["headers"]
-    field = await _field(client, owner, "Invernadero")
-
-    task = (
-        await client.post(
-            f"{MG}/roadmap", headers=h,
-            json={"title": "Armar túnel", "field_id": field, "assigned_to": tecnico["user"]["id"]},
-        )
-    ).json()
-    other = (await client.post(f"{MG}/roadmap", headers=h, json={"title": "Comprar media sombra"})).json()
-
-    assigned = (await client.get(f"{MG}/roadmap?assigned_to={tecnico['user']['id']}", headers=h)).json()
-    assert [i["id"] for i in assigned] == [task["id"]]
-
-    # a partial update leaves the other values alone (status isn't reset to null)
-    moved = await client.put(f"{MG}/roadmap/{task['id']}", headers=h, json={"target_date": "2026-11-01"})
-    assert moved.status_code == 200 and moved.json()["status"] == "pendiente"
-    assert moved.json()["assigned_to"] == tecnico["user"]["id"]
-
-    cancelled = await client.put(
-        f"{MG}/roadmap/{other['id']}", headers=h, json={"status": "cancelado", "assigned_to": None}
-    )
-    assert cancelled.status_code == 200 and cancelled.json()["status"] == "cancelado"
-    listed = (await client.get(f"{MG}/roadmap?status_filter=cancelado", headers=h)).json()
-    assert [i["id"] for i in listed] == [other["id"]]
-    assert (await client.get(f"{MG}/roadmap?status_filter=borrado", headers=h)).status_code == 422
-
-    assert (await client.delete(f"{MG}/roadmap/{task['id']}", headers=tecnico["headers"])).status_code == 204
-    assert [i["id"] for i in (await client.get(f"{MG}/roadmap", headers=h)).json()] == [other["id"]]
-
-
 async def test_budget_categories_currency_and_cycle_economics(client, signup):
     owner = await signup("mg-econ")
     h = owner["headers"]

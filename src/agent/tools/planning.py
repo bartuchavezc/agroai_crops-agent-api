@@ -65,16 +65,16 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def list_reminders(
-        days_ahead: int = 14, include_done: bool = False, field: Optional[str] = None, zone: Optional[str] = None
+        days_ahead: int = 14, include_inactive: bool = False, field: Optional[str] = None, zone: Optional[str] = None
     ) -> dict:
-        """The agenda: pending reminders up to `days_ahead` days from now, overdue ones included (due_at in the
-        past and still pending). include_done also lists the ones already done. zone: only that zone's, e.g.
-        'cantero 3'."""
+        """Active reminders whose next notice falls within `days_ahead` days. A reminder only notifies ("regar el
+        cantero 2", "si llueve no regar"); it is never done. include_inactive also lists paused and finished ones.
+        zone: only that zone's, e.g. 'cantero 3'."""
         target = await resolve_field(deps, ctx, field) if (field or zone) else None
         zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
         until = utcnow() + timedelta(days=max(1, min(days_ahead, 366)))
         items = await deps.planning.list_reminders(
-            ctx.actor, status=None if include_done else "pendiente", until=until,
+            ctx.actor, status=None if include_inactive else "activo", until=until,
             field_id=target.id if target else None, zone_id=zone_id,
         )
         return {"now": utcnow().astimezone(ctx.tz).isoformat(), "reminders": compact(items)}
@@ -92,9 +92,10 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         until: Optional[str] = None,
         assignee: Optional[str] = None,
     ) -> dict:
-        """Schedule a reminder; it arrives as an in-app notification at `when` (YYYY-MM-DD = 09:00, or
-        YYYY-MM-DDTHH:MM local). recurrence: none|daily|weekly|every_n_days (with every_days), optionally
-        until YYYY-MM-DD. assignee: member name/email or "yo" (default: everyone in the account)."""
+        """Schedule a reminder: a notice that arrives as an in-app notification at `when` (YYYY-MM-DD = 09:00, or
+        YYYY-MM-DDTHH:MM local) — "regar", "revisar el pulgón". recurrence: none|daily|weekly|every_n_days (with
+        every_days), optionally until YYYY-MM-DD. assignee: member name/email or "yo" (default: everyone in the
+        account). Work to track with a state and someone in charge is a task (add_tasks), not a reminder."""
         reminder = await deps.planning.create_reminder(
             ctx.actor,
             ReminderCreate(
@@ -112,15 +113,18 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return {"created_reminder": compact(reminder)}
 
     @tool
-    async def complete_reminder(reminder_id: str) -> dict:
-        """Mark a reminder done (a recurring one moves on to its next occurrence)."""
-        return {"reminder": compact(await deps.planning.complete_reminder(ctx.actor, UUID(reminder_id)))}
-
-    @tool
-    async def postpone_reminder(reminder_id: str, when: str) -> dict:
-        """Move a reminder to another date/time (YYYY-MM-DD = 09:00, or YYYY-MM-DDTHH:MM)."""
+    async def update_reminder(
+        reminder_id: str, when: Optional[str] = None, status: Optional[str] = None, title: Optional[str] = None,
+        recurrence: Optional[str] = None, every_days: Optional[int] = None, until: Optional[str] = None,
+    ) -> dict:
+        """Reschedule (when: YYYY-MM-DD = 09:00, or YYYY-MM-DDTHH:MM), pause/resume (status: pausado|activo) or
+        change a reminder's text or recurrence. Only what you pass changes."""
+        values: dict = {
+            "due_at": _when(when, ctx, deps) if when else None, "status": status, "title": title,
+            "recurrence": recurrence, "interval_days": every_days, "until": parse_date(until),
+        }
         updated = await deps.planning.update_reminder(
-            ctx.actor, UUID(reminder_id), ReminderUpdate(due_at=_when(when, ctx, deps))
+            ctx.actor, UUID(reminder_id), ReminderUpdate(**{k: v for k, v in values.items() if v is not None})
         )
         return {"reminder": compact(updated)}
 
@@ -147,8 +151,7 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     return [
         list_reminders,
         add_reminder,
-        complete_reminder,
-        postpone_reminder,
+        update_reminder,
         list_plans,
         get_plan,
         preview_crop_stage_plan,

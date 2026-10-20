@@ -18,7 +18,9 @@ STAGE_TYPES = (
     "establecimiento", "poda", "descanso", "otro",
 )
 SOWING_STATUSES = ("pendiente", "sembrado", "cancelado")
-REMINDER_STATUSES = ("pendiente", "hecho", "cancelado")
+# A reminder only notifies (it is never "done"): activo sends its occurrences, pausado holds them, terminado is a
+# one-off already sent or a series past its end.
+REMINDER_STATUSES = ("activo", "pausado", "terminado")
 RECURRENCES = ("none", "daily", "weekly", "every_n_days")
 SOURCES = ("user", "agent", "plan")
 
@@ -95,8 +97,9 @@ class PlanSowing(Base):
 
 
 class Reminder(Base):
-    """Something to do at a given moment, optionally recurring. `due_at` is the current occurrence; the
-    batch job notifies once per occurrence (`notified_at`) and moves a recurring one to its next occurrence."""
+    """A notice at a given moment, optionally recurring ("regar el cantero 2", "si llueve no regar"). `due_at` is
+    the current occurrence; the batch job notifies once per occurrence (`notified_at`) and moves a recurring one to
+    its next occurrence. It is never completed: what shows is the notification, dismissed like any other."""
     __tablename__ = "reminders"
     __table_args__ = (
         CheckConstraint(f"status IN {REMINDER_STATUSES}", name="reminder_status_valid"),
@@ -122,33 +125,11 @@ class Reminder(Base):
     interval_days = Column(Integer)
     until = Column(Date)
     assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
-    status = Column(String(10), nullable=False, default="pendiente")
+    status = Column(String(10), nullable=False, default="activo")
     notified_at = Column(DateTime(timezone=True))
-    completed_at = Column(DateTime(timezone=True))
     source = Column(String(10), nullable=False, default="user")
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True))
 
-
-class ReminderCompletion(Base):
-    """One row per time a reminder was done. A recurring reminder only moves on to its next occurrence, so without
-    this there would be no record of the earlier ones (the zone timeline reads it). Title and place are copied: the
-    record survives the reminder being edited or deleted."""
-    __tablename__ = "reminder_completions"
-    __table_args__ = (
-        Index("ix_reminder_completions_zone_done", "zone_id", "completed_at"),
-        Index("ix_reminder_completions_account_done", "account_id", "completed_at"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
-    reminder_id = Column(UUID(as_uuid=True), ForeignKey("reminders.id", ondelete="SET NULL"))
-    field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
-    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
-    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
-    title = Column(String(255), nullable=False)
-    description = Column(Text)
-    completed_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
-    completed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))

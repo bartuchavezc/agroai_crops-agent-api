@@ -448,7 +448,7 @@ class AdminMetricsService:
             ("Inventario de semillas", "seed_lots", "deleted_at IS NULL"),
             ("Lista de compras", "shopping_list_items", "deleted_at IS NULL"),
             ("Presupuesto", "budget_entries", "deleted_at IS NULL"),
-            ("Hoja de ruta", "roadmap_items", "deleted_at IS NULL"),
+            ("Tareas", "tasks", "deleted_at IS NULL"),
             ("Satélite (NDVI)", "zone_satellite_readings", None),
         ]
         result = []

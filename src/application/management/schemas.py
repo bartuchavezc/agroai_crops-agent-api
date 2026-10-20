@@ -7,7 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field as PField, model_validator
 
 ShoppingStatus = Literal["pendiente", "comprado", "cancelado"]
 BudgetType = Literal["gasto", "ingreso"]
-RoadmapStatus = Literal["pendiente", "en_curso", "hecho", "cancelado"]
 
 
 class ORMModel(BaseModel):
@@ -134,36 +133,3 @@ class BudgetCategory(BaseModel):
     key: str
     label: str
     type: BudgetType
-
-
-# ---------- Roadmap ----------
-
-class RoadmapItemCreate(BaseModel):
-    title: str = PField(min_length=1, max_length=255)
-    field_id: Optional[UUID] = None
-    assigned_to: Optional[UUID] = None
-    description: Optional[str] = None
-    target_date: Optional[date] = None
-
-
-class RoadmapItemUpdate(PartialUpdate):
-    REQUIRED = ("title", "status")
-
-    status: Optional[RoadmapStatus] = None
-    title: Optional[str] = PField(default=None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    target_date: Optional[date] = None
-    field_id: Optional[UUID] = None
-    assigned_to: Optional[UUID] = None
-
-
-class RoadmapItemRead(ORMModel):
-    id: UUID
-    account_id: UUID
-    field_id: Optional[UUID] = None
-    assigned_to: Optional[UUID] = None
-    title: str
-    description: Optional[str] = None
-    target_date: Optional[date] = None
-    status: RoadmapStatus
-    created_at: datetime

@@ -95,22 +95,13 @@ async def create_reminder(
     return await planning.create_reminder(actor, body)
 
 
-@router.put("/reminders/{reminder_id}", response_model=ReminderRead, summary="Update / postpone a reminder")
+@router.put("/reminders/{reminder_id}", response_model=ReminderRead, summary="Update, pause or reschedule a reminder")
 @inject
 async def update_reminder(
     reminder_id: UUID, body: ReminderUpdate, actor: Actor = Depends(get_actor),
     planning: PlanningService = Depends(PLANNING),
 ):
     return await planning.update_reminder(actor, reminder_id, body)
-
-
-@router.post("/reminders/{reminder_id}/complete", response_model=ReminderRead, summary="Mark a reminder done")
-@inject
-async def complete_reminder(
-    reminder_id: UUID, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
-):
-    """A recurring reminder moves on to its next occurrence."""
-    return await planning.complete_reminder(actor, reminder_id)
 
 
 @router.delete("/reminders/{reminder_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a reminder")

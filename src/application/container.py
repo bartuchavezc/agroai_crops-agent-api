@@ -6,6 +6,8 @@ from .alerts.rules_engine import RulesEngine
 from .alerts.service import AlertService
 from .farm.summary import FieldSummaryService
 from .farm.log import LogService
+from .tasks.repository import TaskRepository
+from .tasks.service import TaskService
 from .farm.repository import FarmRepository
 from .farm.service import FarmService
 from .inventory.repository import SeedLotRepository
@@ -119,7 +121,13 @@ class ApplicationContainer(containers.DeclarativeContainer):
         FieldSummaryService, farm_service=farm_service, reports_service=reports_service,
         planning_service=planning_service, alert_service=alert_service, irrigation_service=irrigation_service,
     )
-    log_service = providers.Singleton(LogService, farm_service=farm_service, reports_service=reports_service)
+    task_repository = providers.Singleton(TaskRepository, session_factory=db_session_factory)
+    task_service = providers.Singleton(
+        TaskService, repository=task_repository, farm_service=farm_service, management_service=management_service
+    )
+    log_service = providers.Singleton(
+        LogService, farm_service=farm_service, reports_service=reports_service, task_service=task_service
+    )
     cycle_progress_service = providers.Singleton(
         CycleProgressService, farm_service=farm_service, planning_service=planning_service,
         reports_service=reports_service,

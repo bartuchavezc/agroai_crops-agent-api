@@ -58,6 +58,7 @@ class ToolDeps:
     nasa_power: NasaPowerAdapter
     field_rules: Any = None  # FieldAlertRulesService: what each field switched off or tuned
     log: Any = None  # LogService: the bitácora of a field / zone / lot
+    tasks: Any = None  # TaskService
 
 
 @dataclass

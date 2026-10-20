@@ -13,7 +13,7 @@ StageType = Literal[
     "establecimiento", "poda", "descanso", "otro",
 ]
 SowingStatus = Literal["pendiente", "sembrado", "cancelado"]
-ReminderStatus = Literal["pendiente", "hecho", "cancelado"]
+ReminderStatus = Literal["activo", "pausado", "terminado"]
 Recurrence = Literal["none", "daily", "weekly", "every_n_days"]
 Source = Literal["user", "agent", "plan"]
 
@@ -71,7 +71,6 @@ class ReminderRead(ORMModel):
     assigned_to: Optional[UUID] = None
     status: ReminderStatus
     notified_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
     field_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
     lot_id: Optional[UUID] = None

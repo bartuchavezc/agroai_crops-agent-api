@@ -5,16 +5,13 @@ from src.shared.domain.actor import Actor
 from src.shared.utils.errors import InvalidInputError, NotFoundError, PermissionDeniedError
 
 from .categories import catalog, normalize_category
-from .models import BudgetEntry, RoadmapItem, ShoppingListItem
+from .models import BudgetEntry, ShoppingListItem
 from .repository import IdFilter, ManagementRepository
 from .schemas import (
     BudgetEntryCreate,
     BudgetEntryRead,
     BudgetEntryUpdate,
     BudgetSummary,
-    RoadmapItemCreate,
-    RoadmapItemRead,
-    RoadmapItemUpdate,
     ShoppingItemCreate,
     ShoppingItemRead,
     ShoppingItemUpdate,
@@ -27,8 +24,8 @@ def _require_manager(actor: Actor) -> None:
 
 
 class ManagementService:
-    """Shopping list, budget ledger and roadmap over one repository — same pattern FarmService uses for
-    fields/cycles/events. Read access for every role; staff can add and update shopping/roadmap items
+    """Shopping list and budget ledger over one repository — same pattern FarmService uses for
+    fields/lots/events. Read access for every role; staff can add and update shopping items
     (they log purchases and tick tasks day to day); editing money and deleting anything is manager-only.
     Deletes are soft (deleted_at); "cancelado" is the status for things that won't happen but stay listed."""
 
@@ -171,33 +168,3 @@ class ManagementService:
                 summary.expected_revenue = round(cycle.expected_yield_kg * cycle.expected_price, 2)
                 summary.margin = round(summary.expected_revenue - total_gastos, 2)
         return summary
-
-    # ---------- roadmap ----------
-
-    async def list_roadmap(
-        self, actor: Actor, field_id: IdFilter = None, status: Optional[str] = None, assigned_to: IdFilter = None
-    ) -> list[RoadmapItemRead]:
-        items = await self.repo.list_roadmap_items(
-            actor.account_id, field_id=field_id, status=status, assigned_to=assigned_to
-        )
-        return [RoadmapItemRead.model_validate(i) for i in items]
-
-    async def add_roadmap_item(self, actor: Actor, data: RoadmapItemCreate) -> RoadmapItemRead:
-        values = data.model_dump()
-        await self._check_refs(actor, values)
-        item = await self.repo.create_roadmap_item(RoadmapItem(account_id=actor.account_id, **values))
-        return RoadmapItemRead.model_validate(item)
-
-    async def update_roadmap_item(self, actor: Actor, item_id: UUID, data: RoadmapItemUpdate) -> RoadmapItemRead:
-        values = data.model_dump(exclude_unset=True)
-        await self._check_refs(actor, values)
-        item = await self.repo.update_roadmap_item(actor.account_id, item_id, values)
-        if item is None:
-            raise NotFoundError(f"Roadmap item {item_id} not found.")
-        return RoadmapItemRead.model_validate(item)
-
-    async def delete_roadmap_item(self, actor: Actor, item_id: UUID) -> None:
-        _require_manager(actor)
-        if not await self.repo.delete_roadmap_item(actor.account_id, item_id):
-            raise NotFoundError(f"Roadmap item {item_id} not found.")
-
