@@ -53,8 +53,9 @@ traen foto, y la herramienta `expert_field_analysis` del agente (lectura de clim
 | PUT / DELETE | `/farm-management/zones/{id}` | owner/tecnico. Al borrar, sus lotes quedan en el campo sin esa zona |
 | GET / POST | `/farm-management/lots?field_id=&status=&zone_id=` | Lotes: una tanda de un cultivo sembrada junta. `{field_id, crop_master_id, zone_ids[] (o zone_id), season? "26/27", number?, planting_date?, transplant_date?, quantity?, unit?, status, plan_id?, origin_lot_id?}`; `status` planned\|seedbed\|planted\|growing\|harvesting\|harvested\|failed. La lectura suma `zone_id` (la primera zona) y `label` "T26/27 · Cantero 2 · L2". POST: owner/tecnico |
 | GET / PUT / DELETE | `/farm-management/lots/{id}` | |
-| GET / POST | `/farm-management/events?field_id=&zone_id=&lot_id=&type=&since=&until=&before=&limit=` | Cualquier rol registra eventos. `zone_id` filtra por zona; `before=<occurred_at del último recibido>` pagina hacia atrás (más nuevos primero) |
+| GET / POST | `/farm-management/events?field_id=&zone_id=&lot_id=&type=&since=&until=&before=&limit=` | La bitácora: cualquier rol registra. `{field_id, zone_id?, lot_ids[]? (o lot_id), type, occurred_at?, quantity?, unit?, notes?}`; en una zona alcanza a todos los lotes que crecen ahí, sin zona ni lotes a todo el campo. La lectura trae `lot_ids` (los lotes alcanzados, fijados al registrar). `type`: irrigation, fertilization, pest_control, sowing, transplant, harvest, inspection, observation, soil_prep, amendment, pruning, weeding, photo. Productos y dosis van como texto en `notes`. `lot_id` filtra todo lo que alcanzó al lote; `before` pagina hacia atrás |
 | PUT / DELETE | `/farm-management/events/{id}` | Autor u owner/tecnico |
+| GET | `/farm-management/log?field_id=\|zone_id=\|lot_id=&type=&since=&before=&limit=` | La bitácora por día de un campo, una zona o un lote (uno solo): `{days: [{date, items: [{kind: event\|analysis\|task, at, title, detail, type, quantity, unit, zone_id, lot_ids, source, image_identifier, data}]}], next_before}`. La de un lote incluye lo registrado en su zona o en todo el campo mientras estaba, y los análisis que lo cubrieron |
 
 Tipos de evento: `sowing, transplant, irrigation, fertilization, treatment, pruning, weeding, pest_sighting,
 disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, planted, growing, harvested, failed`.
@@ -160,7 +161,7 @@ Todo es aditivo: parámetros y campos opcionales; un cliente que no los usa no n
 | Método | Ruta | |
 |---|---|---|
 | GET | `/farm-management/fields/{id}/summary` | El inicio del campo en una llamada: `status` (ok\|attention\|alert\|unknown) y `status_reasons`, `zones` (con sus cultivos activos y `last_analysis`: resumen, salud, foto), `unzoned_cycles`, `alerts` activas, `reminders_today` (pendientes hasta el fin del día local, vencidos incluidos) e `irrigation` (null si no hay coordenadas o no hay datos del clima) |
-| GET | `/farm-management/zones/{id}`, `/zones/{id}/timeline?before=&limit=` | Eventos, análisis completados y recordatorios hechos de la zona, en una lista `{kind: event\|analysis\|reminder, at, title, detail, ref_id, type}`, más nuevos primero |
+| GET | `/farm-management/zones/{id}` | La zona |
 | GET | `/irrigation/fields/{id}/recommendation` | Ahora con `suggested_mm` y `next_irrigation_date` (también por cultivo): el día en que el balance hídrico supera el umbral de déficit, con el pronóstico de lluvia (`null` si no hace falta en 7 días) |
 | GET / PATCH | `/alerts/fields/{id}/alert-rules[/{rule_id}]` | Cada regla con `enabled`, `threshold` vigente, `default_threshold`, rango y unidad. PATCH (owner/tecnico): `{enabled?}` o `{threshold?}` (`null` vuelve al valor por defecto). Los jobs, el análisis y el agente lo respetan |
 | GET | `/management/budget/categories` | Categorías sugeridas con clave estable y etiqueta en el idioma de la persona. Un texto que coincide con una clave o etiqueta se guarda como la clave |

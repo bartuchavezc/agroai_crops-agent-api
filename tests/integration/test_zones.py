@@ -304,7 +304,7 @@ async def test_agent_creates_zone_and_plants_in_it(client, signup, with_key, scr
     scripted_model.script = [
         ("call", "create_zone", {"zone": "cantero 3", "field": "huerta"}),
         ("call", "create_lot", {"crop_name": "Lechuga", "field": "huerta", "zone": "Cantero 3"}),
-        ("call", "log_event", {"event_type": "irrigation", "field": "huerta", "zone": "cantero 3"}),
+        ("call", "log_events", {"field": "huerta", "entries": [{"type": "irrigation", "zone": "cantero 3"}]}),
         ("text", "Listo: creé el Cantero 3, planté lechuga y registré el riego."),
     ]
     r = await client.post("/api/v1/chat", headers=h, json={"message": "armé el cantero 3 con lechuga y lo regué"})
@@ -317,6 +317,7 @@ async def test_agent_creates_zone_and_plants_in_it(client, signup, with_key, scr
     assert len(cycles) == 1
     events = (await client.get(f"{FARM}/events", headers=h)).json()
     assert events[0]["zone_id"] == zones[0]["id"]
+    assert events[0]["lot_ids"] == [cycles[0]["id"]]  # watering the zone reached the lettuce growing there
 
     # Next turn: the account structure (system instruction) lists the zone and which crop grows there.
     scripted_model.script = [("text", "ok")]

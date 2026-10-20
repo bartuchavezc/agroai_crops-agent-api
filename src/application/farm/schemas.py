@@ -12,17 +12,18 @@ Octant = Literal["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
 LotStatus = Literal["planned", "seedbed", "planted", "growing", "harvesting", "harvested", "failed"]
 ZoneType = Literal["cajon", "cantero", "invernadero", "hidroponia"]
 EventType = Literal[
-    "sowing",
-    "transplant",
     "irrigation",
     "fertilization",
-    "treatment",
+    "pest_control",
+    "sowing",
+    "transplant",
+    "harvest",
+    "inspection",
+    "observation",
+    "soil_prep",
+    "amendment",
     "pruning",
     "weeding",
-    "pest_sighting",
-    "disease_sighting",
-    "harvest",
-    "observation",
     "photo",
 ]
 
@@ -433,9 +434,13 @@ class LotRead(ORMModel):
 # ---------- Field events ----------
 
 class FieldEventCreate(BaseModel):
+    """An entry of the bitácora. Where it happened: a zone (it reaches every lot growing there), specific lots, or
+    neither (the whole field). Products and doses go as free text in notes (+ quantity / unit)."""
+
     field_id: UUID
-    lot_id: Optional[UUID] = None
-    zone_id: Optional[UUID] = PField(default=None, description="Defaults to the lot's zone")
+    zone_id: Optional[UUID] = PField(default=None, description="The zone; omitted with lots: the first lot's zone")
+    lot_ids: list[UUID] = PField(default_factory=list, description="Only these lots (default: every lot reached)")
+    lot_id: Optional[UUID] = PField(default=None, description="Shortcut for a single lot")
     type: EventType
     occurred_at: Optional[datetime] = None
     quantity: Optional[float] = None
@@ -443,6 +448,14 @@ class FieldEventCreate(BaseModel):
     notes: Optional[str] = None
     data: Dict[str, Any] = PField(default_factory=dict)
     image_identifier: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _lots(self):
+        if self.lot_id and self.lot_id not in self.lot_ids:
+            self.lot_ids = [self.lot_id, *self.lot_ids]
+        self.lot_id = None
+        self.lot_ids = list(dict.fromkeys(self.lot_ids))
+        return self
 
 
 class FieldEventUpdate(BaseModel):
@@ -452,14 +465,15 @@ class FieldEventUpdate(BaseModel):
     unit: Optional[str] = PField(default=None, max_length=30)
     notes: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
+    lot_ids: Optional[list[UUID]] = PField(default=None, description="Fix the lots it reached")
 
 
 class FieldEventRead(ORMModel):
     id: UUID
     account_id: UUID
     field_id: UUID
-    lot_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
+    lot_ids: list[UUID] = PField(default_factory=list, description="The lots it reached when it was logged")
     author_user_id: Optional[UUID] = None
     type: EventType
     occurred_at: datetime
@@ -470,6 +484,7 @@ class FieldEventRead(ORMModel):
     image_identifier: Optional[str] = None
     source: Literal["user", "agent"]
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 # ---------- Overview (used by the agent) ----------

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # Only tools that read and have no side effect worth the surprise. Writes, the Gemini-vision tools (harvest verdict)
 # and the expert analysis (a model call of its own) are never run speculatively: the chat model asks for them if needed.
 READ_ONLY_TOOLS = frozenset({
-    "list_fields", "list_lots", "list_zones", "list_recent_events", "find_crop_in_catalog",
+    "list_fields", "list_lots", "list_zones", "list_recent_events", "get_log", "find_crop_in_catalog",
     "get_harvest_totals", "list_active_alerts", "get_latest_periodic_report", "list_reminders",
     "get_field_soil_context", "get_field_sun_exposure", "recall_facts",
     "get_current_weather", "get_forecast", "get_recent_weather_summary", "get_solar_radiation_context",

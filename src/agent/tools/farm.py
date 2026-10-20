@@ -133,41 +133,66 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return compact(result)
 
     @tool
-    async def log_event(
-        event_type: str,
-        field: Optional[str] = None,
-        occurred_at: Optional[str] = None,
-        quantity: Optional[float] = None,
-        unit: Optional[str] = None,
-        notes: Optional[str] = None,
-        lot_id: Optional[str] = None,
-        attach_current_photo: bool = False,
-        zone: Optional[str] = None,
-    ) -> dict:
-        """Register something that happened in a field.
-        event_type: sowing|transplant|irrigation|fertilization|treatment|pruning|weeding|pest_sighting|
-        disease_sighting|harvest|observation|photo. occurred_at: ISO date/time (default now).
-        quantity+unit e.g. 10 'litros', 2 'kg'. attach_current_photo: link the photo sent in this message.
-        zone: where in the field, e.g. 'cantero 3' (taken from the lot when one is given)."""
+    async def log_events(entries: list[dict], field: Optional[str] = None) -> dict:
+        """Register in the bitácora what was done or seen, several entries in ONE call ("regué los canteros 1, 2 y
+        3 y fertilicé el 2 con 50 ml de té de compost"). Each entry:
+        {type, zone?, zones?, lots?, occurred_at?, quantity?, unit?, notes?, attach_current_photo?}
+        - type: irrigation|fertilization|pest_control|sowing|transplant|harvest|inspection|observation|soil_prep|
+          amendment|pruning|weeding|photo. inspection = a check-up (pest or disease seen, growth, state).
+        - zone ('cantero 3') or zones (['cantero 1', 'cantero 2']: one entry per zone): it reaches every lot
+          growing there. lots: lot ids, when it was only some lots. Neither: the whole field.
+        - Products and doses as free text in notes ("Caldo bordelés 20 g/l"), with quantity + unit when there is
+          an amount (10 'litros', 2 'kg'). occurred_at: ISO date/time (default now).
+        - attach_current_photo: link the photo sent in this message."""
         target = await resolve_field(deps, ctx, field)
-        zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
-        if attach_current_photo and not ctx.image_identifier:
-            raise InvalidInputError("There is no photo in this message to attach.")
-        event = await deps.farm.create_event(
-            ctx.actor,
-            FieldEventCreate(
-                field_id=target.id,
-                lot_id=lot_id or None,
-                zone_id=zone_id,
-                type=event_type,
-                occurred_at=parse_when(occurred_at, ctx.tz),
-                quantity=quantity,
-                unit=unit,
-                notes=notes,
-                image_identifier=ctx.image_identifier if attach_current_photo else None,
-            ),
+        created = []
+        for entry in entries:
+            if entry.get("attach_current_photo") and not ctx.image_identifier:
+                raise InvalidInputError("There is no photo in this message to attach.")
+            zones = [*([entry["zone"]] if entry.get("zone") else []), *(entry.get("zones") or [])]
+            zone_ids = [(await resolve_zone(deps, ctx, target, z)).id for z in zones] or [None]
+            for zone_id in zone_ids:
+                event = await deps.farm.create_event(
+                    ctx.actor,
+                    FieldEventCreate(
+                        field_id=target.id,
+                        zone_id=zone_id,
+                        lot_ids=[UUID(str(lot)) for lot in entry.get("lots") or []],
+                        type=entry["type"],
+                        occurred_at=parse_when(entry.get("occurred_at"), ctx.tz),
+                        quantity=entry.get("quantity"),
+                        unit=entry.get("unit"),
+                        notes=entry.get("notes"),
+                        image_identifier=ctx.image_identifier if entry.get("attach_current_photo") else None,
+                    ),
+                )
+                created.append({
+                    "id": str(event.id), "type": event.type, "zone_id": event.zone_id and str(event.zone_id),
+                    "lots_reached": len(event.lot_ids),
+                })
+        return {"logged": created, "field_name": target.name}
+
+    @tool
+    async def get_log(
+        field: Optional[str] = None, zone: Optional[str] = None, lot_id: Optional[str] = None, days: int = 30,
+        event_type: Optional[str] = None, limit: int = 60,
+    ) -> dict:
+        """Read the bitácora by day: of a lot (lot_id: everything that reached it, also what was logged on its
+        zone or the whole field, and the analyses that covered it), of a zone ('cantero 3') or of the field.
+        Use it to answer "¿qué se le aplicó a este lote?", "¿cuándo regué el cantero 2?". event_type filters."""
+        target = await resolve_field(deps, ctx, field) if (field or zone or not lot_id) else None
+        scope: dict = {}
+        if lot_id:
+            scope["lot_id"] = UUID(lot_id)
+        elif zone:
+            scope["zone_id"] = (await resolve_zone(deps, ctx, target, zone)).id
+        else:
+            scope["field_id"] = target.id
+        page = await deps.log.log(
+            ctx.actor, since=utcnow() - timedelta(days=max(1, min(days, 730))), limit=limit, event_type=event_type,
+            **scope,
         )
-        return {"created_event": compact(event), "field_name": target.name}
+        return {"days": compact(page.days), "more": page.next_before is not None}
 
     return [
         list_fields,
@@ -179,7 +204,8 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         get_field_soil_context,
         get_harvest_totals,
         get_harvest_verdict,
-        log_event,
+        get_log,
+        log_events,
     ]
 
 

@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import Text, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from .models import ACTIVE_LOT_STATUSES, CropMaster, Field, FieldEvent, FieldZone, Lot, LotZone
+from .models import ACTIVE_LOT_STATUSES, CropMaster, EventLot, Field, FieldEvent, FieldZone, Lot, LotZone
 
 
 def _like_escape(text: str) -> str:
@@ -362,7 +362,7 @@ class FarmRepository:
         if before:  # paging back in time: the next page starts after the oldest `occurred_at` already received
             stmt = stmt.where(FieldEvent.occurred_at < before)
         if lot_id:
-            stmt = stmt.where(FieldEvent.lot_id == lot_id)
+            stmt = stmt.where(FieldEvent.id.in_(select(EventLot.event_id).where(EventLot.lot_id == lot_id)))
         if event_type:
             stmt = stmt.where(FieldEvent.type == event_type)
         if since:
@@ -376,11 +376,38 @@ class FarmRepository:
     async def get_event(self, account_id: UUID, event_id: UUID) -> Optional[FieldEvent]:
         return await self._get(FieldEvent, event_id, account_id)
 
-    async def create_event(self, event: FieldEvent) -> FieldEvent:
-        return await self._add(event)
+    async def create_event(self, event: FieldEvent, lot_ids: Sequence[UUID] = ()) -> FieldEvent:
+        async with self.session_factory() as session:
+            session.add(event)
+            await session.flush()
+            session.add_all(EventLot(event_id=event.id, lot_id=lot_id) for lot_id in lot_ids)
+            await session.commit()
+            await session.refresh(event)
+        return event
 
-    async def update_event(self, account_id: UUID, event_id: UUID, values: dict) -> Optional[FieldEvent]:
-        return await self._update(FieldEvent, event_id, account_id, values)
+    async def update_event(
+        self, account_id: UUID, event_id: UUID, values: dict, lot_ids: Optional[Sequence[UUID]] = None
+    ) -> Optional[FieldEvent]:
+        event = await self._update(FieldEvent, event_id, account_id, values)
+        if event is not None and lot_ids is not None:
+            async with self.session_factory() as session:
+                await session.execute(delete(EventLot).where(EventLot.event_id == event_id))
+                session.add_all(EventLot(event_id=event_id, lot_id=lot_id) for lot_id in lot_ids)
+                await session.commit()
+        return event
+
+    async def event_lot_ids(self, event_ids: Iterable[UUID]) -> dict[UUID, list[UUID]]:
+        ids = list(event_ids)
+        if not ids:
+            return {}
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(select(EventLot.event_id, EventLot.lot_id).where(EventLot.event_id.in_(ids)))
+            ).all()
+        out: dict[UUID, list[UUID]] = {i: [] for i in ids}
+        for event_id, lot_id in rows:
+            out[event_id].append(lot_id)
+        return out
 
     async def delete_event(self, account_id: UUID, event_id: UUID) -> bool:
         return await self._delete(FieldEvent, event_id, account_id)

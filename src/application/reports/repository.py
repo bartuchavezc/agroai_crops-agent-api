@@ -33,6 +33,7 @@ class ReportModel(Base):
     lot_ids = Column(JSONB, nullable=False, default=list, server_default="[]")
     image_identifiers = Column(JSONB, nullable=False, default=list, server_default="[]")
     notes = Column(Text)  # the user's own observations at submission time, fed to the model as context
+    reason = Column(Text)  # why it was taken ("motivo"): routine check, spots on leaves, before harvest...
     created_by = Column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     title = Column(String(255))
     summary = Column(Text)

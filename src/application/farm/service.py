@@ -17,7 +17,7 @@ from src.shared.utils.errors import InvalidInputError, NotFoundError, Permission
 from src.application.notifications.service import NotificationService
 from src.application.soil_data.service import SoilContextService
 
-from .models import ACTIVE_LOT_STATUSES, Lot, CropMaster, Field, FieldEvent, FieldZone
+from .models import ACTIVE_LOT_STATUSES, GROWING_LOT_STATUSES, CropMaster, Field, FieldEvent, FieldZone, Lot
 from .schemas import (
     ActiveLotSummary,
     LotCreate,
@@ -477,6 +477,13 @@ class FarmService:
 
     # ---------- events ----------
 
+    async def event_reads(self, events) -> list[FieldEventRead]:
+        events = list(events)
+        lot_ids = await self.repo.event_lot_ids(e.id for e in events)
+        return [
+            FieldEventRead.model_validate(e).model_copy(update={"lot_ids": lot_ids.get(e.id, [])}) for e in events
+        ]
+
     async def list_events(
         self,
         actor: Actor,
@@ -500,24 +507,37 @@ class FarmService:
             zone_id=zone_id,
             before=before,
         )
-        return [FieldEventRead.model_validate(e) for e in items]
+        return await self.event_reads(items)
 
     async def get_event(self, actor: Actor, event_id: UUID) -> FieldEventRead:
         event = await self.repo.get_event(actor.account_id, event_id)
         if event is None:
             raise NotFoundError(f"Event {event_id} not found.")
-        return FieldEventRead.model_validate(event)
+        return (await self.event_reads([event]))[0]
+
+    async def _lots_in_field(self, actor: Actor, lot_ids: list[UUID], field_id: UUID) -> list[LotRead]:
+        lots = [await self.get_lot(actor, lot_id) for lot_id in lot_ids]
+        if any(lot.field_id != field_id for lot in lots):
+            raise InvalidInputError("A lot does not belong to that field.")
+        return lots
+
+    async def reached_lots(self, actor: Actor, field_id: UUID, zone_id: Optional[UUID]) -> list[UUID]:
+        """The lots in the ground in a zone (or the whole field) now: what an event logged there reaches."""
+        lots = await self.repo.list_lots(actor.account_id, field_id=field_id, statuses=GROWING_LOT_STATUSES,
+                                         zone_id=zone_id)
+        return [lot.id for lot in lots]
 
     async def create_event(self, actor: Actor, data: FieldEventCreate) -> FieldEventRead:
         await self.get_field(actor, data.field_id)
         await self._check_zone_in_field(actor, data.zone_id, data.field_id)
-        if data.lot_id:
-            lot = await self.get_lot(actor, data.lot_id)
-            if lot.field_id != data.field_id:
-                raise InvalidInputError("The lot does not belong to that field.")
-            if data.zone_id is None:
-                data = data.model_copy(update={"zone_id": lot.zone_id})
-        values = data.model_dump()
+        if data.lot_ids:
+            lots = await self._lots_in_field(actor, data.lot_ids, data.field_id)
+            lot_ids = data.lot_ids
+            if data.zone_id is None and len(lots) == 1:
+                data = data.model_copy(update={"zone_id": lots[0].zone_id})
+        else:
+            lot_ids = await self.reached_lots(actor, data.field_id, data.zone_id)
+        values = data.model_dump(exclude={"lot_ids", "lot_id"})
         values["occurred_at"] = values["occurred_at"] or utcnow()
         event = await self.repo.create_event(
             FieldEvent(
@@ -525,7 +545,8 @@ class FarmService:
                 author_user_id=actor.user_id,
                 source="agent" if actor.via == "agent" else "user",
                 **values,
-            )
+            ),
+            lot_ids=lot_ids,
         )
         await self.notifications.notify_account(
             account_id=actor.account_id,
@@ -537,7 +558,7 @@ class FarmService:
             entity_id=event.id,
             field_id=data.field_id,
         )
-        return FieldEventRead.model_validate(event)
+        return await self.get_event(actor, event.id)
 
     async def _editable_event(self, actor: Actor, event_id: UUID) -> FieldEvent:
         event = await self.repo.get_event(actor.account_id, event_id)
@@ -548,9 +569,13 @@ class FarmService:
         return event
 
     async def update_event(self, actor: Actor, event_id: UUID, data: FieldEventUpdate) -> FieldEventRead:
-        await self._editable_event(actor, event_id)
-        event = await self.repo.update_event(actor.account_id, event_id, data.model_dump(exclude_unset=True))
-        return FieldEventRead.model_validate(event)
+        event = await self._editable_event(actor, event_id)
+        if data.lot_ids:
+            await self._lots_in_field(actor, data.lot_ids, event.field_id)
+        await self.repo.update_event(
+            actor.account_id, event_id, data.model_dump(exclude_unset=True, exclude={"lot_ids"}), lot_ids=data.lot_ids
+        )
+        return await self.get_event(actor, event_id)
 
     async def delete_event(self, actor: Actor, event_id: UUID) -> None:
         await self._editable_event(actor, event_id)
@@ -690,7 +715,8 @@ class FarmService:
                 c.id for c in await self.repo.list_lots(actor.account_id, field_id=field_id)
                 if c.crop_master_id == crop_master_id
             }
-            events = [e for e in events if e.lot_id in cycle_ids]
+            reached = await self.repo.event_lot_ids(e.id for e in events)
+            events = [e for e in events if cycle_ids.intersection(reached.get(e.id, []))]
         by_unit: dict[str, float] = {}
         for e in events:
             if e.quantity is None:

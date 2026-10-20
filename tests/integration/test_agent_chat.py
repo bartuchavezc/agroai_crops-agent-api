@@ -98,7 +98,8 @@ async def test_chat_turn_registers_lot_and_event(client, signup, add_member, wit
 
     scripted_model.script = [
         ("call", "create_lot", {"crop_name": "Tomate", "variety": "Cherry", "field": "cantero 1"}),
-        ("call", "log_event", {"event_type": "irrigation", "field": "Cantero 1", "quantity": 10, "unit": "litros"}),
+        ("call", "log_events",
+         {"field": "Cantero 1", "entries": [{"type": "irrigation", "quantity": 10, "unit": "litros"}]}),
         ("text", "¡Listo! Registré la siembra de tomate cherry y el riego de 10 litros en Cantero 1."),
     ]
     response = await client.post(
@@ -109,7 +110,7 @@ async def test_chat_turn_registers_lot_and_event(client, signup, add_member, wit
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["response"].startswith("¡Listo!")
-    assert [t["name"] for t in body["metadata"]["tool_calls"]] == ["create_lot", "log_event"]
+    assert [t["name"] for t in body["metadata"]["tool_calls"]] == ["create_lot", "log_events"]
     assert all(t["ok"] for t in body["metadata"]["tool_calls"])
     conversation_id = body["metadata"]["conversation_id"]
 
@@ -184,7 +185,7 @@ async def test_tools_cannot_touch_other_accounts(client, signup, with_key, scrip
     attacker = await signup("attacker")
     await with_key(attacker)
     scripted_model.script = [
-        ("call", "log_event", {"event_type": "observation", "field": victim_field["id"], "notes": "hola"}),
+        ("call", "log_events", {"field": victim_field["id"], "entries": [{"type": "observation", "notes": "hola"}]}),
         ("text", "No pude registrar el evento."),
     ]
     response = await client.post("/api/v1/chat", headers=attacker["headers"], json={"message": "registrá algo"})
@@ -202,7 +203,7 @@ async def test_staff_does_not_get_management_tools(client, signup, add_member, w
     declared = {
         f.name for tool in scripted_model.requests[0].config.tools or [] for f in (tool.function_declarations or [])
     }
-    assert "log_event" in declared
+    assert "log_events" in declared and "get_log" in declared
     assert "create_field" not in declared and "create_lot" not in declared
 
 
@@ -257,7 +258,8 @@ async def test_stream_emits_events_in_order_and_persists(client, signup, with_ke
     h = user["headers"]
     await client.post("/api/v1/farm-management/fields", headers=h, json={"name": "Maceta"})
     scripted_model.script = [
-        ("text+call", "Dale, lo registro.", "log_event", {"event_type": "irrigation", "quantity": 2, "unit": "litros"}),
+        ("text+call", "Dale, lo registro.", "log_events",
+         {"entries": [{"type": "irrigation", "quantity": 2, "unit": "litros"}]}),
         ("text", "Listo, registré 2 litros."),
     ]
     response = await client.post("/api/v1/chat/stream", headers=h, json={"message": "regué 2 litros"})
@@ -766,7 +768,7 @@ async def test_preflight_gathers_first_so_the_model_answers_in_one_call(
     )
     preflight_on.return_value = PreflightPlan(
         skills=["ficha-tomate", "fisiologia-macronutrientes-npk-s"],
-        tools=[ToolRequest(name="list_fields", args="{}"), ToolRequest(name="log_event", args='{"event_type":"x"}')],
+        tools=[ToolRequest(name="list_fields", args="{}"), ToolRequest(name="log_events", args='{"entries":[]}')],
         reason="síntoma en tomate",
     )
     scripted_model.script = [("text", "Probablemente falta nitrógeno.")]

@@ -112,7 +112,7 @@ async def test_staff_can_log_events_but_not_manage(client, signup, add_member):
     event = await client.post(
         "/api/v1/farm-management/events",
         headers=staff["headers"],
-        json={"field_id": field["id"], "type": "pest_sighting", "notes": "pulgón en hojas"},
+        json={"field_id": field["id"], "type": "inspection", "notes": "pulgón en hojas"},
     )
     assert event.status_code == 201
 

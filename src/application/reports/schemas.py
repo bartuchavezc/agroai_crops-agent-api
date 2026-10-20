@@ -18,9 +18,10 @@ class ReportCreate(BaseModel):
     field_id: Optional[UUID] = None
     lot_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
-    lot_ids: List[UUID] = Field(default_factory=list, description="Zone tracking: the cycles covered")
+    lot_ids: List[UUID] = Field(default_factory=list, description="Zone tracking: the lots covered")
     image_identifiers: List[str] = Field(default_factory=list, description="Zone tracking: every photo")
     notes: Optional[str] = Field(None, max_length=2000, description="The user's own observations, fed to the model")
+    reason: Optional[str] = Field(None, max_length=500, description='Why it was taken ("motivo")')
 
 
 class ReportUpdate(BaseModel):
@@ -33,6 +34,7 @@ class ReportUpdate(BaseModel):
     report_type: Optional[ReportType] = None
     field_id: Optional[UUID] = None
     lot_id: Optional[UUID] = None
+    reason: Optional[str] = Field(None, max_length=500)
 
 
 class Report(BaseModel):
@@ -46,6 +48,7 @@ class Report(BaseModel):
     lot_ids: List[UUID] = Field(default_factory=list)
     image_identifiers: List[str] = Field(default_factory=list)
     notes: Optional[str] = None
+    reason: Optional[str] = None
     created_by: Optional[UUID] = None
     title: Optional[str] = None
     summary: Optional[str] = None

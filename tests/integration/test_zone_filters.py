@@ -106,54 +106,63 @@ async def test_reports_filter_by_date_range(client, signup, container):
     assert await listed(until="2026-09-05T00:00:00Z") == ["día 1"]
 
 
-async def test_zone_timeline_merges_events_analyses_and_done_reminders(client, signup, container):
+async def test_bitacora_by_day_for_zone_and_lot(client, signup, container):
     from unittest.mock import patch
 
     from .test_zones import _TINY_PNG, _cycle, _group_result, _zone_analysis
 
-    h = (await signup("timeline"))["headers"]
+    h = (await signup("bitacora"))["headers"]
     field, (zone, other) = await _field_two_zones(client, h)
     cycle = await _cycle(client, h, field["id"], "tomate", zone_id=zone["id"])
     base = datetime(2026, 9, 1, 10, tzinfo=timezone.utc)
     for day, notes in ((1, "riego chico"), (3, "riego grande")):
-        await client.post(f"{FARM}/events", headers=h, json={
+        r = await client.post(f"{FARM}/events", headers=h, json={
             "field_id": field["id"], "zone_id": zone["id"], "type": "irrigation", "notes": notes,
             "occurred_at": (base + timedelta(days=day)).isoformat(),
         })
+        assert r.json()["lot_ids"] == [cycle["id"]]  # a zone event reaches the lot growing there
     await client.post(f"{FARM}/events", headers=h, json={
         "field_id": field["id"], "zone_id": other["id"], "type": "pruning", "occurred_at": base.isoformat(),
+    })
+    # logged on the whole field: it reaches every lot, so it is in the lot's bitácora too
+    await client.post(f"{FARM}/events", headers=h, json={
+        "field_id": field["id"], "type": "fertilization", "notes": "Té de compost 1:10",
+        "occurred_at": (base + timedelta(days=3, hours=2)).isoformat(),
     })
 
     fake = _zone_analysis(_group_result([(cycle, "Tomate")]))
     with patch.object(container.agent.gemini(), "generate_structured", fake):
         up = await client.post(
-            "/api/v1/upload/zone-tracking", headers=h, data={"zone_id": zone["id"]},
+            "/api/v1/upload/zone-tracking", headers=h, data={"zone_id": zone["id"], "reason": "manchas en hojas"},
             files=[("image_files", ("a.png", _TINY_PNG, "image/png"))],
         )
     assert up.status_code == 200, up.text
 
-    # a recurring reminder done twice leaves two records (only the first used to be visible, as `due_at`)
-    reminder = (await client.post(f"{P}/reminders", headers=h, json={
-        "title": "Regar el cantero", "field_id": field["id"], "zone_id": zone["id"], "recurrence": "daily",
-        "due_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+    page = (await client.get(f"{FARM}/log?zone_id={zone['id']}", headers=h)).json()
+    kinds = [i["kind"] for d in page["days"] for i in d["items"]]
+    assert kinds == ["analysis", "event", "event"]  # newest first; the field-wide event is not the zone's own
+    analysis = page["days"][0]["items"][0]
+    assert analysis["ref_id"] == up.json()["report_id"] and analysis["data"]["reason"] == "manchas en hojas"
+    assert [d["date"] for d in page["days"][1:]] == ["2026-09-04", "2026-09-02"]  # grouped by day
+    assert page["next_before"] is None
+
+    lot_page = (await client.get(f"{FARM}/log?lot_id={cycle['id']}", headers=h)).json()
+    lot_items = [i for d in lot_page["days"] for i in d["items"]]
+    assert [i["type"] for i in lot_items] == ["periodic", "fertilization", "irrigation", "irrigation"]
+    assert not any(i["type"] == "pruning" for i in lot_items)  # the other zone's event stays out
+
+    only_water = (await client.get(f"{FARM}/log?lot_id={cycle['id']}&type=irrigation&limit=1", headers=h)).json()
+    assert [i["detail"] for d in only_water["days"] for i in d["items"]] == ["riego grande"]
+    older = (await client.get(f"{FARM}/log", headers=h, params={
+        "lot_id": cycle["id"], "type": "irrigation", "before": only_water["next_before"],
     })).json()
-    for _ in range(2):
-        assert (await client.post(f"{P}/reminders/{reminder['id']}/complete", headers=h)).status_code == 200
+    assert [i["detail"] for d in older["days"] for i in d["items"]] == ["riego chico"]
 
-    await client.delete(f"{P}/reminders/{reminder['id']}", headers=h)  # keep the batch of other tests clean
-    items = (await client.get(f"{FARM}/zones/{zone['id']}/timeline", headers=h)).json()
-    assert [i["kind"] for i in items] == ["reminder", "reminder", "analysis", "event", "event"]  # newest first
-    assert items[0]["title"] == "Regar el cantero" and items[2]["ref_id"] == up.json()["report_id"]
-    assert [i["detail"] for i in items if i["kind"] == "event"] == ["riego grande", "riego chico"]
-    assert not any(i["type"] == "pruning" for i in items)  # the other zone's event stays out
-
-    page = {"before": items[2]["at"]}
-    older = (await client.get(f"{FARM}/zones/{zone['id']}/timeline", headers=h, params=page)).json()
-    assert [i["kind"] for i in older] == ["event", "event"]
-    assert len((await client.get(f"{FARM}/zones/{zone['id']}/timeline?limit=2", headers=h)).json()) == 2
-    assert (await client.get(f"{FARM}/zones/{zone['id']}", headers=h)).json()["id"] == zone["id"]
-    stranger = await signup("timeline-stranger")
-    assert (await client.get(f"{FARM}/zones/{zone['id']}/timeline", headers=stranger["headers"])).status_code == 404
+    whole = (await client.get(f"{FARM}/log?field_id={field['id']}", headers=h)).json()
+    assert len([i for d in whole["days"] for i in d["items"]]) == 5
+    assert (await client.get(f"{FARM}/log", headers=h)).status_code == 400  # one scope is required
+    stranger = await signup("bitacora-stranger")
+    assert (await client.get(f"{FARM}/log?zone_id={zone['id']}", headers=stranger["headers"])).status_code == 404
 
 
 async def test_planning_calendar_expands_recurrences_and_lists_stages_and_sowings(client, signup):

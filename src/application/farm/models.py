@@ -25,18 +25,22 @@ from src.shared.domain.base import utcnow
 # A lot (lote) is one batch of a crop sown together: "T26/27 · Cantero 2 · Lote 2". seedbed = still in the almácigo.
 LOT_STATUSES = ("planned", "seedbed", "planted", "growing", "harvesting", "harvested", "failed")
 ACTIVE_LOT_STATUSES = ("planned", "seedbed", "planted", "growing", "harvesting")
+GROWING_LOT_STATUSES = ("seedbed", "planted", "growing", "harvesting")  # in the ground: what a zone event reaches
+# The bitácora: everything done or seen, on a zone (and so on every lot in it) or on specific lots. Products and
+# doses are free text (notes / quantity / unit); the agent reads them.
 EVENT_TYPES = (
-    "sowing",
-    "transplant",
     "irrigation",
     "fertilization",
-    "treatment",
+    "pest_control",  # any phyto / organic treatment against pests or diseases
+    "sowing",
+    "transplant",
+    "harvest",
+    "inspection",  # a check-up: pest or disease seen, growth, state ("revisión")
+    "observation",
+    "soil_prep",
+    "amendment",  # compost, substrate, lime... added to the soil
     "pruning",
     "weeding",
-    "pest_sighting",
-    "disease_sighting",
-    "harvest",
-    "observation",
     "photo",
 )
 EVENT_SOURCES = ("user", "agent")
@@ -191,8 +195,7 @@ class FieldEvent(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), nullable=False)
-    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
-    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))  # null: the whole field
     author_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     type = Column(String(30), nullable=False)
     occurred_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
@@ -203,3 +206,13 @@ class FieldEvent(Base):
     image_identifier = Column(String(255))
     source = Column(String(10), nullable=False, default="user")
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class EventLot(Base):
+    """The lots an event reached, fixed when it was logged: a watering of Cantero 2 lists the lots growing there
+    that day, so each lot's bitácora keeps it even after the lot is harvested or moved."""
+    __tablename__ = "event_lots"
+
+    event_id = Column(UUID(as_uuid=True), ForeignKey("field_events.id", ondelete="CASCADE"), primary_key=True)
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="CASCADE"), primary_key=True, index=True)

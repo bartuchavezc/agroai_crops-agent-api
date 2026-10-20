@@ -38,12 +38,12 @@ from .schemas import (
 )
 from .service import FarmService
 from .summary import FieldSummary, FieldSummaryService
-from .timeline import TimelineItem, ZoneTimelineService
+from .log import LogPage, LogService
 
 router = APIRouter(prefix="/farm-management", tags=["Farm Management"])
 
 FARM = Provide["application.farm_service"]
-TIMELINE = Provide["application.zone_timeline_service"]
+LOG = Provide["application.log_service"]
 SUMMARY = Provide["application.field_summary_service"]
 SATELLITE = Provide["application.satellite_service"]
 
@@ -140,17 +140,25 @@ async def get_zone(zone_id: UUID, actor: Actor = Depends(get_actor), farm: FarmS
     return await farm.get_zone(actor, zone_id)
 
 
-@router.get("/zones/{zone_id}/timeline", response_model=List[TimelineItem], summary="A zone's history in one list")
+@router.get("/log", response_model=LogPage, summary="The bitácora of a field, a zone or a lot, by day")
 @inject
-async def zone_timeline(
-    zone_id: UUID,
-    before: Optional[datetime] = Query(None, description="Page back in time: the `at` of the last item received"),
+async def bitacora(
+    field_id: Optional[UUID] = None,
+    zone_id: Optional[UUID] = None,
+    lot_id: Optional[UUID] = None,
+    type: Optional[EventType] = Query(None, description="Only events of this type"),
+    before: Optional[datetime] = Query(None, description="Page back in time: `next_before` of the previous page"),
+    since: Optional[datetime] = None,
     limit: int = Query(50, ge=1, le=200),
     actor: Actor = Depends(get_actor),
-    timeline: ZoneTimelineService = Depends(TIMELINE),
+    log: LogService = Depends(LOG),
 ):
-    """Field events of the zone, completed analyses (tracking and soil) and reminders that were done, newest first."""
-    return await timeline.timeline(actor, zone_id, before=before, limit=limit)
+    """Exactly one of field_id / zone_id / lot_id. A lot's bitácora includes what was logged on its zone or field
+    while it was there (event_lots), and the analyses that covered it; newest first, grouped by local day."""
+    return await log.log(
+        actor, field_id=field_id, zone_id=zone_id, lot_id=lot_id, before=before, since=since, limit=limit,
+        event_type=type,
+    )
 
 
 @router.put("/zones/{zone_id}", response_model=FieldZoneRead, summary="Update a zone (owner/tecnico)")

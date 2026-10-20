@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from pydantic import BaseModel
 
 from src.agent.reasoning.diagnosis_service import analyze_in_background
+from src.application.farm.models import ACTIVE_LOT_STATUSES
 from src.application.reports.schemas import ReportCreate
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
@@ -115,6 +116,7 @@ async def upload_crop_image(
     lot_id: Optional[UUID] = Form(None),
     report_type: str = Form("diagnosis"),
     notes: Optional[str] = Form(None, max_length=2000, description="The user's own observations, if any"),
+    reason: Optional[str] = Form(None, max_length=500, description='Why the photo was taken ("motivo")'),
     actor: Actor = Depends(get_actor),
     storage_service=Depends(Provide["application.storage_service"]),
     reports_service=Depends(Provide["application.reports_service"]),
@@ -138,7 +140,7 @@ async def upload_crop_image(
         actor,
         ReportCreate(
             image_identifier=image_identifier, field_id=field_id, lot_id=lot_id,
-            report_type=report_type, notes=(notes or "").strip() or None,
+            report_type=report_type, notes=(notes or "").strip() or None, reason=(reason or "").strip() or None,
         ),
     )
     logger.info(f"Image {image_identifier} uploaded for account {actor.account_id}")
@@ -168,6 +170,7 @@ async def upload_zone_tracking(
     zone_id: UUID = Form(...),
     image_files: List[UploadFile] = File(..., description="1-4 photos of the zone"),
     notes: Optional[str] = Form(None, max_length=2000, description="The user's own observations, if any"),
+    reason: Optional[str] = Form(None, max_length=500, description='Why the photo was taken ("motivo")'),
     actor: Actor = Depends(get_actor),
     farm_service=Depends(Provide["application.farm_service"]),
     storage_service=Depends(Provide["application.storage_service"]),
@@ -181,7 +184,7 @@ async def upload_zone_tracking(
     zone = await farm_service.get_zone(actor, zone_id)
     cycles = [
         c for c in await farm_service.list_lots(actor, field_id=zone.field_id, zone_id=zone.id)
-        if c.status in ("planned", "planted", "growing")
+        if c.status in ACTIVE_LOT_STATUSES
     ]
     if not cycles:
         raise HTTPException(
@@ -203,6 +206,7 @@ async def upload_zone_tracking(
             lot_ids=[c.id for c in cycles],
             report_type="periodic",
             notes=(notes or "").strip() or None,
+            reason=(reason or "").strip() or None,
         ),
     )
     logger.info(f"{len(identifiers)} zone photo(s) uploaded for zone {zone.id}, account {actor.account_id}")

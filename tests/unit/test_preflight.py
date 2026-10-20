@@ -24,7 +24,7 @@ async def _echo(field=None, days=30, include_image=True):
 def _inputs(skills=None, tools=None, message="las hojas del tomate se ponen amarillas"):
     return PreflightInputs(
         user_id=uuid4(), country="AR", message=message, account_text="cuenta", recent=[],
-        tools=tools if tools is not None else {"get_recent_weather_summary": _echo, "log_event": _echo},
+        tools=tools if tools is not None else {"get_recent_weather_summary": _echo, "log_events": _echo},
         skills=skills if skills is not None else {"ficha-tomate": _skill(), "plagas-tomate": _skill()},
     )
 
@@ -38,12 +38,12 @@ def _req(name, **args):
 
 
 def test_sanitize_keeps_only_known_skills_and_read_only_tools_with_accepted_arguments():
-    inp = _inputs(tools={"get_recent_weather_summary": _echo, "log_event": _echo, "get_zone_satellite_status": _echo})
+    inp = _inputs(tools={"get_recent_weather_summary": _echo, "log_events": _echo, "get_zone_satellite_status": _echo})
     plan = PreflightPlan(
         skills=["ficha-tomate", "inventada", "ficha-tomate", "plagas-tomate"],
         tools=[
             _req("get_recent_weather_summary", field="Huerta", days=30, nope="descartado"),
-            _req("log_event", event_type="irrigation"),  # a write: never run speculatively
+            _req("log_events", entries=[{"type": "irrigation"}]),  # a write: never run speculatively
             _req("get_zone_satellite_status", field="Huerta", include_image=True),
             ToolRequest(name="get_recent_weather_summary", args="{not json"),
         ],
@@ -52,7 +52,7 @@ def test_sanitize_keeps_only_known_skills_and_read_only_tools_with_accepted_argu
     clean = PreflightEngine.sanitize(plan, inp)
     assert clean.skills == ["ficha-tomate", "plagas-tomate"]
     names = [t.name for t in clean.tools]
-    assert "log_event" not in names
+    assert "log_events" not in names
     weather = json.loads(clean.tools[0].args)
     assert weather == {"field": "Huerta", "days": 30}  # the unknown argument is gone
     satellite = next(t for t in clean.tools if t.name == "get_zone_satellite_status")

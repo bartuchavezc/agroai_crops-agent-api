@@ -462,7 +462,7 @@ class DiagnosisService:
         lines = [f"Zona: {zone.label}" + (f". Notas: {zone.notes}" if zone.notes else "")]
         zone_events = [
             e for e in await self.farm.list_events(actor, field_id=report.field_id, zone_id=zone.id, limit=50)
-            if e.lot_id is None
+            if len(e.lot_ids) != 1  # logged on the zone as a whole, not on one of its lots
         ]
         if zone_events:
             lines.append("Eventos de la zona en general: " + "; ".join(format_event_history(zone_events[:20])))
