@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from pydantic import BaseModel
 
 from src.agent.reasoning.diagnosis_service import analyze_in_background
+from src.application.farm.models import ACTIVE_LOT_STATUSES
 from src.application.reports.schemas import ReportCreate
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
@@ -112,9 +113,10 @@ async def upload_crop_image(
     background_tasks: BackgroundTasks,
     image_file: UploadFile = File(..., description="Image file of the crop (JPEG, PNG or WEBP)."),
     field_id: Optional[UUID] = Form(None),
-    crop_cycle_id: Optional[UUID] = Form(None),
+    lot_id: Optional[UUID] = Form(None),
     report_type: str = Form("diagnosis"),
     notes: Optional[str] = Form(None, max_length=2000, description="The user's own observations, if any"),
+    reason: Optional[str] = Form(None, max_length=500, description='Why the photo was taken ("motivo")'),
     actor: Actor = Depends(get_actor),
     storage_service=Depends(Provide["application.storage_service"]),
     reports_service=Depends(Provide["application.reports_service"]),
@@ -124,10 +126,10 @@ async def upload_crop_image(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="report_type must be 'diagnosis', 'periodic' or 'soil'."
         )
-    if report_type == "periodic" and crop_cycle_id is None:
+    if report_type == "periodic" and lot_id is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="crop_cycle_id is required for a periodic (tracking) report.",
+            detail="lot_id is required for a periodic (tracking) report.",
         )
 
     image_data = await receive_photo(image_file)
@@ -137,8 +139,8 @@ async def upload_crop_image(
     report = await reports_service.create_report(
         actor,
         ReportCreate(
-            image_identifier=image_identifier, field_id=field_id, crop_cycle_id=crop_cycle_id,
-            report_type=report_type, notes=(notes or "").strip() or None,
+            image_identifier=image_identifier, field_id=field_id, lot_id=lot_id,
+            report_type=report_type, notes=(notes or "").strip() or None, reason=(reason or "").strip() or None,
         ),
     )
     logger.info(f"Image {image_identifier} uploaded for account {actor.account_id}")
@@ -168,6 +170,7 @@ async def upload_zone_tracking(
     zone_id: UUID = Form(...),
     image_files: List[UploadFile] = File(..., description="1-4 photos of the zone"),
     notes: Optional[str] = Form(None, max_length=2000, description="The user's own observations, if any"),
+    reason: Optional[str] = Form(None, max_length=500, description='Why the photo was taken ("motivo")'),
     actor: Actor = Depends(get_actor),
     farm_service=Depends(Provide["application.farm_service"]),
     storage_service=Depends(Provide["application.storage_service"]),
@@ -180,13 +183,13 @@ async def upload_zone_tracking(
         )
     zone = await farm_service.get_zone(actor, zone_id)
     cycles = [
-        c for c in await farm_service.list_crop_cycles(actor, field_id=zone.field_id, zone_id=zone.id)
-        if c.status in ("planned", "planted", "growing")
+        c for c in await farm_service.list_lots(actor, field_id=zone.field_id, zone_id=zone.id)
+        if c.status in ACTIVE_LOT_STATUSES
     ]
     if not cycles:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{zone.label} has no active crop cycles to track. Assign its crops to the zone first.",
+            detail=f"{zone.label} has no active lots to track. Assign its crops to the zone first.",
         )
     photos = [await receive_photo(f) for f in image_files]  # validate all before storing any
     identifiers = [
@@ -200,9 +203,10 @@ async def upload_zone_tracking(
             image_identifiers=identifiers,
             field_id=zone.field_id,
             zone_id=zone.id,
-            crop_cycle_ids=[c.id for c in cycles],
+            lot_ids=[c.id for c in cycles],
             report_type="periodic",
             notes=(notes or "").strip() or None,
+            reason=(reason or "").strip() or None,
         ),
     )
     logger.info(f"{len(identifiers)} zone photo(s) uploaded for zone {zone.id}, account {actor.account_id}")

@@ -12,7 +12,7 @@ from uuid import UUID
 from src.application.alerts.rules_engine import RulesEngine
 from src.application.alerts.service import AlertService
 from src.application.farm.kc_defaults import kc_for_stage
-from src.application.farm.models import ACTIVE_CROP_CYCLE_STATUSES
+from src.application.farm.models import ACTIVE_LOT_STATUSES
 from src.application.farm.repository import FarmRepository
 from src.application.farm.service import FarmService
 from src.providers.weather.service import WeatherService
@@ -52,24 +52,28 @@ def next_irrigation(
     return None, None
 
 
-def _irrigation_mm(events, area_m2: Optional[float], crop_cycle_id: Optional[UUID] = None) -> float:
-    """Sum of irrigation events in liters/mm converted to mm depth over the field's area. Events tied to
-    a specific crop_cycle_id only count for that cycle (plus field-wide events with no cycle, which wet
-    everything); the field total counts every irrigation event regardless of tagging."""
-    total_liters = 0.0
+def _irrigation_mm(
+    events, field_area_m2: Optional[float], lot_id: Optional[UUID] = None,
+    zone_areas: Optional[dict[UUID, float]] = None,
+) -> float:
+    """Irrigation depth in mm. For one lot: the events that reached it (logged on its zone, on it, or on the
+    whole field), liters spread over the zone they were poured on when its size is known, else over the field.
+    Without a lot: every event, liters over the whole field."""
     total_mm = 0.0
     for e in events:
-        if crop_cycle_id is not None and e.crop_cycle_id not in (None, crop_cycle_id):
+        if lot_id is not None and lot_id not in getattr(e, "lot_ids", []):
             continue
         if e.quantity is None:
             continue
         unit = (e.unit or "").strip().lower()
         if unit in ("mm", "milimetros", "milímetros"):
             total_mm += e.quantity
-        else:  # default: liters (the unit used by log_event's own docstring example)
-            total_liters += e.quantity
-    if area_m2 and area_m2 > 0:
-        total_mm += total_liters / area_m2
+            continue
+        # default: liters (the unit used by log_events' own docstring example)
+        area = (zone_areas or {}).get(e.zone_id) if lot_id is not None else None
+        area = area or field_area_m2
+        if area and area > 0:
+            total_mm += e.quantity / area
     return round(total_mm, 1)
 
 
@@ -151,13 +155,14 @@ class EvapotranspirationService:
             actor, field_id=field_id, event_type="irrigation", since=since, limit=200
         )
 
-        cycles_raw = await self.farm.list_crop_cycles(actor, field_id=field_id)
-        active_cycles = [c for c in cycles_raw if c.status in ACTIVE_CROP_CYCLE_STATUSES]
+        cycles_raw = await self.farm.list_lots(actor, field_id=field_id)
+        active_lots = [c for c in cycles_raw if c.status in ACTIVE_LOT_STATUSES]
+        zone_areas = {z.id: z.area_m2 for z in await self.farm.list_zones(actor, field_id) if z.area_m2}
 
         cycles: list[CycleIrrigation] = []
         kc_values: list[float] = []
         today = today_in(actor.timezone)
-        for cycle in active_cycles:
+        for cycle in active_lots:
             crop_master = await self.farm.get_crop_master(actor, cycle.crop_master_id)
             progress = _cycle_progress_pct(cycle, crop_master, today)
             kc = kc_for_stage(
@@ -167,14 +172,16 @@ class EvapotranspirationService:
             if et0 is None:
                 continue
             etc_mm = round(et0 * kc, 1)
-            recent = _irrigation_mm(irrigation_events, field.area_m2, crop_cycle_id=cycle.id)
+            recent = _irrigation_mm(irrigation_events, field.area_m2, lot_id=cycle.id, zone_areas=zone_areas)
             net = round(etc_mm - recent, 1)
             status, message = self._status_for(net, rain_forecast_mm, overrides)
             next_day, suggested = next_irrigation(net, etc_mm, status, rain_by_day, today)
             cycles.append(
                 CycleIrrigation(
-                    crop_cycle_id=cycle.id,
+                    lot_id=cycle.id,
                     crop_name=crop_master.name,
+                    label=cycle.label,
+                    zone_ids=cycle.zone_ids,
                     kc=kc,
                     etc_mm=etc_mm,
                     recent_irrigation_mm=recent,
@@ -226,7 +233,7 @@ class EvapotranspirationService:
                 field.account_id, field_id=field.id, event_type="irrigation", since=since, limit=200
             )
             recent = _irrigation_mm(events, field.area_m2)
-            cycles = await self.farm_repo.active_cycles_with_crop(field.account_id)
+            cycles = await self.farm_repo.active_lots_with_crop(field.account_id)
             field_cycles = [(c, crop) for c, crop in cycles if c.field_id == field.id]
             if not field_cycles:
                 continue

@@ -11,7 +11,7 @@ Pipeline, all on the field's own history:
   3. normal   — for any date, the same date in each previous year (±3 days) of the smoothed curve:
                 p10/p50/p90 across years = "what's normal for this week in this field".
   4. anomaly  — current value vs normal and vs last year, 15-day trend, streak of passes below p10.
-  5. stages   — green-up / peak / decline on the current season's curve (the active crop cycle's
+  5. stages   — green-up / peak / decline on the current season's curve (the active lot's
                 planting date when there is one).
   6. radar    — when Sentinel-2 has a cloud gap, the Sentinel-1 cross-ratio trend over that gap as a
                 qualitative continuity signal (never converted into an NDVI value).
@@ -467,7 +467,7 @@ def analyze(
     season: Optional[tuple[date, Optional[date]]] = None,
     min_valid_fraction: float = 0.6,
 ) -> SeriesAnalysis:
-    """season: (planting_date, harvest_date or None) of the field's active crop cycle, if any."""
+    """season: (planting_date, harvest_date or None) of the field's active lot, if any."""
     clean = clean_s2(s2, min_valid_fraction)
     result = SeriesAnalysis(as_of=today, has_data=bool(clean), s2_passes=len(s2), s2_clear_passes=len(clean))
     if s2:

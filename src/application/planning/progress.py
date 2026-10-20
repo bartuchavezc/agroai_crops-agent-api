@@ -1,4 +1,4 @@
-"""How far along a crop cycle is against what is expected of it, and whether it is behind or affected.
+"""How far along a lot is against what is expected of it, and whether it is behind or affected.
 
 `expected_pct` and the stage come from dates and the stage plan (the plan saved for the cycle, else the crop's
 template); `status` comes from the latest completed analysis that covered the cycle (a single-crop periodic report
@@ -17,7 +17,7 @@ _BAD_HEALTH = {"poor", "critical"}
 
 
 class CycleProgress(BaseModel):
-    crop_cycle_id: UUID
+    lot_id: UUID
     expected_pct: Optional[float] = None  # 0-100; null when the sowing date is unknown
     current_stage: Optional[str] = None  # StageType id (vegetativo, floracion, cosecha...)
     current_stage_name: Optional[str] = None
@@ -70,7 +70,7 @@ class CycleProgressService:
         self.reports = reports_service
 
     async def _stages(self, actor: Actor, cycle) -> list[tuple[str, str, date]]:
-        plans = await self.planning.repo.list_plans(actor.account_id, crop_cycle_id=cycle.id)
+        plans = await self.planning.repo.list_plans(actor.account_id, lot_id=cycle.id)
         if plans:
             stages, _, _ = await self.planning.repo.plan_children(plans[0].id)
             if stages:
@@ -82,7 +82,7 @@ class CycleProgressService:
 
     async def _latest_entry(self, actor: Actor, cycle) -> tuple[Optional[dict], Optional[object]]:
         reports = await self.reports.list_reports(
-            actor, crop_cycle_id=cycle.id, report_type="periodic", status="ANALYSIS_COMPLETED", limit=1
+            actor, lot_id=cycle.id, report_type="periodic", status="ANALYSIS_COMPLETED", limit=1
         )
         if not reports:
             return None, None
@@ -91,11 +91,11 @@ class CycleProgressService:
         entry = data.get("llm_structured_periodic")
         if not entry:
             crops = (data.get("llm_structured_zone") or {}).get("crops") or []
-            entry = next((c for c in crops if c.get("crop_cycle_id") == str(cycle.id)), None)
+            entry = next((c for c in crops if c.get("lot_id") == str(cycle.id)), None)
         return entry, report
 
     async def progress(self, actor: Actor, cycle_id: UUID) -> CycleProgress:
-        cycle = await self.farm.get_crop_cycle(actor, cycle_id)
+        cycle = await self.farm.get_lot(actor, cycle_id)
         crop = await self.farm.get_crop_master(actor, cycle.crop_master_id)
         today = today_in(actor.timezone)
         harvest = cycle.expected_harvest_date
@@ -107,7 +107,7 @@ class CycleProgressService:
         entry, report = await self._latest_entry(actor, cycle)
         status, reason = assess(entry, harvest, today)
         return CycleProgress(
-            crop_cycle_id=cycle.id,
+            lot_id=cycle.id,
             expected_pct=expected_pct(cycle.planting_date, harvest, today),
             current_stage=current[0] if current else None,
             current_stage_name=current[1] if current else None,

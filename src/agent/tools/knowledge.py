@@ -14,7 +14,7 @@ def memory_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     async def remember_fact(fact: str, tags: Optional[list[str]] = None) -> dict:
         """Save a durable fact worth remembering for everyone in the account: preferences, what worked or failed,
         soil/water details, recurring pests, family decisions. One self-contained sentence with dates and places.
-        Do NOT store things already recorded as fields, crop cycles or events."""
+        Do NOT store things already recorded as fields, lots or events."""
         memory = await deps.memory.remember(ctx.actor, fact, tags, conversation_id=ctx.conversation_id)
         return {"remembered": compact(memory)}
 

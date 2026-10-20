@@ -4,8 +4,12 @@ from .alerts.field_rules import FieldAlertRulesService
 from .alerts.forecast_alerts import ForecastAlertService
 from .alerts.rules_engine import RulesEngine
 from .alerts.service import AlertService
+from .farm.snapshot import FieldSnapshotService
 from .farm.summary import FieldSummaryService
-from .farm.timeline import ZoneTimelineService
+from .changes.service import ChangeSetService
+from .farm.log import LogService
+from .tasks.repository import TaskRepository
+from .tasks.service import TaskService
 from .farm.repository import FarmRepository
 from .farm.service import FarmService
 from .inventory.repository import SeedLotRepository
@@ -104,6 +108,10 @@ class ApplicationContainer(containers.DeclarativeContainer):
         ManagementService, repository=management_repository, farm_service=farm_service
     )
 
+    task_repository = providers.Singleton(TaskRepository, session_factory=db_session_factory)
+    task_service = providers.Singleton(
+        TaskService, repository=task_repository, farm_service=farm_service, management_service=management_service
+    )
     planning_repository = providers.Singleton(PlanningRepository, session_factory=db_session_factory)
     planning_service = providers.Singleton(
         PlanningService,
@@ -113,15 +121,23 @@ class ApplicationContainer(containers.DeclarativeContainer):
         management_service=management_service,
         inventory_service=inventory_service,
         timezone_name=config.app.timezone,
+        task_service=task_service,
     )
 
     field_summary_service = providers.Singleton(
         FieldSummaryService, farm_service=farm_service, reports_service=reports_service,
         planning_service=planning_service, alert_service=alert_service, irrigation_service=irrigation_service,
     )
-    zone_timeline_service = providers.Singleton(
-        ZoneTimelineService, farm_service=farm_service, reports_service=reports_service,
-        planning_repository=planning_repository,
+    change_set_service = providers.Singleton(
+        ChangeSetService, session_factory=db_session_factory, farm_service=farm_service,
+        planning_service=planning_service, task_service=task_service, inventory_service=inventory_service,
+    )
+    log_service = providers.Singleton(
+        LogService, farm_service=farm_service, reports_service=reports_service, task_service=task_service
+    )
+    field_snapshot_service = providers.Singleton(
+        FieldSnapshotService, farm_service=farm_service, reports_service=reports_service,
+        planning_service=planning_service, task_service=task_service, log_service=log_service,
     )
     cycle_progress_service = providers.Singleton(
         CycleProgressService, farm_service=farm_service, planning_service=planning_service,

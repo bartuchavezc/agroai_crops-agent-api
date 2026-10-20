@@ -16,6 +16,8 @@ class Notification(BaseModel):
     field_id: Optional[UUID] = None
     entity_type: EntityType
     entity_id: UUID
+    zone_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     read: bool = False
     read_at: Optional[datetime] = None
     created_at: datetime
@@ -30,6 +32,8 @@ class Notification(BaseModel):
             field_id=m.field_id,
             entity_type=m.entity_type,
             entity_id=m.entity_id,
+            zone_id=m.zone_id,
+            lot_id=m.lot_id,
             read=m.read_at is not None,
             read_at=m.read_at,
             created_at=m.created_at,

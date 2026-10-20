@@ -215,7 +215,7 @@ class AgentRunner:
             crops = ", ".join(
                 f"{localized(c.crop_name, c.crop_i18n, locale)}{' ' + c.variety if c.variety else ''} "
                 f"({c.status}{', ' + c.zone_label if c.zone_label else ''})"
-                for c in item.active_cycles
+                for c in item.active_lots
             ) or "sin cultivos activos"
             lines.append(f"- {f.name}{where}{coords}: {crops}")
             if item.zones:
@@ -418,7 +418,9 @@ class AgentRunner:
                 "" if error_code else "No pude generar una respuesta. ¿Podés reformular la consulta?"
             )
             sources = list({s["uri"]: Source(**s) for s in turn.ctx.sources}.values())
-            attachments = list({a["image_identifier"]: Attachment(**a) for a in turn.ctx.attachments}.values())
+            attachments = list({
+                a.get("image_identifier") or a.get("proposal_id"): Attachment(**a) for a in turn.ctx.attachments
+            }.values())
             await self.conversations.finish_turn(
                 turn.assistant_message_id,
                 assistant_text=text,

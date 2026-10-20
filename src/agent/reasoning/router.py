@@ -61,7 +61,7 @@ async def analyze_image(
     diagnosis: DiagnosisService = Depends(Provide["agent.diagnosis_service"]),
 ):
     report = await reports_service.get_report(actor, body.report_id)  # 404s now, not only inside the task
-    if report.zone_id and report.crop_cycle_id is None:
+    if report.zone_id and report.lot_id is None:
         await reports_service.update_report(actor, report.id, ReportUpdate(status="PENDING_ANALYSIS"))
         background_tasks.add_task(
             analyze_in_background, diagnosis, actor, body.report_id, body.image_identifier, body.deep
@@ -72,7 +72,7 @@ async def analyze_image(
 
 class HarvestVerdictRequest(BaseModel):
     field_id: UUID
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     image_identifier: Optional[str] = None
 
 
@@ -83,7 +83,7 @@ async def harvest_verdict(
     actor: Actor = Depends(get_actor),
     diagnosis: DiagnosisService = Depends(Provide["agent.diagnosis_service"]),
 ):
-    return await diagnosis.harvest_verdict(actor, body.field_id, body.crop_cycle_id, body.image_identifier)
+    return await diagnosis.harvest_verdict(actor, body.field_id, body.lot_id, body.image_identifier)
 
 
 @layout_router.post(

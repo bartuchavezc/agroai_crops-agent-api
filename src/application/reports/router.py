@@ -30,7 +30,7 @@ async def create_report(
 @inject
 async def list_reports(
     field_id: Optional[UUID] = None,
-    crop_cycle_id: Optional[UUID] = None,
+    lot_id: Optional[UUID] = None,
     report_type: Optional[str] = None,
     zone_id: Optional[UUID] = None,
     since: Optional[datetime] = None,
@@ -40,11 +40,11 @@ async def list_reports(
     actor: Actor = Depends(get_actor),
     reports: ReportsService = Depends(REPORTS),
 ):
-    """crop_cycle_id also returns the zone tracking reports that covered that cycle."""
+    """lot_id also returns the zone tracking reports that covered that cycle."""
     return await reports.list_reports(
         actor,
         field_id=field_id,
-        crop_cycle_id=crop_cycle_id,
+        lot_id=lot_id,
         report_type=report_type,
         skip=skip,
         limit=limit,

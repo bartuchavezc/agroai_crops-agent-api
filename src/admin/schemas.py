@@ -114,9 +114,9 @@ class FarmStats(BaseModel):
     fields_with_boundary: int
     fields_with_layout: int
     avg_fields_per_account: float
-    crop_cycles_total: int
-    crop_cycles_active: int
-    crop_cycles_in_window: int
+    lots_total: int
+    lots_active: int
+    lots_in_window: int
     cycles_by_status: list[Bucket]
     top_crops: list[Bucket]
     events_total: int
@@ -215,8 +215,8 @@ class AdminAccountRow(BaseModel):
     staff: int
     fields: int
     area_m2: float
-    crop_cycles: int
-    crop_cycles_active: int
+    lots: int
+    lots_active: int
     photos: int
     conversations: int
     user_messages: int

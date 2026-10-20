@@ -4,12 +4,12 @@ from uuid import UUID
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.application.farm.models import CropCycle
+from src.application.farm.models import Lot
 from src.auth.domain.models import Account, User
 
-from .models import BudgetEntry, RoadmapItem, ShoppingListItem
+from .models import BudgetEntry, ShoppingListItem
 
-Item = TypeVar("Item", ShoppingListItem, BudgetEntry, RoadmapItem)
+Item = TypeVar("Item", ShoppingListItem, BudgetEntry)
 
 # Filter sentinel: "only rows where this column is NULL" (no field / unassigned), as opposed to None = no filter.
 NONE = "none"
@@ -115,17 +115,17 @@ class ManagementRepository:
     async def list_budget_entries(
         self, account_id: UUID, field_id: IdFilter = None,
         since: Optional[str] = None, until: Optional[str] = None, type: Optional[str] = None,
-        crop_cycle_id: Optional[UUID] = None, crop_master_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None, crop_master_id: Optional[UUID] = None,
     ) -> Sequence[BudgetEntry]:
         stmt = select(BudgetEntry).where(BudgetEntry.account_id == account_id, BudgetEntry.deleted_at.is_(None))
         stmt = _where_id(stmt, BudgetEntry.field_id, field_id)
-        if crop_cycle_id:
-            stmt = stmt.where(BudgetEntry.crop_cycle_id == crop_cycle_id)
+        if lot_id:
+            stmt = stmt.where(BudgetEntry.lot_id == lot_id)
         if crop_master_id:
-            cycles = select(CropCycle.id).where(
-                CropCycle.account_id == account_id, CropCycle.crop_master_id == crop_master_id
+            cycles = select(Lot.id).where(
+                Lot.account_id == account_id, Lot.crop_master_id == crop_master_id
             )
-            stmt = stmt.where(BudgetEntry.crop_cycle_id.in_(cycles))
+            stmt = stmt.where(BudgetEntry.lot_id.in_(cycles))
         if since:
             stmt = stmt.where(BudgetEntry.date >= since)
         if until:
@@ -144,27 +144,3 @@ class ManagementRepository:
 
     async def delete_budget_entry(self, account_id: UUID, entry_id: UUID) -> bool:
         return await self._soft_delete(BudgetEntry, account_id, entry_id)
-
-    # ---------- roadmap ----------
-
-    async def list_roadmap_items(
-        self, account_id: UUID, field_id: IdFilter = None, status: Optional[str] = None,
-        assigned_to: IdFilter = None,
-    ) -> Sequence[RoadmapItem]:
-        stmt = select(RoadmapItem).where(RoadmapItem.account_id == account_id, RoadmapItem.deleted_at.is_(None))
-        stmt = _where_id(stmt, RoadmapItem.field_id, field_id)
-        stmt = _where_id(stmt, RoadmapItem.assigned_to, assigned_to)
-        if status:
-            stmt = stmt.where(RoadmapItem.status == status)
-        stmt = stmt.order_by(RoadmapItem.target_date.asc().nulls_last(), RoadmapItem.created_at.desc())
-        async with self.session_factory() as session:
-            return (await session.execute(stmt)).scalars().all()
-
-    async def create_roadmap_item(self, item: RoadmapItem) -> RoadmapItem:
-        return await self._create(item)
-
-    async def update_roadmap_item(self, account_id: UUID, item_id: UUID, values: dict) -> Optional[RoadmapItem]:
-        return await self._update(RoadmapItem, account_id, item_id, values)
-
-    async def delete_roadmap_item(self, account_id: UUID, item_id: UUID) -> bool:
-        return await self._soft_delete(RoadmapItem, account_id, item_id)

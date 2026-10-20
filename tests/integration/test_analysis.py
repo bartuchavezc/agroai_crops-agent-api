@@ -152,7 +152,7 @@ async def test_deep_pass_searches_the_web_and_refines_with_the_sources(client, s
             patch.object(service.analysis_context, "search", type("S", (), {"search": search})()):
         up = await client.post(
             "/api/v1/upload/image", headers=h,
-            data={"report_type": "periodic", "field_id": field["id"], "crop_cycle_id": tomato["id"]},
+            data={"report_type": "periodic", "field_id": field["id"], "lot_id": tomato["id"]},
             files={"image_file": ("a.png", _TINY_PNG, "image/png")},
         )
         assert up.status_code == 200, up.text

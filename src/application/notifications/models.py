@@ -27,5 +27,8 @@ class NotificationModel(Base):
     message = Column(Text, nullable=False)
     entity_type = Column(String(20), nullable=False)
     entity_id = Column(UUID(as_uuid=True), nullable=False)
+    # Where it is about, so the app can open it there (a reminder of the Cantero 2, of one lot).
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
     read_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)

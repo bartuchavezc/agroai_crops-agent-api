@@ -86,7 +86,7 @@ def no_title_calls(container):
         yield
 
 
-async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_member, with_key, scripted_model):
+async def test_chat_turn_registers_lot_and_event(client, signup, add_member, with_key, scripted_model):
     owner = await signup("agent")
     await with_key(owner)
     h = owner["headers"]
@@ -97,8 +97,9 @@ async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_memb
     )
 
     scripted_model.script = [
-        ("call", "create_crop_cycle", {"crop_name": "Tomate", "variety": "Cherry", "field": "cantero 1"}),
-        ("call", "log_event", {"event_type": "irrigation", "field": "Cantero 1", "quantity": 10, "unit": "litros"}),
+        ("call", "create_lot", {"crop_name": "Tomate", "variety": "Cherry", "field": "cantero 1"}),
+        ("call", "log_events",
+         {"field": "Cantero 1", "entries": [{"type": "irrigation", "quantity": 10, "unit": "litros"}]}),
         ("text", "¡Listo! Registré la siembra de tomate cherry y el riego de 10 litros en Cantero 1."),
     ]
     response = await client.post(
@@ -109,7 +110,7 @@ async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_memb
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["response"].startswith("¡Listo!")
-    assert [t["name"] for t in body["metadata"]["tool_calls"]] == ["create_crop_cycle", "log_event"]
+    assert [t["name"] for t in body["metadata"]["tool_calls"]] == ["create_lot", "log_events"]
     assert all(t["ok"] for t in body["metadata"]["tool_calls"])
     conversation_id = body["metadata"]["conversation_id"]
 
@@ -127,7 +128,7 @@ async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_memb
     history = " ".join(str(c.parts) for c in scripted_model.requests[0].contents)
     assert "Fecha y hora local" in history and "Campos de la cuenta" not in history
 
-    cycles = (await client.get("/api/v1/farm-management/crop-cycles", headers=h)).json()
+    cycles = (await client.get("/api/v1/farm-management/lots", headers=h)).json()
     assert len(cycles) == 1 and cycles[0]["status"] == "planted" and cycles[0]["expected_harvest_date"]
     events = (await client.get("/api/v1/farm-management/events", headers=h)).json()
     assert events[0]["type"] == "irrigation" and events[0]["source"] == "agent" and events[0]["quantity"] == 10
@@ -184,7 +185,7 @@ async def test_tools_cannot_touch_other_accounts(client, signup, with_key, scrip
     attacker = await signup("attacker")
     await with_key(attacker)
     scripted_model.script = [
-        ("call", "log_event", {"event_type": "observation", "field": victim_field["id"], "notes": "hola"}),
+        ("call", "log_events", {"field": victim_field["id"], "entries": [{"type": "observation", "notes": "hola"}]}),
         ("text", "No pude registrar el evento."),
     ]
     response = await client.post("/api/v1/chat", headers=attacker["headers"], json={"message": "registrá algo"})
@@ -202,8 +203,8 @@ async def test_staff_does_not_get_management_tools(client, signup, add_member, w
     declared = {
         f.name for tool in scripted_model.requests[0].config.tools or [] for f in (tool.function_declarations or [])
     }
-    assert "log_event" in declared
-    assert "create_field" not in declared and "create_crop_cycle" not in declared
+    assert "log_events" in declared and "get_log" in declared
+    assert "create_field" not in declared and "create_lot" not in declared
 
 
 async def test_web_search_failure_does_not_break_the_turn(client, signup, with_key, scripted_model, container):
@@ -257,7 +258,8 @@ async def test_stream_emits_events_in_order_and_persists(client, signup, with_ke
     h = user["headers"]
     await client.post("/api/v1/farm-management/fields", headers=h, json={"name": "Maceta"})
     scripted_model.script = [
-        ("text+call", "Dale, lo registro.", "log_event", {"event_type": "irrigation", "quantity": 2, "unit": "litros"}),
+        ("text+call", "Dale, lo registro.", "log_events",
+         {"entries": [{"type": "irrigation", "quantity": 2, "unit": "litros"}]}),
         ("text", "Listo, registré 2 litros."),
     ]
     response = await client.post("/api/v1/chat/stream", headers=h, json={"message": "regué 2 litros"})
@@ -393,25 +395,28 @@ async def test_management_tools_field_assignee_status_and_delete(client, signup,
     field = (await client.post("/api/v1/farm-management/fields", headers=h, json={"name": "Huerta Norte"})).json()
 
     scripted_model.script = [
-        ("call", "add_roadmap_item", {"title": "Atar tomates", "field": "Huerta Norte", "assigned_to": staff["email"]}),
+        ("call", "add_tasks",
+         {"tasks": [{"title": "Atar tomates", "field": "Huerta Norte", "assigned_to": staff["email"]}]}),
         ("text", "Listo."),
     ]
     response = await client.post("/api/v1/chat", headers=h, json={"message": "agendá atar tomates"})
     assert response.json()["metadata"]["tool_calls"][0]["ok"] is True
-    task = (await client.get("/api/v1/management/roadmap", headers=h)).json()[0]
+    task = (await client.get("/api/v1/tasks", headers=h)).json()[0]
     assert task["field_id"] == field["id"] and task["assigned_to"] == staff["user"]["id"]
+    assert task["source"] == "agent"
 
     scripted_model.script = [
-        ("call", "update_roadmap_item", {"item_id": task["id"], "status": "cancelado", "assigned_to": "ninguno"}),
+        ("call", "update_tasks",
+         {"changes": [{"task_id": task["id"], "status": "cancelada", "assigned_to": "ninguno"}]}),
         ("text", "Cancelada."),
     ]
     await client.post("/api/v1/chat", headers=h, json={"message": "cancelala"})
-    task = (await client.get("/api/v1/management/roadmap", headers=h)).json()[0]
-    assert task["status"] == "cancelado" and task["assigned_to"] is None and task["field_id"] == field["id"]
+    task = (await client.get("/api/v1/tasks", headers=h)).json()[0]
+    assert task["status"] == "cancelada" and task["assigned_to"] is None and task["field_id"] == field["id"]
 
-    scripted_model.script = [("call", "remove_roadmap_item", {"item_id": task["id"]}), ("text", "Borrada.")]
+    scripted_model.script = [("call", "remove_task", {"task_id": task["id"]}), ("text", "Borrada.")]
     await client.post("/api/v1/chat", headers=h, json={"message": "sí, borrala"})
-    assert (await client.get("/api/v1/management/roadmap", headers=h)).json() == []
+    assert (await client.get("/api/v1/tasks", headers=h)).json() == []
 
     await with_key(staff)
     scripted_model.script = [("text", "ok")]
@@ -420,7 +425,8 @@ async def test_management_tools_field_assignee_status_and_delete(client, signup,
         f.name for tool in scripted_model.requests[-1].config.tools or [] for f in (tool.function_declarations or [])
     }
     assert "update_shopping_item" in declared and "list_account_members" in declared
-    assert not declared & {"remove_shopping_item", "remove_budget_entry", "remove_roadmap_item", "update_budget_entry"}
+    assert "add_tasks" in declared and "update_tasks" in declared
+    assert not declared & {"remove_shopping_item", "remove_budget_entry", "remove_task", "update_budget_entry"}
 
 
 async def _messages(client, h, conversation_id):
@@ -766,7 +772,7 @@ async def test_preflight_gathers_first_so_the_model_answers_in_one_call(
     )
     preflight_on.return_value = PreflightPlan(
         skills=["ficha-tomate", "fisiologia-macronutrientes-npk-s"],
-        tools=[ToolRequest(name="list_fields", args="{}"), ToolRequest(name="log_event", args='{"event_type":"x"}')],
+        tools=[ToolRequest(name="list_fields", args="{}"), ToolRequest(name="log_events", args='{"entries":[]}')],
         reason="síntoma en tomate",
     )
     scripted_model.script = [("text", "Probablemente falta nitrógeno.")]

@@ -14,10 +14,6 @@ from .schemas import (
     BudgetCategory,
     BudgetEntryUpdate,
     BudgetSummary,
-    RoadmapItemCreate,
-    RoadmapItemRead,
-    RoadmapItemUpdate,
-    RoadmapStatus,
     ShoppingItemCreate,
     ShoppingItemRead,
     ShoppingItemUpdate,
@@ -131,44 +127,4 @@ async def delete_budget_entry(
     entry_id: UUID, actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT)
 ):
     await management.delete_budget_entry(actor, entry_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-# ---------- roadmap ----------
-
-@_both(router.get, "/roadmap", response_model=List[RoadmapItemRead], summary="List Roadmap")
-@inject
-async def list_roadmap(
-    field_id: IdFilter = None, status_filter: Optional[RoadmapStatus] = None, assigned_to: IdFilter = None,
-    actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT),
-):
-    return await management.list_roadmap(actor, field_id=field_id, status=status_filter, assigned_to=assigned_to)
-
-
-@_both(
-    router.post, "/roadmap", response_model=RoadmapItemRead, status_code=status.HTTP_201_CREATED,
-    summary="Add Roadmap Item",
-)
-@inject
-async def add_roadmap_item(
-    body: RoadmapItemCreate, actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT)
-):
-    return await management.add_roadmap_item(actor, body)
-
-
-@router.put("/roadmap/{item_id}", response_model=RoadmapItemRead, summary="Update Roadmap Item")
-@inject
-async def update_roadmap_item(
-    item_id: UUID, body: RoadmapItemUpdate,
-    actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT),
-):
-    return await management.update_roadmap_item(actor, item_id, body)
-
-
-@router.delete("/roadmap/{item_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete Roadmap Item")
-@inject
-async def delete_roadmap_item(
-    item_id: UUID, actor: Actor = Depends(get_actor), management: ManagementService = Depends(MANAGEMENT)
-):
-    await management.delete_roadmap_item(actor, item_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

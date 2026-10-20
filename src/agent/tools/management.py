@@ -1,6 +1,6 @@
-"""Management tools: shopping list, budget ledger, roadmap — the '/gestion' module, mirrored for chat.
+"""Management tools: shopping list, budget ledger and tasks, mirrored for chat.
 
-Every item can be tied to a field and (shopping/roadmap) assigned to a member. Filters take a field
+Every item can be tied to a field and (shopping/tasks) assigned to a member. Filters take a field
 name and a member name/email; "ninguno" means "no field" / "unassigned"."""
 from datetime import datetime
 from typing import Optional
@@ -10,14 +10,13 @@ from src.application.management.repository import NONE
 from src.application.management.schemas import (
     BudgetEntryCreate,
     BudgetEntryUpdate,
-    RoadmapItemCreate,
-    RoadmapItemUpdate,
     ShoppingItemCreate,
     ShoppingItemUpdate,
 )
+from src.application.tasks.schemas import TaskCreate, TaskUpdate
 from src.shared.utils.errors import InvalidInputError
 
-from .context import ToolDeps, TurnContext, compact, parse_date, resolve_field, tool
+from .context import ToolDeps, TurnContext, compact, parse_date, resolve_field, resolve_zone, tool
 
 _NONE_WORDS = {"ninguno", "ninguna", "none", "sin asignar", "sin campo"}
 
@@ -88,12 +87,12 @@ def is_clear(value: Optional[str]) -> bool:
 
 
 def management_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
-    """Every role: read, add, and update shopping/roadmap items (staff tick purchases and tasks)."""
+    """Every role: read, add, and update shopping items and tasks (staff tick purchases and tasks)."""
     r = _Resolvers(deps, ctx)
 
     @tool
     async def list_account_members() -> dict:
-        """Members of the account (to assign shopping/roadmap items to someone)."""
+        """Members of the account (to assign shopping items and tasks to someone)."""
         members = await deps.management.list_members(ctx.actor)
         return {"members": [{"id": str(m.id), "name": _member_label(m), "role": m.role} for m in members]}
 
@@ -178,62 +177,86 @@ def management_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     @tool
     async def get_budget_summary(
         field: Optional[str] = None, since: Optional[str] = None, until: Optional[str] = None,
-        crop_cycle_id: Optional[str] = None,
+        lot_id: Optional[str] = None,
     ) -> dict:
         """Totals (gastos/ingresos/balance) by category, for one field ("ninguno" = entries with no field) or
         the whole account. Gives real substance to "are we meeting our goals" — cost vs. harvest.
-        crop_cycle_id: one crop cycle's id; adds cost per plant, break-even (kg) and expected margin when the cycle
+        lot_id: one lot's id; adds cost per plant, break-even (kg) and expected margin when the cycle
         has plant count, expected yield and price loaded (null otherwise)."""
         summary = await deps.management.get_budget_summary(
             ctx.actor, field_id=await r.field_filter(field), since=since, until=until,
-            cycle_id=UUID(crop_cycle_id) if crop_cycle_id else None,
+            cycle_id=UUID(lot_id) if lot_id else None,
         )
         return compact(summary)
 
-    # ---------- roadmap ----------
+    # ---------- tasks ----------
+
+    async def _place(entry: dict) -> dict:
+        """field / zone ('cantero 3') / lot id of a task entry -> ids."""
+        values: dict = {}
+        zone = entry.get("zone")
+        if entry.get("field") or zone:
+            target = await resolve_field(deps, ctx, entry.get("field"))
+            values["field_id"] = target.id
+            if zone:
+                values["zone_id"] = (await resolve_zone(deps, ctx, target, zone)).id
+        if entry.get("lot_id"):
+            values["lot_id"] = UUID(str(entry["lot_id"]))
+        if entry.get("plan_id"):
+            values["plan_id"] = UUID(str(entry["plan_id"]))
+        return values
 
     @tool
-    async def list_roadmap(
-        field: Optional[str] = None, status: Optional[str] = None, assigned_to: Optional[str] = None
+    async def list_tasks(
+        field: Optional[str] = None, zone: Optional[str] = None, lot_id: Optional[str] = None,
+        status: Optional[str] = None, open_only: bool = True, assigned_to: Optional[str] = None,
     ) -> dict:
-        """Roadmap / pending tasks and projects. status: pendiente|en_curso|hecho|cancelado. field: a field
-        name or "ninguno". assigned_to: member name/email, "yo", or "ninguno" for unassigned."""
-        items = await deps.management.list_roadmap(
-            ctx.actor, field_id=await r.field_filter(field), status=status or None,
+        """Tasks: one-off work with someone in charge and a state (preparar sustrato, trasplantar, armar el riego).
+        status: pendiente|en_curso|bloqueada|hecha|cancelada; open_only (default) = not done nor cancelled.
+        zone ('cantero 3') also brings the tasks of its lots. assigned_to: member name/email, "yo" or "ninguno"."""
+        target = await resolve_field(deps, ctx, field) if (field or zone) else None
+        zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
+        items = await deps.tasks.list_tasks(
+            ctx.actor, field_id=target.id if target else None, zone_id=zone_id,
+            lot_id=UUID(lot_id) if lot_id else None, status=status or None, open_only=open_only and not status,
             assigned_to=await r.member_id(assigned_to),
         )
-        return {"items": compact(items)}
+        return {"tasks": compact(items)}
 
     @tool
-    async def add_roadmap_item(
-        title: str, field: Optional[str] = None, description: Optional[str] = None,
-        target_date: Optional[str] = None, assigned_to: Optional[str] = None,
-    ) -> dict:
-        """Add a task/project to the roadmap. target_date YYYY-MM-DD, optional. field: which field (omit for
-        general tasks). assigned_to: who does it (member name/email or "yo")."""
-        item = await deps.management.add_roadmap_item(
-            ctx.actor,
-            RoadmapItemCreate(
-                title=title, field_id=await r.field_value(field), description=description,
-                target_date=parse_date(target_date), assigned_to=await r.member_value(assigned_to),
-            ),
-        )
-        return {"created_item": compact(item)}
+    async def add_tasks(tasks: list[dict]) -> dict:
+        """Add several tasks in ONE call. Each: {title, description?, field?, zone?, lot_id?, plan_id?, due_date?
+        (YYYY-MM-DD), assigned_to? (member name/email or "yo"), result_event_type?}. result_event_type: what
+        finishing it logs in the bitácora (transplant, sowing, soil_prep, amendment...). A task is work to track
+        ("preparar sustrato para el cantero 1"); something to be reminded of ("regar") is a reminder instead."""
+        created = []
+        for entry in tasks:
+            created.append(await deps.tasks.create_task(
+                ctx.actor,
+                TaskCreate(
+                    title=entry["title"], description=entry.get("description"),
+                    due_date=parse_date(entry.get("due_date")),
+                    assigned_to=await r.member_value(entry.get("assigned_to")),
+                    result_event_type=entry.get("result_event_type"), **await _place(entry),
+                ),
+            ))
+        return {"created_tasks": compact(created)}
 
     @tool
-    async def update_roadmap_item(
-        item_id: str, status: Optional[str] = None, title: Optional[str] = None,
-        description: Optional[str] = None, target_date: Optional[str] = None, field: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-    ) -> dict:
-        """Edit a roadmap item; only the arguments you pass change. status: pendiente|en_curso|hecho|cancelado.
-        field / assigned_to: "ninguno" clears them. Use list_roadmap to find the item_id."""
-        values: dict = {"status": status, "title": title, "description": description,
-                        "target_date": parse_date(target_date)}
-        values = {k: v for k, v in values.items() if v is not None}
-        values.update(await r.ref_updates(field, assigned_to))
-        item = await deps.management.update_roadmap_item(ctx.actor, UUID(item_id), RoadmapItemUpdate(**values))
-        return {"updated_item": compact(item)}
+    async def update_tasks(changes: list[dict]) -> dict:
+        """Change several tasks in ONE call. Each: {task_id, status?, title?, description?, due_date?, assigned_to?
+        ("ninguno" clears it)}. status: pendiente|en_curso|bloqueada|hecha|cancelada; "hecha" logs its
+        result_event_type in the bitácora. Use list_tasks to find the ids."""
+        updated = []
+        for entry in changes:
+            values: dict = {
+                "status": entry.get("status"), "title": entry.get("title"), "description": entry.get("description"),
+                "due_date": parse_date(entry.get("due_date")),
+            }
+            values = {k: v for k, v in values.items() if v is not None}
+            values.update(await r.ref_updates(None, entry.get("assigned_to")))
+            updated.append(await deps.tasks.update_task(ctx.actor, UUID(str(entry["task_id"])), TaskUpdate(**values)))
+        return {"updated_tasks": compact(updated)}
 
     return [
         list_account_members,
@@ -243,9 +266,9 @@ def management_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         list_budget,
         add_budget_entry,
         get_budget_summary,
-        list_roadmap,
-        add_roadmap_item,
-        update_roadmap_item,
+        list_tasks,
+        add_tasks,
+        update_tasks,
     ]
 
 
@@ -289,16 +312,15 @@ def management_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return {"deleted_entry_id": entry_id}
 
     @tool
-    async def remove_roadmap_item(item_id: str) -> dict:
-        """Delete a roadmap item (soft delete: hidden from the roadmap). If the task just won't happen,
-        prefer update_roadmap_item(status="cancelado") — it stays listed.
-        ONLY call this after the user has explicitly confirmed in a message of their own: first restate which
-        task you're about to remove, then wait for an explicit yes; never in the same turn as the first
+    async def remove_task(task_id: str) -> dict:
+        """Delete a task (soft delete). If it just won't happen, prefer update_tasks(status="cancelada") — it stays
+        listed. ONLY call this after the user has explicitly confirmed in a message of their own: first restate
+        which task you're about to remove, then wait for an explicit yes; never in the same turn as the first
         request."""
-        await deps.management.delete_roadmap_item(ctx.actor, UUID(item_id))
-        return {"deleted_item_id": item_id}
+        await deps.tasks.delete_task(ctx.actor, UUID(task_id))
+        return {"deleted_task_id": task_id}
 
-    return [remove_shopping_item, update_budget_entry, remove_budget_entry, remove_roadmap_item]
+    return [remove_shopping_item, update_budget_entry, remove_budget_entry, remove_task]
 
 
 def _member_label(member) -> str:

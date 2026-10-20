@@ -14,4 +14,7 @@ def build_container() -> Container:
     init_database_connections(config["database"]["url"], config["database"]["echo"])
     container = Container()
     container.config.from_dict(config)
+    # The planning service hooks itself into the task service (a planned lot's "Sembrar" task sows the lot):
+    # build it now so the hook is there whatever is used first.
+    container.application.planning_service()
     return container

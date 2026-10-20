@@ -17,12 +17,14 @@ import src.agent.conversations.models  # noqa: F401,E402
 import src.agent.memory.models  # noqa: F401,E402
 import src.agent.providers.models  # noqa: F401,E402
 import src.application.alerts.models  # noqa: F401,E402
+import src.application.changes.models  # noqa: F401,E402
 import src.application.farm.models  # noqa: F401,E402
 import src.application.inventory.models  # noqa: F401,E402
 import src.application.management.models  # noqa: F401,E402
 import src.application.notifications.models  # noqa: F401,E402
 import src.application.planning.models  # noqa: F401,E402
 import src.application.products.models  # noqa: F401,E402
+import src.application.tasks.models  # noqa: F401,E402
 import src.application.reports.repository  # noqa: F401,E402
 import src.application.satellite.models  # noqa: F401,E402
 import src.application.soil_data.grid_models  # noqa: F401,E402

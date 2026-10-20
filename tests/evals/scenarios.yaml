@@ -35,7 +35,7 @@
 - id: ar-registro-riego
   country: AR
   message: "hoy regué 10 litros en la huerta"
-  tools_any: [log_event]
+  tools_any: [log_events]
   max_llm_calls: 3
 
 - id: ar-saludo

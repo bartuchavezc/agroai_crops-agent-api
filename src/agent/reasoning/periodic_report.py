@@ -1,13 +1,13 @@
 """
 Periodic/tracking report: unlike DiagnosisResult (disease-focused, single photo, no cycle history),
-this evaluates general health, growth and stress against the crop cycle's own timeline and event log.
+this evaluates general health, growth and stress against the lot's own timeline and event log.
 """
 from datetime import date
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from src.application.farm.schemas import CropCycleRead, CropMasterRead, FieldEventRead
+from src.application.farm.schemas import LotRead, CropMasterRead, FieldEventRead
 
 
 class PeriodicReportResult(BaseModel):
@@ -31,7 +31,7 @@ class PeriodicReportResult(BaseModel):
     needs_human_expert: bool
 
 
-def format_cycle_progress(cycle: CropCycleRead, crop_master: Optional[CropMasterRead], today: date) -> str:
+def format_cycle_progress(cycle: LotRead, crop_master: Optional[CropMasterRead], today: date) -> str:
     lines = [f"Cultivo del ciclo: {crop_master.name if crop_master else 'desconocido'}"]
     if crop_master and crop_master.variety:
         lines[-1] += f" ({crop_master.variety})"
@@ -67,7 +67,7 @@ def format_event_history(events: list[FieldEventRead]) -> list[str]:
 # ---------- zone tracking (daily follow-up of a whole cajón / cantero / invernadero / hidroponía) ----------
 
 class ZoneCropAssessment(BaseModel):
-    crop_cycle_id: str = Field(description="El id del ciclo EXACTAMENTE como figura en el contexto")
+    lot_id: str = Field(description="El id del ciclo EXACTAMENTE como figura en el contexto")
     crop_name: str
     visible_in_photos: bool = Field(description="False si este cultivo no se distingue en ninguna foto")
     growth_stage: str = Field(description="Etapa fenológica observada; 'no visible' si no se ve")
@@ -148,9 +148,9 @@ class ZoneSynthesisResult(BaseModel):
     recommendations: list[str] = Field(default_factory=list, description="Para la zona en conjunto")
 
 
-def crop_entry(analysis: dict, crop_cycle_id) -> Optional[dict]:
+def crop_entry(analysis: dict, lot_id) -> Optional[dict]:
     """The entry of one cycle inside a zone report's structured analysis (llm_structured_zone)."""
     for crop in analysis.get("crops") or []:
-        if crop.get("crop_cycle_id") == str(crop_cycle_id):
+        if crop.get("lot_id") == str(lot_id):
             return crop
     return None

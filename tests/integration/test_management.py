@@ -97,40 +97,6 @@ async def test_budget_edit_delete_and_balance_by_field(client, signup, add_membe
     assert (await client.get(f"{MG}/budget/summary?field_id={b}", headers=h)).json()["balance"] == -50
 
 
-async def test_roadmap_assignee_cancel_and_filters(client, signup, add_member):
-    owner = await signup("mg-roadmap")
-    tecnico = await add_member(owner, "tecnico")
-    h = owner["headers"]
-    field = await _field(client, owner, "Invernadero")
-
-    task = (
-        await client.post(
-            f"{MG}/roadmap", headers=h,
-            json={"title": "Armar túnel", "field_id": field, "assigned_to": tecnico["user"]["id"]},
-        )
-    ).json()
-    other = (await client.post(f"{MG}/roadmap", headers=h, json={"title": "Comprar media sombra"})).json()
-
-    assigned = (await client.get(f"{MG}/roadmap?assigned_to={tecnico['user']['id']}", headers=h)).json()
-    assert [i["id"] for i in assigned] == [task["id"]]
-
-    # a partial update leaves the other values alone (status isn't reset to null)
-    moved = await client.put(f"{MG}/roadmap/{task['id']}", headers=h, json={"target_date": "2026-11-01"})
-    assert moved.status_code == 200 and moved.json()["status"] == "pendiente"
-    assert moved.json()["assigned_to"] == tecnico["user"]["id"]
-
-    cancelled = await client.put(
-        f"{MG}/roadmap/{other['id']}", headers=h, json={"status": "cancelado", "assigned_to": None}
-    )
-    assert cancelled.status_code == 200 and cancelled.json()["status"] == "cancelado"
-    listed = (await client.get(f"{MG}/roadmap?status_filter=cancelado", headers=h)).json()
-    assert [i["id"] for i in listed] == [other["id"]]
-    assert (await client.get(f"{MG}/roadmap?status_filter=borrado", headers=h)).status_code == 422
-
-    assert (await client.delete(f"{MG}/roadmap/{task['id']}", headers=tecnico["headers"])).status_code == 204
-    assert [i["id"] for i in (await client.get(f"{MG}/roadmap", headers=h)).json()] == [other["id"]]
-
-
 async def test_budget_categories_currency_and_cycle_economics(client, signup):
     owner = await signup("mg-econ")
     h = owner["headers"]
@@ -138,13 +104,13 @@ async def test_budget_categories_currency_and_cycle_economics(client, signup):
     tomato = [c for c in (await client.get("/api/v1/farm-management/crop-masters?q=tomate", headers=h)).json()
               if c["name"] == "Tomate"][0]
     cycle = await client.post(
-        "/api/v1/farm-management/crop-cycles", headers=h,
-        json={"field_id": field, "crop_master_id": tomato["id"], "plant_count": 20, "expected_yield_kg": 60,
-              "expected_price": 2.5},
+        "/api/v1/farm-management/lots", headers=h,
+        json={"field_id": field, "crop_master_id": tomato["id"], "quantity": 20, "unit": "plantas",
+              "expected_yield_kg": 60, "expected_price": 2.5},
     )
     assert cycle.status_code == 201, cycle.text
     created = cycle.json()
-    assert (created["plant_count"], created["expected_yield_kg"], created["expected_price"]) == (20, 60, 2.5)
+    assert (created["quantity"], created["expected_yield_kg"], created["expected_price"]) == (20, 60, 2.5)
     cycle_id = created["id"]
 
     # categories: stable keys, labels in the user's locale; a typed label is stored as the key
@@ -156,10 +122,10 @@ async def test_budget_categories_currency_and_cycle_economics(client, signup):
         assert response.status_code == 201, response.text
         return response.json()
 
-    seeds = await entry(description="Plantines", amount=40, type="gasto", category="Semillas", crop_cycle_id=cycle_id)
+    seeds = await entry(description="Plantines", amount=40, type="gasto", category="Semillas", lot_id=cycle_id)
     assert seeds["category"] == "semillas"
-    await entry(description="Abono", amount=20, type="gasto", category="mi categoría", crop_cycle_id=cycle_id)
-    await entry(description="Venta", amount=100, type="ingreso", crop_cycle_id=cycle_id)
+    await entry(description="Abono", amount=20, type="gasto", category="mi categoría", lot_id=cycle_id)
+    await entry(description="Venta", amount=100, type="ingreso", lot_id=cycle_id)
     await entry(description="Algo en pesos mexicanos", amount=999, type="gasto", currency="MXN")  # another money
     await entry(description="Gasto suelto", amount=7, type="gasto")
 
@@ -176,7 +142,7 @@ async def test_budget_categories_currency_and_cycle_economics(client, signup):
     assert by_crop["total_gastos"] == 60
 
     bare = await client.post(
-        "/api/v1/farm-management/crop-cycles", headers=h, json={"field_id": field, "crop_master_id": tomato["id"]}
+        "/api/v1/farm-management/lots", headers=h, json={"field_id": field, "crop_master_id": tomato["id"]}
     )
     nothing = (await client.get(f"{MG}/budget/summary?cycle_id={bare.json()['id']}", headers=h)).json()
     assert nothing["break_even_kg"] is None and nothing["margin"] is None and nothing["cost_per_plant"] is None

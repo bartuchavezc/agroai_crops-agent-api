@@ -44,4 +44,4 @@ def test_scenario_file_is_well_formed_and_names_real_skills_and_tools():
     for s in scenarios:
         assert s["message"] and s["country"] in ("AR", "MX"), s["id"]
         assert set(s.get("skills_any", [])) <= skills, s["id"]
-        assert set(s.get("tools_any", [])) <= READ_ONLY_TOOLS | {"log_event"}, s["id"]
+        assert set(s.get("tools_any", [])) <= READ_ONLY_TOOLS | {"log_events"}, s["id"]

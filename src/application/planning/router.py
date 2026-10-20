@@ -5,6 +5,7 @@ from uuid import UUID
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from src.application.farm.schemas import LotRead
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 from src.shared.utils.routing import route_with_and_without_slash as _both
@@ -20,11 +21,9 @@ from .schemas import (
     ReminderRead,
     ReminderStatus,
     ReminderUpdate,
-    SowingCreate,
-    SowingRead,
-    SowingUpdate,
-    SowRequest,
-    StaggeredSowingCreate,
+    LotSown,
+    PlanCropCreate,
+    PlanCropRead,
     StageCreate,
     StageRead,
     StageUpdate,
@@ -44,7 +43,9 @@ IdFilter = Optional[Union[UUID, Literal["none"]]]
 
 # ---------- calendar ----------
 
-@router.get("/calendar", response_model=CalendarResponse, summary="Reminders, sowings and stages in a date range")
+@router.get(
+    "/calendar", response_model=CalendarResponse, summary="Reminders, planned sowings (lots) and stages in a date range"
+)
 @inject
 async def calendar(
     since: date,
@@ -68,7 +69,7 @@ async def list_reminders(
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
     field_id: Optional[UUID] = None,
-    crop_cycle_id: Optional[UUID] = None,
+    lot_id: Optional[UUID] = None,
     plan_id: Optional[UUID] = None,
     assigned_to: IdFilter = None,
     zone_id: Optional[UUID] = None,
@@ -79,7 +80,7 @@ async def list_reminders(
 ):
     """Ordered by due_at (the current occurrence of recurring ones); newest first when `before` is given."""
     return await planning.list_reminders(
-        actor, status_filter, since, until, field_id, crop_cycle_id, plan_id, assigned_to, limit,
+        actor, status_filter, since, until, field_id, lot_id, plan_id, assigned_to, limit,
         zone_id=zone_id, before=before,
     )
 
@@ -95,22 +96,13 @@ async def create_reminder(
     return await planning.create_reminder(actor, body)
 
 
-@router.put("/reminders/{reminder_id}", response_model=ReminderRead, summary="Update / postpone a reminder")
+@router.put("/reminders/{reminder_id}", response_model=ReminderRead, summary="Update, pause or reschedule a reminder")
 @inject
 async def update_reminder(
     reminder_id: UUID, body: ReminderUpdate, actor: Actor = Depends(get_actor),
     planning: PlanningService = Depends(PLANNING),
 ):
     return await planning.update_reminder(actor, reminder_id, body)
-
-
-@router.post("/reminders/{reminder_id}/complete", response_model=ReminderRead, summary="Mark a reminder done")
-@inject
-async def complete_reminder(
-    reminder_id: UUID, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
-):
-    """A recurring reminder moves on to its next occurrence."""
-    return await planning.complete_reminder(actor, reminder_id)
 
 
 @router.delete("/reminders/{reminder_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a reminder")
@@ -143,11 +135,14 @@ async def list_plans(
 async def create_plan(
     body: PlanCreate, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
 ):
-    """With its stages and sowings at once; every sowing gets a reminder on its date."""
+    """With its zones, stages and crops at once: every crop's sowings become planned lots with their tasks."""
     return await planning.create_plan(actor, body)
 
 
-@router.get("/plans/{plan_id}", response_model=PlanDetail, summary="Plan with stages, sowings and reminders")
+@router.get(
+    "/plans/{plan_id}", response_model=PlanDetail,
+    summary="Plan with its zones, stages, crops, lots, tasks and reminders",
+)
 @inject
 async def get_plan(plan_id: UUID, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)):
     return await planning.get_plan(actor, plan_id)
@@ -197,60 +192,45 @@ async def delete_stage(
 
 
 @router.post(
-    "/plans/{plan_id}/sowings", response_model=SowingRead, status_code=status.HTTP_201_CREATED,
-    summary="Add a planned sowing",
+    "/plans/{plan_id}/crops", response_model=PlanCropRead, status_code=status.HTTP_201_CREATED,
+    summary="Add a crop to a plan: its planned lots and sowing tasks",
 )
 @inject
-async def add_sowing(
-    plan_id: UUID, body: SowingCreate, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
+async def add_plan_crop(
+    plan_id: UUID, body: PlanCropCreate, actor: Actor = Depends(get_actor),
+    planning: PlanningService = Depends(PLANNING),
 ):
-    return await planning.add_sowing(actor, plan_id, body)
+    """single: one sowing; staggered: `count` sowings every `every_days`; perennial: planted once to stay. Every
+    sowing becomes a planned lot (status `planned`, in `zone_ids` or the plan's zones) with a "Sembrar" task."""
+    return await planning.add_plan_crop(actor, plan_id, body)
 
 
-@router.post(
-    "/plans/{plan_id}/sowings/staggered", response_model=List[SowingRead], status_code=status.HTTP_201_CREATED,
-    summary="Split a sowing (and its seed) over time",
+@router.delete(
+    "/plan-crops/{crop_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Remove a crop from its plan",
 )
 @inject
-async def add_staggered_sowings(
-    plan_id: UUID, body: StaggeredSowingCreate, actor: Actor = Depends(get_actor),
-    planning: PlanningService = Depends(PLANNING),
+async def delete_plan_crop(
+    crop_id: UUID, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
 ):
-    return await planning.add_staggered_sowings(actor, plan_id, body)
-
-
-@router.put("/sowings/{sowing_id}", response_model=SowingRead, summary="Update a planned sowing")
-@inject
-async def update_sowing(
-    sowing_id: UUID, body: SowingUpdate, actor: Actor = Depends(get_actor),
-    planning: PlanningService = Depends(PLANNING),
-):
-    return await planning.update_sowing(actor, sowing_id, body)
-
-
-@router.post("/sowings/{sowing_id}/sow", response_model=SowingRead, summary="Mark a planned sowing as done")
-@inject
-async def sow(
-    sowing_id: UUID, body: SowRequest, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
-):
-    """Starts its crop cycle (with stage reminders) and discounts the seed lot, unless told not to."""
-    return await planning.sow(actor, sowing_id, body)
-
-
-@router.delete("/sowings/{sowing_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a planned sowing")
-@inject
-async def delete_sowing(
-    sowing_id: UUID, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
-):
-    await planning.delete_sowing(actor, sowing_id)
+    """The lots it planned and not yet sown go too (their open tasks are cancelled)."""
+    await planning.delete_plan_crop(actor, crop_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# ---------- crop cycle stage plan ----------
+@router.post("/lots/{lot_id}/sow", response_model=LotRead, summary="A planned lot was sown")
+@inject
+async def lot_sown(
+    lot_id: UUID, body: LotSown, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
+):
+    """Plants it, logs the sowing, discounts its seed lot, closes its "Sembrar" task and generates its stage plan."""
+    return await planning.lot_sown(actor, lot_id, body)
+
+
+# ---------- lot stage plan ----------
 
 @router.get(
-    "/crop-cycles/{cycle_id}/stage-plan", response_model=CyclePlanProposal,
-    summary="Preview the stage plan + reminders of a crop cycle",
+    "/lots/{cycle_id}/stage-plan", response_model=CyclePlanProposal,
+    summary="Preview the stage plan + reminders of a lot",
 )
 @inject
 async def preview_cycle_plan(
@@ -260,8 +240,8 @@ async def preview_cycle_plan(
 
 
 @router.get(
-    "/crop-cycles/{cycle_id}/progress", response_model=CycleProgress,
-    summary="Expected vs. real progress of a crop cycle",
+    "/lots/{cycle_id}/progress", response_model=CycleProgress,
+    summary="Expected vs. real progress of a lot",
 )
 @inject
 async def cycle_progress(
@@ -273,8 +253,8 @@ async def cycle_progress(
 
 
 @router.post(
-    "/crop-cycles/{cycle_id}/stage-plan", response_model=CyclePlanProposal,
-    summary="Create (or regenerate) the stage plan + reminders of a crop cycle (owner/tecnico)",
+    "/lots/{cycle_id}/stage-plan", response_model=CyclePlanProposal,
+    summary="Create (or regenerate) the stage plan + reminders of a lot (owner/tecnico)",
 )
 @inject
 async def apply_cycle_plan(

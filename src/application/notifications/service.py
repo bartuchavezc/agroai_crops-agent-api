@@ -7,7 +7,7 @@ import uuid
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.auth.adapters.user_repository import UserRepositoryInterface
@@ -36,6 +36,8 @@ class NotificationService:
         entity_id: UUID,
         field_id: Optional[UUID] = None,
         only_user_id: Optional[UUID] = None,
+        zone_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None,
     ) -> None:
         """only_user_id: notify just that member (e.g. a reminder's assignee) instead of everyone."""
         members = await self.users.list_by_account(account_id)
@@ -56,6 +58,8 @@ class NotificationService:
                 "message": message,
                 "entity_type": entity_type,
                 "entity_id": entity_id,
+                "zone_id": zone_id,
+                "lot_id": lot_id,
                 "read_at": None,
                 "created_at": now,
             }
@@ -66,9 +70,11 @@ class NotificationService:
             await session.commit()
 
     async def list_for_user(
-        self, actor: Actor, unread_only: bool = False, limit: int = 50
+        self, actor: Actor, unread_only: bool = False, limit: int = 50, type: Optional[str] = None
     ) -> list[Notification]:
         stmt = select(NotificationModel).where(NotificationModel.user_id == actor.user_id)
+        if type:
+            stmt = stmt.where(NotificationModel.type == type)
         if unread_only:
             stmt = stmt.where(NotificationModel.read_at.is_(None))
         stmt = stmt.order_by(NotificationModel.created_at.desc()).limit(min(max(limit, 1), 200))
@@ -101,3 +107,25 @@ class NotificationService:
                 .values(read_at=utcnow())
             )
             await session.commit()
+
+    async def dismiss(self, actor: Actor, notification_id: UUID) -> None:
+        """Done with it: the notification leaves the list (a reminder's notice, once acted on)."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                delete(NotificationModel).where(
+                    NotificationModel.id == notification_id, NotificationModel.user_id == actor.user_id
+                )
+            )
+            await session.commit()
+        if result.rowcount == 0:
+            raise NotFoundError(f"Notification {notification_id} not found.")
+
+    async def clear(self, actor: Actor, read_only: bool = True) -> int:
+        """Empties the list: the ones already read, or all of them."""
+        stmt = delete(NotificationModel).where(NotificationModel.user_id == actor.user_id)
+        if read_only:
+            stmt = stmt.where(NotificationModel.read_at.is_not(None))
+        async with self.session_factory() as session:
+            result = await session.execute(stmt)
+            await session.commit()
+        return result.rowcount

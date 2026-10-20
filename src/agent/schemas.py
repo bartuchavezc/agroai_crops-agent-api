@@ -193,9 +193,11 @@ class Source(BaseModel):
 
 
 class Attachment(BaseModel):
-    type: Literal["zone_map"]
-    image_identifier: str
-    field_id: UUID
+    """zone_map: an image (image_identifier, field_id); proposal: changes for the user to confirm (proposal_id)."""
+    type: Literal["zone_map", "proposal"]
+    image_identifier: Optional[str] = None
+    field_id: Optional[UUID] = None
+    proposal_id: Optional[UUID] = None
     caption: str
 
 

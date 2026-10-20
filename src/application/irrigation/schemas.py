@@ -8,8 +8,10 @@ IrrigationStatus = Literal["regar", "cubierto", "no_regar_lluvia"]
 
 
 class CycleIrrigation(BaseModel):
-    crop_cycle_id: UUID
+    lot_id: UUID
     crop_name: str
+    label: Optional[str] = None  # "T26/27 · Cantero 2 · L2"
+    zone_ids: list[UUID] = []
     kc: float
     etc_mm: float
     recent_irrigation_mm: float

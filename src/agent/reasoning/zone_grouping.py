@@ -1,5 +1,5 @@
 """
-How a zone's active crop cycles are grouped for the fanned-out analysis, and how the N group results (plus
+How a zone's active lots are grouped for the fanned-out analysis, and how the N group results (plus
 the overview and synthesis passes) become the one ZonePeriodicReportResult the report persists. Pure: no I/O,
 no Gemini — see zone_task_loop.py for the task scheduler that calls these, and diagnosis_service.py for the
 Gemini calls themselves.
@@ -73,7 +73,7 @@ def _missing_crop_entry(cycle_id: str) -> ZoneCropAssessment:
     """A conservative stand-in for a cycle that no group's result echoed back (its group's task failed, or
     the model dropped/garbled the id) — `crop_entry()` and the frontend must never lose a row outright."""
     return ZoneCropAssessment(
-        crop_cycle_id=cycle_id,
+        lot_id=cycle_id,
         crop_name="(no evaluado)",
         visible_in_photos=False,
         growth_stage="no evaluado",
@@ -104,11 +104,11 @@ def merge_zone_result(
     for group in resolved_groups:
         for crop in group.crops:
             crops.append(crop)
-            seen_ids.add(crop.crop_cycle_id)
+            seen_ids.add(crop.lot_id)
     for cycle_id in cycle_ids:
         if cycle_id not in seen_ids:
             logger.warning(
-                f"Zone analysis: crop_cycle_id={cycle_id} missing from every group/recheck result "
+                f"Zone analysis: lot_id={cycle_id} missing from every group/recheck result "
                 "(its group failed, or the model dropped/garbled the id) — filled in defensively"
             )
             crops.append(_missing_crop_entry(cycle_id))

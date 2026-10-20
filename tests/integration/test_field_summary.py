@@ -69,7 +69,7 @@ async def test_summary_brings_zones_analysis_alerts_reminders_and_irrigation(cli
     assert by_zone[zone["id"]]["last_analysis"]["report_id"] == up.json()["report_id"]
     assert by_zone[zone["id"]]["last_analysis"]["overall_health"] == "good"
     assert by_zone[zone["id"]]["last_analysis"]["image_identifier"]
-    assert [c["id"] for c in by_zone[zone["id"]]["active_cycles"]] == [cycle["id"]]
+    assert [c["id"] for c in by_zone[zone["id"]]["active_lots"]] == [cycle["id"]]
     assert by_zone[empty_zone["id"]]["last_analysis"] is None
     assert [c["id"] for c in body["unzoned_cycles"]] == [loose["id"]]
     assert [a["title"] for a in body["alerts"]] == ["Helada probable"]

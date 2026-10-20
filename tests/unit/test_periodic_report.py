@@ -9,7 +9,7 @@ from src.agent.reasoning.periodic_report import (
     format_cycle_progress,
     format_event_history,
 )
-from src.application.farm.schemas import CropCycleRead, CropMasterRead, FieldEventRead
+from src.application.farm.schemas import LotRead, CropMasterRead, FieldEventRead
 
 
 def _valid_result(**overrides) -> dict:
@@ -67,7 +67,7 @@ def _crop_master(**overrides) -> CropMasterRead:
     return CropMasterRead(**data)
 
 
-def _crop_cycle(**overrides) -> CropCycleRead:
+def _lot(**overrides) -> LotRead:
     data = dict(
         id=uuid4(),
         account_id=uuid4(),
@@ -81,11 +81,11 @@ def _crop_cycle(**overrides) -> CropCycleRead:
         updated_at=datetime.now(timezone.utc),
     )
     data.update(overrides)
-    return CropCycleRead(**data)
+    return LotRead(**data)
 
 
 def test_format_cycle_progress_includes_days_elapsed_and_notes():
-    cycle = _crop_cycle()
+    cycle = _lot()
     crop_master = _crop_master()
     text = format_cycle_progress(cycle, crop_master, date(2026, 9, 27))
     assert "Tomate (Cherry)" in text
@@ -96,7 +96,7 @@ def test_format_cycle_progress_includes_days_elapsed_and_notes():
 
 
 def test_format_cycle_progress_handles_missing_crop_master():
-    cycle = _crop_cycle(planting_date=None, notes=None)
+    cycle = _lot(planting_date=None, notes=None)
     text = format_cycle_progress(cycle, None, date(2026, 9, 27))
     assert "desconocido" in text
     assert "días atrás" not in text
@@ -108,7 +108,7 @@ def test_format_event_history_renders_type_quantity_and_notes():
             id=uuid4(),
             account_id=uuid4(),
             field_id=uuid4(),
-            crop_cycle_id=uuid4(),
+            lot_id=uuid4(),
             author_user_id=uuid4(),
             type="irrigation",
             occurred_at=datetime(2026, 9, 20, tzinfo=timezone.utc),

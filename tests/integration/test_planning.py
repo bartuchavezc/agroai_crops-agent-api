@@ -65,11 +65,21 @@ async def test_due_reminders_become_notifications_once(client, signup, add_membe
     note = next(n for n in await _unread(client, staff) if n["title"] == "Cosechar lechuga")
     assert note["entity_type"] == "reminder" and note["entity_id"] == only_staff.json()["id"]
 
-    # A notified one-off stays pending (overdue) until it's ticked.
-    agenda = (await client.get(f"{P}/reminders?status=pendiente", headers=staff["headers"])).json()
-    assert {r["title"] for r in agenda} == {"Regar el cantero", "Cosechar lechuga", "Más adelante"}
-    done = await client.post(f"{P}/reminders/{everyone.json()['id']}/complete", headers=staff["headers"])
-    assert done.json()["status"] == "hecho" and done.json()["completed_at"]
+    # A reminder only notifies: a one-off is finished once sent, nobody "completes" it.
+    agenda = (await client.get(f"{P}/reminders?status=activo", headers=staff["headers"])).json()
+    assert {r["title"] for r in agenda} == {"Más adelante"}
+    finished = (await client.get(f"{P}/reminders?status=terminado", headers=staff["headers"])).json()
+    assert {r["title"] for r in finished} == {"Regar el cantero", "Cosechar lechuga"}
+    assert (await client.post(f"{P}/reminders/{everyone.json()['id']}/complete", headers=h)).status_code in (404, 405)
+
+    # What the user sees is the notification: dismissed one by one, or the read ones cleared.
+    sh = staff["headers"]
+    assert (await client.delete(f"/api/v1/notifications/{note['id']}", headers=sh)).status_code == 204
+    assert [n["title"] for n in await _unread(client, staff) if n["type"] == "reminder"] == ["Regar el cantero"]
+    assert (await client.put("/api/v1/notifications/read-all", headers=sh)).status_code == 204
+    assert (await client.post("/api/v1/notifications/clear", headers=sh)).json()["cleared"] >= 1
+    assert (await client.get("/api/v1/notifications", headers=sh)).json() == []
+    assert (await client.delete(f"/api/v1/notifications/{note['id']}", headers=sh)).status_code == 404
 
 
 async def test_recurring_reminders_move_to_the_next_occurrence(client, signup, container):
@@ -97,31 +107,35 @@ async def test_recurring_reminders_move_to_the_next_occurrence(client, signup, c
     reminders = {r["title"]: r for r in (await client.get(f"{P}/reminders", headers=h)).json()}
     next_due = datetime.fromisoformat(reminders["Fertilizar"]["due_at"])
     assert abs(next_due - (datetime.fromisoformat(weekly["due_at"]) + timedelta(days=7))) < timedelta(seconds=1)
-    assert reminders["Fertilizar"]["status"] == "pendiente"
-    assert reminders["Revisar plagas"]["status"] == "hecho"  # next one (3 days) would be past `until`
+    assert reminders["Fertilizar"]["status"] == "activo"
+    assert reminders["Revisar plagas"]["status"] == "terminado"  # next one (3 days) would be past `until`
 
-    # Ticking a recurring one early skips to the occurrence after.
-    ticked = (await client.post(f"{P}/reminders/{weekly['id']}/complete", headers=h)).json()
-    assert datetime.fromisoformat(ticked["due_at"]) - next_due == timedelta(days=7)
-    assert ticked["status"] == "pendiente"
+    # Paused, it sends nothing even when due; resumed, it goes on.
+    paused = (await client.put(f"{P}/reminders/{weekly['id']}", headers=h, json={
+        "status": "pausado", "due_at": _iso(start)})).json()
+    assert paused["status"] == "pausado"
+    assert (await container.application.planning_service().run_due_reminders())["notified"] == 0
+    resumed = (await client.put(f"{P}/reminders/{weekly['id']}", headers=h, json={"status": "activo"})).json()
+    assert resumed["status"] == "activo"
+    assert (await container.application.planning_service().run_due_reminders())["notified"] == 1
     assert short["recurrence"] == "every_n_days"
 
 
-async def test_crop_cycle_stage_plan_from_template(client, signup):
+async def test_lot_stage_plan_from_template(client, signup):
     owner = await signup("stageplan")
     h = owner["headers"]
     field, zone = await _field_zone(client, h)
     sown = date.today()
     cycle = (
         await client.post(
-            f"{FARM}/crop-cycles", headers=h,
+            f"{FARM}/lots", headers=h,
             json={"field_id": field["id"], "zone_id": zone["id"], "crop_master_id": await _crop_id(client, h, "tomate"),
                   "status": "planted", "planting_date": sown.isoformat(),
                   "expected_harvest_date": (sown + timedelta(days=100)).isoformat()},
         )
     ).json()
 
-    preview = (await client.get(f"{P}/crop-cycles/{cycle['id']}/stage-plan", headers=h)).json()
+    preview = (await client.get(f"{P}/lots/{cycle['id']}/stage-plan", headers=h)).json()
     stages = [s["stage"] for s in preview["stages"]]
     assert stages[0] == "germinacion" and "plantin" in stages and stages[-1] == "cosecha"
     titles = [r["title"] for r in preview["reminders"]]
@@ -132,74 +146,85 @@ async def test_crop_cycle_stage_plan_from_template(client, signup):
     assert _local(transplant["due_at"]).startswith((sown + timedelta(days=35)).isoformat() + "T09:00")
     assert (await client.get(f"{P}/plans", headers=h)).json() == []  # preview saves nothing
 
-    applied = (await client.post(f"{P}/crop-cycles/{cycle['id']}/stage-plan", headers=h)).json()
+    applied = (await client.post(f"{P}/lots/{cycle['id']}/stage-plan", headers=h)).json()
     plan = (await client.get(f"{P}/plans/{applied['plan_id']}", headers=h)).json()
-    assert plan["kind"] == "ciclo" and plan["crop_cycle_id"] == cycle["id"] and "Cantero 1" in plan["name"]
+    assert plan["kind"] == "ciclo" and plan["lot_id"] == cycle["id"] and "Cantero 1" in plan["name"]
     assert len(plan["stages"]) == len(preview["stages"])
     assert len(plan["reminders"]) == len(preview["reminders"])
-    assert all(r["zone_id"] == zone["id"] and r["crop_cycle_id"] == cycle["id"] for r in plan["reminders"])
+    assert all(r["zone_id"] == zone["id"] and r["lot_id"] == cycle["id"] for r in plan["reminders"])
 
-    # Regenerating replaces, without duplicating; a reminder already done is kept.
-    await client.post(f"{P}/reminders/{plan['reminders'][0]['id']}/complete", headers=h)
-    await client.post(f"{P}/crop-cycles/{cycle['id']}/stage-plan", headers=h)
+    # Regenerating replaces, without duplicating; a reminder already sent is kept.
+    await client.put(f"{P}/reminders/{plan['reminders'][0]['id']}", headers=h, json={"status": "terminado"})
+    await client.post(f"{P}/lots/{cycle['id']}/stage-plan", headers=h)
     again = (await client.get(f"{P}/plans/{applied['plan_id']}", headers=h)).json()
     assert len(again["stages"]) == len(preview["stages"])
     assert len(again["reminders"]) == len(preview["reminders"]) + 1
     assert len((await client.get(f"{P}/plans", headers=h)).json()) == 1
 
 
-async def test_long_plan_with_staggered_sowings_and_seed_lot(client, signup):
+async def test_general_plan_crops_become_planned_lots_with_sowing_tasks(client, signup):
     owner = await signup("longplan")
     h = owner["headers"]
     field, zone = await _field_zone(client, h)
     lettuce = await _crop_id(client, h, "lechuga")
-    lot = (
+    seeds = (
         await client.post("/api/v1/inventory/seed-lots", headers=h, json={"crop_master_id": lettuce, "quantity": 500})
     ).json()
 
+    start = date.today() + timedelta(days=1)
     plan = await client.post(
         f"{P}/plans", headers=h,
-        json={"name": "Huerta perpetua 2027", "kind": "largo", "field_id": field["id"],
-              "start_date": "2026-10-01", "end_date": "2027-09-30",
+        json={"name": "Plan Cantero 1: hoja y raíz fina", "kind": "largo", "field_id": field["id"],
+              "zone_ids": [zone["id"]], "objectives": "Hoja todo el año", "start_date": "2026-10-01",
               "stages": [{"name": "Poda invernal de frutales", "stage": "poda", "start_date": "2027-07-01",
-                          "end_date": "2027-07-31", "remind": True}]},
+                          "end_date": "2027-07-31", "remind": True}],
+              "crops": [{"crop_master_id": lettuce, "mode": "staggered", "start_date": start.isoformat(), "count": 3,
+                         "every_days": 15, "quantity": 100, "unit": "semillas", "seed_lot_id": seeds["id"]}]},
     )
     assert plan.status_code == 201, plan.text
     plan = plan.json()
+    assert plan["objectives"] == "Hoja todo el año" and plan["zone_ids"] == [zone["id"]]
     assert len(plan["stages"]) == 1 and plan["reminders"][0]["title"].endswith("Poda invernal de frutales")
+    assert [c["mode"] for c in plan["crops"]] == ["staggered"]
+    # three planned lots in the plan's zone, one every 15 days, each with its sowing task
+    assert [lot["planting_date"] for lot in plan["lots"]] == [(start + timedelta(days=15 * i)).isoformat()
+                                                             for i in range(3)]
+    assert all(lot["status"] == "planned" and lot["zone_ids"] == [zone["id"]] for lot in plan["lots"])
+    sow_tasks = [t for t in plan["tasks"] if t["result_event_type"] == "sowing"]
+    assert len(sow_tasks) == 3 and sow_tasks[0]["title"].startswith("Sembrar Lechuga")
+    assert "Cantero 1" in sow_tasks[0]["title"] and sow_tasks[0]["source"] == "plan"
 
-    start = date.today() + timedelta(days=1)
-    sowings = await client.post(
-        f"{P}/plans/{plan['id']}/sowings/staggered", headers=h,
-        json={"crop_master_id": lettuce, "zone_id": zone["id"], "start_date": start.isoformat(), "count": 3,
-              "every_days": 15, "total_quantity": 300, "unit": "semillas", "seed_lot_id": lot["id"]},
-    )
-    assert sowings.status_code == 201, sowings.text
-    sowings = sowings.json()
-    assert [s["sow_date"] for s in sowings] == [(start + timedelta(days=15 * i)).isoformat() for i in range(3)]
-    assert all(s["quantity"] == 100 for s in sowings)
+    # Doing the first sowing task sows its lot: planted, logged, seed discounted, stage plan generated.
+    first = plan["lots"][0]
+    task = next(t for t in sow_tasks if t["lot_id"] == first["id"])
+    done = await client.put(f"/api/v1/tasks/{task['id']}", headers=h, json={"status": "hecha"})
+    assert done.status_code == 200, done.text
+    lot = (await client.get(f"{FARM}/lots/{first['id']}", headers=h)).json()
+    assert lot["status"] == "planted" and lot["zone_id"] == zone["id"]
+    assert (await client.get("/api/v1/inventory/seed-lots", headers=h)).json()[0]["quantity"] == 400
+    log = (await client.get(f"{FARM}/log?lot_id={first['id']}&type=sowing", headers=h)).json()
+    assert len([i for d in log["days"] for i in d["items"]]) == 1
+    assert len([p for p in (await client.get(f"{P}/plans", headers=h)).json() if p["lot_id"] == first["id"]]) == 1
+
+    # The second one is sown straight from the lot: its task closes by itself; twice is refused.
+    second = plan["lots"][1]
+    sown = await client.post(f"{P}/lots/{second['id']}/sow", headers=h, json={"sown_on": start.isoformat()})
+    assert sown.status_code == 200, sown.text
+    assert sown.json()["status"] == "planted"
+    assert (await client.get("/api/v1/inventory/seed-lots", headers=h)).json()[0]["quantity"] == 300
+    open_tasks = (await client.get(f"/api/v1/tasks?plan_id={plan['id']}&open_only=true", headers=h)).json()
+    assert [t["lot_id"] for t in open_tasks] == [plan["lots"][2]["id"]]
+    assert (await client.post(f"{P}/lots/{second['id']}/sow", headers=h, json={})).status_code == 400
+
+    # Removing the crop drops the lot still planned (and cancels its task); sown ones stay.
+    assert (await client.delete(f"{P}/plan-crops/{plan['crops'][0]['id']}", headers=h)).status_code == 204
     detail = (await client.get(f"{P}/plans/{plan['id']}", headers=h)).json()
-    sow_reminders = [r for r in detail["reminders"] if r["sowing_id"]]
-    assert len(sow_reminders) == 3
-    assert "Sembrar Lechuga" in sow_reminders[0]["title"] and "Cantero 1" in sow_reminders[0]["title"]
+    assert detail["crops"] == [] and {lot["id"] for lot in detail["lots"]} == {first["id"], second["id"]}
 
-    # The first sowing happens: crop cycle in the zone, seed discounted, its reminder done, stage reminders.
-    done = (await client.post(f"{P}/sowings/{sowings[0]['id']}/sow", headers=h, json={})).json()
-    assert done["status"] == "sembrado" and done["crop_cycle_id"]
-    cycle = (await client.get(f"{FARM}/crop-cycles/{done['crop_cycle_id']}", headers=h)).json()
-    assert cycle["zone_id"] == zone["id"] and cycle["status"] == "planted"
-    lots = (await client.get("/api/v1/inventory/seed-lots", headers=h)).json()
-    assert lots[0]["quantity"] == 400
-    reminders = (await client.get(f"{P}/reminders?plan_id={plan['id']}", headers=h)).json()
-    assert next(r for r in reminders if r["sowing_id"] == sowings[0]["id"])["status"] == "hecho"
-    cycle_plans = [p for p in (await client.get(f"{P}/plans", headers=h)).json() if p["crop_cycle_id"] == cycle["id"]]
-    assert len(cycle_plans) == 1
-    assert (await client.post(f"{P}/sowings/{sowings[0]['id']}/sow", headers=h, json={})).status_code == 400
-
-    # Archiving the long plan cancels what's still pending.
+    # Archiving the plan ends what's still pending.
     await client.put(f"{P}/plans/{plan['id']}", headers=h, json={"status": "archivado"})
-    left = (await client.get(f"{P}/reminders?plan_id={plan['id']}&status=pendiente", headers=h)).json()
-    assert left == []
+    assert (await client.get(f"{P}/reminders?plan_id={plan['id']}&status=activo", headers=h)).json() == []
+    assert (await client.get(f"/api/v1/tasks?plan_id={plan['id']}&open_only=true", headers=h)).json() == []
 
 
 async def test_permissions_and_account_isolation(client, signup, add_member):
@@ -220,10 +245,12 @@ async def test_permissions_and_account_isolation(client, signup, add_member):
     )
     assert mine.status_code == 201
     assert (await client.post(f"{P}/plans", headers=staff["headers"], json={"name": "x"})).status_code == 403
-    plan = (await client.post(f"{P}/plans", headers=owner["headers"], json={"name": "Plan"})).json()
+    plan = (
+        await client.post(f"{P}/plans", headers=owner["headers"], json={"name": "Plan", "field_id": field["id"]})
+    ).json()
     stolen = await client.post(
-        f"{P}/plans/{plan['id']}/sowings", headers=owner["headers"],
-        json={"crop_master_id": lettuce, "sow_date": "2026-11-01", "seed_lot_id": foreign_lot["id"]},
+        f"{P}/plans/{plan['id']}/crops", headers=owner["headers"],
+        json={"crop_master_id": lettuce, "start_date": "2026-11-01", "seed_lot_id": foreign_lot["id"]},
     )
     assert stolen.status_code == 404
     other_field = await client.post(
@@ -246,9 +273,9 @@ async def test_agent_schedules_reminder_and_staggered_sowing(client, signup, wit
     scripted_model.script = [
         ("call", "add_reminder", {"title": "Regar cantero 1", "when": "2026-12-01", "recurrence": "every_n_days",
                                   "every_days": 2, "assignee": "yo", "zone": "cantero 1"}),
-        ("call", "plan_staggered_sowing", {"plan_id": plan["id"], "crop": "lechuga", "start_date": "2026-12-01",
-                                           "count": 4, "every_days": 14, "zone": "cantero 1", "total_quantity": 200,
-                                           "unit": "semillas"}),
+        ("call", "add_plan_crops", {"plan_id": plan["id"], "crops": [
+            {"crop": "lechuga", "mode": "staggered", "start_date": "2026-12-01", "count": 4, "every_days": 14,
+             "zone": "cantero 1", "quantity": 50, "unit": "semillas"}]}),
         ("text", "Listo."),
     ]
     r = await client.post("/api/v1/chat", headers=h, json={"message": "recordame regar y planificá lechugas"})
@@ -260,4 +287,5 @@ async def test_agent_schedules_reminder_and_staggered_sowing(client, signup, wit
     assert _local(water["due_at"]).startswith("2026-12-01T09:00") and water["interval_days"] == 2
     assert water["assigned_to"] == owner["user"]["id"] and water["zone_id"] == zone["id"] and water["source"] == "agent"
     detail = (await client.get(f"{P}/plans/{plan['id']}", headers=h)).json()
-    assert [s["quantity"] for s in detail["sowings"]] == [50, 50, 50, 50]
+    assert [lot["quantity"] for lot in detail["lots"]] == [50, 50, 50, 50]
+    assert all(lot["zone_ids"] == [zone["id"]] and lot["status"] == "planned" for lot in detail["lots"])

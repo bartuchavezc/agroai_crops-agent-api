@@ -1,4 +1,4 @@
-"""Seed inventory tools: so create_crop_cycle can draw from real stock, not an abstract catalog."""
+"""Seed inventory tools: so create_lot can draw from real stock, not an abstract catalog."""
 from datetime import date
 from typing import Optional
 from uuid import UUID
