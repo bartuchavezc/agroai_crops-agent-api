@@ -35,7 +35,7 @@ class ReminderCreate(BaseModel):
     assigned_to: Optional[UUID] = PField(default=None, description="Only this member is notified (default: all)")
     field_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     plan_id: Optional[UUID] = None
 
     @model_validator(mode="after")
@@ -57,7 +57,7 @@ class ReminderUpdate(PartialUpdate):
     status: Optional[ReminderStatus] = None
     field_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
 
 
 class ReminderRead(ORMModel):
@@ -74,7 +74,7 @@ class ReminderRead(ORMModel):
     completed_at: Optional[datetime] = None
     field_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     plan_id: Optional[UUID] = None
     stage_id: Optional[UUID] = None
     sowing_id: Optional[UUID] = None
@@ -90,7 +90,7 @@ class StageCreate(BaseModel):
     start_date: date
     end_date: Optional[date] = None
     crop_master_id: Optional[UUID] = None
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
     notes: Optional[str] = None
     remind: bool = PField(default=False, description="Also create a reminder on start_date")
@@ -116,7 +116,7 @@ class StageRead(ORMModel):
     end_date: Optional[date] = None
     position: int
     crop_master_id: Optional[UUID] = None
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
     notes: Optional[str] = None
     source: Source
@@ -168,14 +168,14 @@ class SowingRead(ORMModel):
     unit: Optional[str] = None
     seed_lot_id: Optional[UUID] = None
     status: SowingStatus
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     notes: Optional[str] = None
 
 
 class SowRequest(BaseModel):
-    """Mark a planned sowing as done: optionally start its crop cycle and discount the seed lot."""
+    """Mark a planned sowing as done: optionally start its lot and discount the seed lot."""
     sown_on: Optional[date] = None
-    create_crop_cycle: bool = True
+    create_lot: bool = True
     consume_seed_lot: bool = True
 
 
@@ -211,7 +211,7 @@ class PlanRead(ORMModel):
     status: PlanStatus
     field_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     notes: Optional[str] = None
@@ -239,8 +239,8 @@ class ProposedReminder(BaseModel):
 
 
 class CyclePlanProposal(BaseModel):
-    """Stage plan + reminders generated for a crop cycle from its crop's template (preview or applied)."""
-    crop_cycle_id: UUID
+    """Stage plan + reminders generated for a lot from its crop's template (preview or applied)."""
+    lot_id: UUID
     crop_name: str
     sowing_date: date
     expected_harvest_date: Optional[date] = None

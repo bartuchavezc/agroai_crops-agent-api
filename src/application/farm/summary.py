@@ -14,7 +14,7 @@ from src.application.planning.schemas import ReminderRead
 from src.shared.domain.actor import Actor
 from src.shared.domain.locale import today_in
 
-from .schemas import ActiveCycleSummary, FieldRead, FieldZoneRead
+from .schemas import ActiveLotSummary, FieldRead, FieldZoneRead
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class ZoneAnalysis(BaseModel):
 
 class ZoneSummary(BaseModel):
     zone: FieldZoneRead
-    active_cycles: list[ActiveCycleSummary] = []
+    active_lots: list[ActiveLotSummary] = []
     last_analysis: Optional[ZoneAnalysis] = None
 
 
@@ -43,7 +43,7 @@ class FieldSummary(BaseModel):
     status: FieldState
     status_reasons: list[str] = []
     zones: list[ZoneSummary]
-    unzoned_cycles: list[ActiveCycleSummary] = []  # active crops of the field that belong to no zone
+    unzoned_cycles: list[ActiveLotSummary] = []  # active crops of the field that belong to no zone
     alerts: list[Alert]
     reminders_today: list[ReminderRead]  # pending, due by the end of the user's day (overdue ones included)
     irrigation: Optional[FieldIrrigationResult] = None  # null if the field has no coordinates or the data is down
@@ -84,7 +84,7 @@ class FieldSummaryService:
         field = await self.farm.get_field(actor, field_id)
         overview = next((o for o in await self.farm.overview(actor) if o.field.id == field_id), None)
         zones = overview.zones if overview else await self.farm.list_zones(actor, field_id)
-        cycles = overview.active_cycles if overview else []
+        cycles = overview.active_lots if overview else []
 
         # One query for the latest analyses of the whole field (newest first), then the first per zone.
         reports = await self.reports.list_reports(
@@ -102,7 +102,7 @@ class FieldSummaryService:
                 )
         zone_summaries = [
             ZoneSummary(
-                zone=z, active_cycles=[c for c in cycles if c.zone_id == z.id], last_analysis=last_by_zone.get(z.id)
+                zone=z, active_lots=[c for c in cycles if c.zone_id == z.id], last_analysis=last_by_zone.get(z.id)
             )
             for z in zones
         ]

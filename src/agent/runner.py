@@ -215,7 +215,7 @@ class AgentRunner:
             crops = ", ".join(
                 f"{localized(c.crop_name, c.crop_i18n, locale)}{' ' + c.variety if c.variety else ''} "
                 f"({c.status}{', ' + c.zone_label if c.zone_label else ''})"
-                for c in item.active_cycles
+                for c in item.active_lots
             ) or "sin cultivos activos"
             lines.append(f"- {f.name}{where}{coords}: {crops}")
             if item.zones:

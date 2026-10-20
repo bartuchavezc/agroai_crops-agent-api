@@ -9,7 +9,7 @@ from src.application.soil_data.schemas import SoilContext
 from .models import ZONE_TYPE_LABELS
 
 Octant = Literal["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
-CropCycleStatus = Literal["planned", "planted", "growing", "harvested", "failed"]
+LotStatus = Literal["planned", "seedbed", "planted", "growing", "harvesting", "harvested", "failed"]
 ZoneType = Literal["cajon", "cantero", "invernadero", "hidroponia"]
 EventType = Literal[
     "sowing",
@@ -209,12 +209,27 @@ class SunMapRead(BaseModel):
 
 # ---------- Zones ----------
 
+class ZoneSoil(BaseModel):
+    """The zone's own soil, where it differs from the field's (substrate or compost added). Missing values
+    fall back to the field's soil context (INTA / SoilGrids)."""
+
+    nitrogen: Optional[float] = PField(default=None, ge=0, description="Total N, g/kg")
+    potassium: Optional[float] = PField(default=None, ge=0, description="K, cmol/kg")
+    carbon: Optional[float] = PField(default=None, ge=0, description="Organic carbon, g/kg")
+    ph: Optional[float] = PField(default=None, ge=0, le=14)
+    notes: Optional[str] = None
+    updated_at: Optional[date] = None
+
+
 class FieldZoneCreate(BaseModel):
     type: ZoneType
     number: Optional[int] = PField(default=None, ge=1, le=999, description="Omitted: the next free number")
     name: Optional[str] = PField(default=None, max_length=255)
     notes: Optional[str] = None
     layout_object_id: Optional[str] = PField(default=None, max_length=64)
+    length_m: Optional[float] = PField(default=None, gt=0, le=10000)
+    width_m: Optional[float] = PField(default=None, gt=0, le=10000)
+    soil: Optional[ZoneSoil] = None
 
 
 class FieldZoneUpdate(BaseModel):
@@ -223,6 +238,24 @@ class FieldZoneUpdate(BaseModel):
     name: Optional[str] = PField(default=None, max_length=255)
     notes: Optional[str] = None
     layout_object_id: Optional[str] = PField(default=None, max_length=64)
+    length_m: Optional[float] = PField(default=None, gt=0, le=10000)
+    width_m: Optional[float] = PField(default=None, gt=0, le=10000)
+    soil: Optional[ZoneSoil] = None
+
+
+class ZoneRenumber(BaseModel):
+    """New numbers for several zones of one field at once (swaps included); checked as a whole."""
+
+    numbers: Dict[UUID, int] = PField(description="zone id -> its new number")
+
+    @field_validator("numbers")
+    @classmethod
+    def _positive(cls, v: Dict[UUID, int]) -> Dict[UUID, int]:
+        if not v:
+            raise ValueError("No zones to renumber.")
+        if any(n < 1 or n > 999 for n in v.values()):
+            raise ValueError("Zone numbers go from 1 to 999.")
+        return v
 
 
 def zone_label(zone_type: str, number: int) -> str:
@@ -238,8 +271,16 @@ class FieldZoneRead(ORMModel):
     name: Optional[str] = None
     notes: Optional[str] = None
     layout_object_id: Optional[str] = None
+    length_m: Optional[float] = None
+    width_m: Optional[float] = None
+    soil: ZoneSoil = PField(default_factory=ZoneSoil)
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("soil", mode="before")
+    @classmethod
+    def _soil(cls, v):
+        return v or {}
 
     @computed_field
     @property
@@ -247,6 +288,13 @@ class FieldZoneRead(ORMModel):
         """"Cantero 3" (+ the nickname, if any)."""
         base = zone_label(self.type, self.number)
         return f"{base} ({self.name})" if self.name else base
+
+    @computed_field
+    @property
+    def area_m2(self) -> Optional[float]:
+        if self.length_m and self.width_m:
+            return round(self.length_m * self.width_m, 2)
+        return None
 
 
 # ---------- Crop masters ----------
@@ -285,59 +333,109 @@ class CropMasterRead(CropMasterBase, ORMModel):
         return self.account_id is None
 
 
-# ---------- Crop cycles ----------
+# ---------- Lots ----------
 
-class CropCycleCreate(BaseModel):
+def lot_label(season: Optional[str], zone: Optional[str], number: Optional[int]) -> Optional[str]:
+    """"T26/27 · Cantero 2 · L2"; only the parts the user filled in."""
+    parts = [f"T{season}" if season else None, zone, f"L{number}" if number else None]
+    return " · ".join(p for p in parts if p) or None
+
+
+class LotCreate(BaseModel):
     field_id: UUID
     crop_master_id: UUID
-    zone_id: Optional[UUID] = None
+    zone_ids: list[UUID] = PField(default_factory=list, description="Zones it occupies; the first names it")
+    zone_id: Optional[UUID] = PField(default=None, description="Shortcut for a single zone")
+    season: Optional[str] = PField(default=None, max_length=10, description='e.g. "26/27"')
+    number: Optional[int] = PField(default=None, ge=1, le=999)
     planting_date: Optional[date] = None
+    transplant_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
-    plant_count: Optional[int] = PField(default=None, ge=1)
+    quantity: Optional[float] = PField(default=None, gt=0)
+    unit: Optional[str] = PField(default=None, max_length=30, description="plantas | semillas | gramos | m2")
     expected_yield_kg: Optional[float] = PField(default=None, ge=0)
     expected_price: Optional[float] = PField(default=None, ge=0, description="Per kg, in the account's currency")
-    status: CropCycleStatus = "planned"
+    status: LotStatus = "planned"
     notes: Optional[str] = None
+    plan_id: Optional[UUID] = None
+    origin_lot_id: Optional[UUID] = None
+
+    @model_validator(mode="after")
+    def _zones(self):
+        if self.zone_id and self.zone_id not in self.zone_ids:
+            self.zone_ids = [self.zone_id, *self.zone_ids]
+        self.zone_id = None
+        self.zone_ids = list(dict.fromkeys(self.zone_ids))
+        return self
 
 
-class CropCycleUpdate(BaseModel):
-    zone_id: Optional[UUID] = None
+class LotUpdate(BaseModel):
+    zone_ids: Optional[list[UUID]] = PField(default=None, description="Replaces the lot's zones")
+    zone_id: Optional[UUID] = PField(default=None, description="Shortcut: move it to this single zone")
+    season: Optional[str] = PField(default=None, max_length=10)
+    number: Optional[int] = PField(default=None, ge=1, le=999)
     planting_date: Optional[date] = None
+    transplant_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
-    plant_count: Optional[int] = PField(default=None, ge=1)
+    quantity: Optional[float] = PField(default=None, gt=0)
+    unit: Optional[str] = PField(default=None, max_length=30)
     expected_yield_kg: Optional[float] = PField(default=None, ge=0)
     expected_price: Optional[float] = PField(default=None, ge=0, description="Per kg, in the account's currency")
-    status: Optional[CropCycleStatus] = None
+    status: Optional[LotStatus] = None
     notes: Optional[str] = None
+    plan_id: Optional[UUID] = None
+    origin_lot_id: Optional[UUID] = None
+
+    @model_validator(mode="after")
+    def _zones(self):
+        if self.zone_id and self.zone_ids is None:
+            self.zone_ids = [self.zone_id]
+        self.zone_id = None
+        if self.zone_ids is not None:
+            self.zone_ids = list(dict.fromkeys(self.zone_ids))
+        return self
 
 
-class CropCycleRead(ORMModel):
+class LotRead(ORMModel):
     id: UUID
     account_id: UUID
     field_id: UUID
     crop_master_id: UUID
-    zone_id: Optional[UUID] = None
+    zone_ids: list[UUID] = PField(default_factory=list)
+    season: Optional[str] = None
+    number: Optional[int] = None
     planting_date: Optional[date] = None
+    transplant_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
-    plant_count: Optional[int] = PField(default=None, ge=1)
-    expected_yield_kg: Optional[float] = PField(default=None, ge=0)
-    expected_price: Optional[float] = PField(default=None, ge=0, description="Per kg, in the account's currency")
-    status: CropCycleStatus
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    expected_yield_kg: Optional[float] = None
+    expected_price: Optional[float] = PField(default=None, description="Per kg, in the account's currency")
+    status: LotStatus
     notes: Optional[str] = None
+    plan_id: Optional[UUID] = None
+    origin_lot_id: Optional[UUID] = None
     created_by: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
+    label: Optional[str] = PField(default=None, description='"T26/27 · Cantero 2 · L2"')
+
+    @computed_field
+    @property
+    def zone_id(self) -> Optional[UUID]:
+        """The zone that names the lot (the first one)."""
+        return self.zone_ids[0] if self.zone_ids else None
 
 
 # ---------- Field events ----------
 
 class FieldEventCreate(BaseModel):
     field_id: UUID
-    crop_cycle_id: Optional[UUID] = None
-    zone_id: Optional[UUID] = PField(default=None, description="Defaults to the crop cycle's zone")
+    lot_id: Optional[UUID] = None
+    zone_id: Optional[UUID] = PField(default=None, description="Defaults to the lot's zone")
     type: EventType
     occurred_at: Optional[datetime] = None
     quantity: Optional[float] = None
@@ -360,7 +458,7 @@ class FieldEventRead(ORMModel):
     id: UUID
     account_id: UUID
     field_id: UUID
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
     author_user_id: Optional[UUID] = None
     type: EventType
@@ -376,20 +474,24 @@ class FieldEventRead(ORMModel):
 
 # ---------- Overview (used by the agent) ----------
 
-class ActiveCycleSummary(BaseModel):
+class ActiveLotSummary(BaseModel):
     id: UUID
     crop_name: str
     variety: Optional[str] = None
-    status: CropCycleStatus
+    status: LotStatus
     planting_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     zone_id: Optional[UUID] = None
+    zone_ids: list[UUID] = PField(default_factory=list)
     zone_label: Optional[str] = None
+    season: Optional[str] = None
+    number: Optional[int] = None
+    label: Optional[str] = None
     crop_i18n: Dict[str, str] = PField(default_factory=dict)
 
 
 class FieldOverview(BaseModel):
     field: FieldRead
     zones: list[FieldZoneRead] = []
-    active_cycles: list[ActiveCycleSummary]
+    active_lots: list[ActiveLotSummary]
     last_event_at: Optional[datetime] = None

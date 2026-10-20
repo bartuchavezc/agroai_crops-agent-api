@@ -1,4 +1,4 @@
-"""Seed inventory: what's actually on hand, so crop-cycle creation can draw from real stock."""
+"""Seed inventory: what's actually on hand, so sowing a crop lot can draw from real stock."""
 import uuid
 
 from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Index, String, Text

@@ -68,7 +68,7 @@ async def list_reminders(
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
     field_id: Optional[UUID] = None,
-    crop_cycle_id: Optional[UUID] = None,
+    lot_id: Optional[UUID] = None,
     plan_id: Optional[UUID] = None,
     assigned_to: IdFilter = None,
     zone_id: Optional[UUID] = None,
@@ -79,7 +79,7 @@ async def list_reminders(
 ):
     """Ordered by due_at (the current occurrence of recurring ones); newest first when `before` is given."""
     return await planning.list_reminders(
-        actor, status_filter, since, until, field_id, crop_cycle_id, plan_id, assigned_to, limit,
+        actor, status_filter, since, until, field_id, lot_id, plan_id, assigned_to, limit,
         zone_id=zone_id, before=before,
     )
 
@@ -233,7 +233,7 @@ async def update_sowing(
 async def sow(
     sowing_id: UUID, body: SowRequest, actor: Actor = Depends(get_actor), planning: PlanningService = Depends(PLANNING)
 ):
-    """Starts its crop cycle (with stage reminders) and discounts the seed lot, unless told not to."""
+    """Starts its lot (with stage reminders) and discounts the seed lot, unless told not to."""
     return await planning.sow(actor, sowing_id, body)
 
 
@@ -246,11 +246,11 @@ async def delete_sowing(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# ---------- crop cycle stage plan ----------
+# ---------- lot stage plan ----------
 
 @router.get(
-    "/crop-cycles/{cycle_id}/stage-plan", response_model=CyclePlanProposal,
-    summary="Preview the stage plan + reminders of a crop cycle",
+    "/lots/{cycle_id}/stage-plan", response_model=CyclePlanProposal,
+    summary="Preview the stage plan + reminders of a lot",
 )
 @inject
 async def preview_cycle_plan(
@@ -260,8 +260,8 @@ async def preview_cycle_plan(
 
 
 @router.get(
-    "/crop-cycles/{cycle_id}/progress", response_model=CycleProgress,
-    summary="Expected vs. real progress of a crop cycle",
+    "/lots/{cycle_id}/progress", response_model=CycleProgress,
+    summary="Expected vs. real progress of a lot",
 )
 @inject
 async def cycle_progress(
@@ -273,8 +273,8 @@ async def cycle_progress(
 
 
 @router.post(
-    "/crop-cycles/{cycle_id}/stage-plan", response_model=CyclePlanProposal,
-    summary="Create (or regenerate) the stage plan + reminders of a crop cycle (owner/tecnico)",
+    "/lots/{cycle_id}/stage-plan", response_model=CyclePlanProposal,
+    summary="Create (or regenerate) the stage plan + reminders of a lot (owner/tecnico)",
 )
 @inject
 async def apply_cycle_plan(

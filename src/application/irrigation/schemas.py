@@ -8,7 +8,7 @@ IrrigationStatus = Literal["regar", "cubierto", "no_regar_lluvia"]
 
 
 class CycleIrrigation(BaseModel):
-    crop_cycle_id: UUID
+    lot_id: UUID
     crop_name: str
     kc: float
     etc_mm: float

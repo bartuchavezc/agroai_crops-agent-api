@@ -85,7 +85,7 @@ def analysis_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         crops = ", ".join(
             f"{localized(c.crop_name, c.crop_i18n, ctx.actor.locale)}{' ' + c.variety if c.variety else ''} ({c.status}"
             f"{', sembrado ' + c.planting_date.isoformat() if c.planting_date else ''})"
-            for c in (overview.active_cycles if overview else [])
+            for c in (overview.active_lots if overview else [])
         ) or "sin cultivos activos"
         guide = f"\n\n{SATELLITE_SERIES_GUIDE}" if any(k.startswith("satelital") for k in data) else ""
         prompt = (

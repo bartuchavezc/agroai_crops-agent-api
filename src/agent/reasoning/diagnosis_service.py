@@ -122,11 +122,11 @@ class DiagnosisService:
         if field.soil_type:
             lines.append(f"Suelo: {field.soil_type}")
         for overview in await self.farm.overview(actor):
-            if overview.field.id == field_id and overview.active_cycles:
+            if overview.field.id == field_id and overview.active_lots:
                 crops = ", ".join(
                     f"{localized(c.crop_name, c.crop_i18n, actor.locale)}"
                     f"{' ' + c.variety if c.variety else ''} ({c.status})"
-                    for c in overview.active_cycles
+                    for c in overview.active_lots
                 )
                 lines.append(f"Cultivos activos: {crops}")
         if field.latitude is not None and field.longitude is not None:
@@ -142,16 +142,16 @@ class DiagnosisService:
         return lines, weather
 
     async def _periodic_context(
-        self, actor: Actor, field_id: Optional[UUID], crop_cycle_id: Optional[UUID]
+        self, actor: Actor, field_id: Optional[UUID], lot_id: Optional[UUID]
     ) -> list[str]:
         lines: list[str] = []
-        if not crop_cycle_id:
+        if not lot_id:
             return lines
-        cycle = await self.farm.get_crop_cycle(actor, crop_cycle_id)
+        cycle = await self.farm.get_lot(actor, lot_id)
         crop_master = await self.farm.get_crop_master(actor, cycle.crop_master_id) if cycle.crop_master_id else None
         lines.append(format_cycle_progress(cycle, crop_master, today_in(actor.timezone)))
 
-        events = await self.farm.list_events(actor, crop_cycle_id=crop_cycle_id, limit=50)
+        events = await self.farm.list_events(actor, lot_id=lot_id, limit=50)
         if events:
             lines.append("Historial de eventos del ciclo (decisiones/manejo registrado):")
             lines.extend(f"- {line}" for line in format_event_history(events))
@@ -159,13 +159,13 @@ class DiagnosisService:
             lines.append("No hay eventos registrados para este ciclo todavía.")
 
         previous = await self.reports.list_reports(
-            actor, crop_cycle_id=crop_cycle_id, report_type="periodic", limit=3
+            actor, lot_id=lot_id, report_type="periodic", limit=3
         )
         previous = [r for r in previous if r.status == "ANALYSIS_COMPLETED"]
         if previous:
             lines.append("Análisis periódicos previos de este mismo ciclo (más reciente primero):")
             for r in previous:
-                entry = crop_entry((r.raw_analysis_data or {}).get("llm_structured_zone") or {}, crop_cycle_id)
+                entry = crop_entry((r.raw_analysis_data or {}).get("llm_structured_zone") or {}, lot_id)
                 summary = (entry or {}).get("health_summary") or r.summary or "(sin resumen)"
                 lines.append(f"- {r.created_at.date().isoformat()}: {summary}")
 
@@ -180,10 +180,10 @@ class DiagnosisService:
         if not report.field_id:
             return []
         overview = [o for o in await self.farm.overview(actor) if o.field.id == report.field_id]
-        cycles = overview[0].active_cycles if overview else []
-        ids = set(getattr(report, "crop_cycle_ids", None) or [])
-        if report.crop_cycle_id:
-            ids.add(report.crop_cycle_id)
+        cycles = overview[0].active_lots if overview else []
+        ids = set(getattr(report, "lot_ids", None) or [])
+        if report.lot_id:
+            ids.add(report.lot_id)
         picked = [c for c in cycles if c.id in ids] if ids else cycles
         return list(dict.fromkeys(c.crop_name for c in (picked or cycles)))
 
@@ -262,7 +262,7 @@ class DiagnosisService:
         set_trace_id(str(report_id))
         report = await self.reports.get_report(actor, report_id)
         try:
-            if report.report_type == "periodic" and report.zone_id and report.crop_cycle_id is None:
+            if report.report_type == "periodic" and report.zone_id and report.lot_id is None:
                 return await self._analyze_zone(actor, report, deep)
             if report.report_type == "periodic":
                 return await self._analyze_periodic(actor, report, image_identifier, deep)
@@ -386,7 +386,7 @@ class DiagnosisService:
         image_bytes, mime_type, image_id = await self._load_image(actor, report, image_identifier)
 
         context_lines, weather = await self._field_context(actor, report.field_id)
-        context_lines += await self._periodic_context(actor, report.field_id, report.crop_cycle_id)
+        context_lines += await self._periodic_context(actor, report.field_id, report.lot_id)
 
         prompt = "Hacé el seguimiento periódico del cultivo en la foto (no es solo diagnóstico de enfermedad)."
         if context_lines:
@@ -462,7 +462,7 @@ class DiagnosisService:
         lines = [f"Zona: {zone.label}" + (f". Notas: {zone.notes}" if zone.notes else "")]
         zone_events = [
             e for e in await self.farm.list_events(actor, field_id=report.field_id, zone_id=zone.id, limit=50)
-            if e.crop_cycle_id is None
+            if e.lot_id is None
         ]
         if zone_events:
             lines.append("Eventos de la zona en general: " + "; ".join(format_event_history(zone_events[:20])))
@@ -480,24 +480,24 @@ class DiagnosisService:
         return zone, lines
 
     async def _zone_cycles_in_scope(self, actor: Actor, report: Report) -> list[tuple[str, str]]:
-        """(cycle_id, crop_name) pairs for this zone report's cycles, in `report.crop_cycle_ids`' order —
+        """(cycle_id, crop_name) pairs for this zone report's cycles, in `report.lot_ids`' order —
         the grouping input. Crop names come from the account's overview (already fetched elsewhere, no
         extra round trip), falling back to "(desconocido)" for a cycle no longer in it (e.g. harvested since
         upload): that groups with other no-ficha crops rather than failing the whole analysis."""
         overview = [o for o in await self.farm.overview(actor) if o.field.id == report.field_id]
-        names = {str(c.id): c.crop_name for o in overview for c in o.active_cycles}
-        return [(str(cid), names.get(str(cid), "(desconocido)")) for cid in report.crop_cycle_ids]
+        names = {str(c.id): c.crop_name for o in overview for c in o.active_lots}
+        return [(str(cid), names.get(str(cid), "(desconocido)")) for cid in report.lot_ids]
 
     async def _cycle_context(self, actor: Actor, cycle_id) -> list[str]:
         """Progress + up to 20 events of ONE cycle — the body of the old flattened per-cycle loop, now
         returned per-cycle so a group task only gets the cycles it is actually responsible for."""
-        cycle = await self.farm.get_crop_cycle(actor, cycle_id)
+        cycle = await self.farm.get_lot(actor, cycle_id)
         crop_master = await self.farm.get_crop_master(actor, cycle.crop_master_id)
         lines = [
-            f"Ciclo crop_cycle_id={cycle.id}:",
+            f"Ciclo lot_id={cycle.id}:",
             format_cycle_progress(cycle, crop_master, today_in(actor.timezone)),
         ]
-        events = await self.farm.list_events(actor, crop_cycle_id=cycle.id, limit=20)
+        events = await self.farm.list_events(actor, lot_id=cycle.id, limit=20)
         if events:
             lines.append("Eventos del ciclo: " + "; ".join(format_event_history(events)))
         return lines
@@ -781,7 +781,7 @@ class DiagnosisService:
         self,
         actor: Actor,
         field_id: Optional[UUID],
-        crop_cycle_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None,
         image_identifier: Optional[str] = None,
     ) -> dict:
         """Standalone, non-persisting "ready to harvest?" check. With a fresh photo, a lightweight Gemini call
@@ -792,7 +792,7 @@ class DiagnosisService:
                 actor, image_identifier, self.max_image_side
             )
             context_lines, _ = await self._field_context(actor, field_id)
-            context_lines += await self._periodic_context(actor, field_id, crop_cycle_id)
+            context_lines += await self._periodic_context(actor, field_id, lot_id)
             prompt = "¿Está lista para cosechar la planta/fruto de la foto?"
             if context_lines:
                 prompt += "\n\nContexto:\n" + "\n".join(f"- {line}" for line in context_lines)
@@ -811,7 +811,7 @@ class DiagnosisService:
             }
 
         reports = await self.reports.list_reports(
-            actor, field_id=field_id, crop_cycle_id=crop_cycle_id, report_type="periodic", limit=1
+            actor, field_id=field_id, lot_id=lot_id, report_type="periodic", limit=1
         )
         completed = [r for r in reports if r.status == "ANALYSIS_COMPLETED"]
         if not completed:
@@ -822,8 +822,8 @@ class DiagnosisService:
         latest = completed[0]
         data = latest.raw_analysis_data or {}
         periodic = data.get("llm_structured_periodic") or {}
-        if not periodic and crop_cycle_id:
-            periodic = crop_entry(data.get("llm_structured_zone") or {}, crop_cycle_id) or {}
+        if not periodic and lot_id:
+            periodic = crop_entry(data.get("llm_structured_zone") or {}, lot_id) or {}
         return {
             "source": "latest_periodic_report",
             "report_date": latest.created_at.date().isoformat(),

@@ -100,10 +100,10 @@ async def test_execute_runs_tools_in_parallel_survives_a_failure_and_puts_skills
     async def broken(field=None):
         raise RuntimeError("down")
 
-    inp = _inputs(tools={"get_current_weather": slow, "get_forecast": slow, "list_crop_cycles": broken})
+    inp = _inputs(tools={"get_current_weather": slow, "get_forecast": slow, "list_lots": broken})
     plan = PreflightPlan(
         skills=["ficha-tomate"],
-        tools=[_req("get_current_weather", field="a"), _req("get_forecast", field="a"), _req("list_crop_cycles")],
+        tools=[_req("get_current_weather", field="a"), _req("get_forecast", field="a"), _req("list_lots")],
     )
     started = time.perf_counter()
     result = await _engine().execute(inp, plan)
@@ -112,7 +112,7 @@ async def test_execute_runs_tools_in_parallel_survives_a_failure_and_puts_skills
     assert {"name": "load_skill", "args": {"skill_name": "ficha-tomate"}, "ok": True} in result.calls
     assert result.block.index("## Skill: ficha-tomate") < result.block.index("## Datos: get_current_weather")
     assert result.block.startswith(START) and result.block.rstrip().endswith(END)
-    assert "Consultado: skills ficha-tomate; datos get_current_weather, get_forecast, list_crop_cycles" in result.block
+    assert "Consultado: skills ficha-tomate; datos get_current_weather, get_forecast, list_lots" in result.block
 
 
 async def test_execute_keeps_data_and_drops_the_skills_that_do_not_fit_the_token_budget():

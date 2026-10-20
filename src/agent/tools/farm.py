@@ -3,8 +3,8 @@ from typing import Optional
 from uuid import UUID
 
 from src.application.farm.schemas import (
-    CropCycleCreate,
-    CropCycleUpdate,
+    LotCreate,
+    LotUpdate,
     CropMasterCreate,
     FieldCreate,
     FieldEventCreate,
@@ -33,22 +33,23 @@ _NO_ZONE = {"ninguna", "ninguno", "sin zona", "none"}
 def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     @tool
     async def list_fields() -> dict:
-        """List the account's fields (plots / garden beds) with their active crop cycles and last activity."""
+        """List the account's fields (plots / garden beds) with their active lots and last activity."""
         overview = await deps.farm.overview(ctx.actor)
         return {"fields": compact(overview)}
 
     @tool
-    async def list_crop_cycles(
+    async def list_lots(
         field: Optional[str] = None, status: Optional[str] = None, zone: Optional[str] = None
     ) -> dict:
-        """List crop cycles. field: field name or id (optional). status: planned|planted|growing|harvested|failed.
+        """List lots (crop batches). field: field name or id (optional).
+        status: planned|seedbed|planted|growing|harvesting|harvested|failed.
         zone: e.g. 'cantero 3' (requires the field, or the conversation's field)."""
         target = await resolve_field(deps, ctx, field) if field or zone else None
         zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
-        cycles = await deps.farm.list_crop_cycles(
+        cycles = await deps.farm.list_lots(
             ctx.actor, field_id=target.id if target else None, status=status, zone_id=zone_id
         )
-        return {"crop_cycles": compact(cycles)}
+        return {"lots": compact(cycles)}
 
     @tool
     async def list_zones(field: Optional[str] = None) -> dict:
@@ -121,13 +122,13 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return compact(await deps.farm.harvest_totals(ctx.actor, field_id=field_id, year=year))
 
     @tool
-    async def get_harvest_verdict(field: Optional[str] = None, crop_cycle_id: Optional[str] = None) -> dict:
+    async def get_harvest_verdict(field: Optional[str] = None, lot_id: Optional[str] = None) -> dict:
         """Is it ready to harvest? With a photo in this message, does a quick dedicated visual check (not
         persisted as a report). Without one, falls back to the harvest_ready/harvest_verdict already in the
         latest periodic report of this field/cycle."""
         target = await resolve_field(deps, ctx, field)
         result = await deps.diagnosis.harvest_verdict(
-            ctx.actor, target.id, UUID(crop_cycle_id) if crop_cycle_id else None, ctx.image_identifier
+            ctx.actor, target.id, UUID(lot_id) if lot_id else None, ctx.image_identifier
         )
         return compact(result)
 
@@ -139,7 +140,7 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         quantity: Optional[float] = None,
         unit: Optional[str] = None,
         notes: Optional[str] = None,
-        crop_cycle_id: Optional[str] = None,
+        lot_id: Optional[str] = None,
         attach_current_photo: bool = False,
         zone: Optional[str] = None,
     ) -> dict:
@@ -147,7 +148,7 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         event_type: sowing|transplant|irrigation|fertilization|treatment|pruning|weeding|pest_sighting|
         disease_sighting|harvest|observation|photo. occurred_at: ISO date/time (default now).
         quantity+unit e.g. 10 'litros', 2 'kg'. attach_current_photo: link the photo sent in this message.
-        zone: where in the field, e.g. 'cantero 3' (taken from the crop cycle when one is given)."""
+        zone: where in the field, e.g. 'cantero 3' (taken from the lot when one is given)."""
         target = await resolve_field(deps, ctx, field)
         zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
         if attach_current_photo and not ctx.image_identifier:
@@ -156,7 +157,7 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             ctx.actor,
             FieldEventCreate(
                 field_id=target.id,
-                crop_cycle_id=crop_cycle_id or None,
+                lot_id=lot_id or None,
                 zone_id=zone_id,
                 type=event_type,
                 occurred_at=parse_when(occurred_at, ctx.tz),
@@ -170,7 +171,7 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     return [
         list_fields,
-        list_crop_cycles,
+        list_lots,
         list_zones,
         list_recent_events,
         find_crop_in_catalog,
@@ -290,7 +291,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return {"created_crop": compact(crop)}
 
     @tool
-    async def create_crop_cycle(
+    async def create_lot(
         crop_name: str,
         field: Optional[str] = None,
         variety: Optional[str] = None,
@@ -299,18 +300,23 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         expected_harvest_date: Optional[str] = None,
         notes: Optional[str] = None,
         zone: Optional[str] = None,
-        plant_count: Optional[int] = None,
+        zones: Optional[list[str]] = None,
+        season: Optional[str] = None,
+        number: Optional[int] = None,
+        quantity: Optional[float] = None,
+        unit: Optional[str] = None,
         expected_yield_kg: Optional[float] = None,
         expected_price: Optional[float] = None,
     ) -> dict:
-        """Start a crop cycle (a crop planted/planned in a field). Resolves the crop from the catalog by name,
-        adding it to the account catalog if missing. status: planned|planted|growing. Dates YYYY-MM-DD.
+        """Start a lot (lote: one batch of a crop sown together). Resolves the crop from the catalog by name,
+        adding it to the account catalog if missing. status: planned|seedbed|planted|growing. Dates YYYY-MM-DD.
         If expected_harvest_date is omitted it is estimated from the crop's growth period.
-        zone: the field's zone it grows in, e.g. 'cantero 3' or 'invernadero 1' (see list_zones / create_zone).
-        plant_count, expected_yield_kg, expected_price (per kg): optional, they feed the cost per plant and the
-        break-even in get_budget_summary."""
+        zone: the zone it grows in, e.g. 'cantero 3'; zones: several, when the same batch went into more than one.
+        season ("26/27") and number (2 = second sowing of that zone this season): the user's own labels.
+        quantity + unit (plantas | semillas | gramos), expected_yield_kg, expected_price (per kg): optional, they
+        feed the cost per plant and the break-even in get_budget_summary."""
         target = await resolve_field(deps, ctx, field)
-        zone_id = (await resolve_zone(deps, ctx, target, zone)).id if zone else None
+        zone_ids = [(await resolve_zone(deps, ctx, target, z)).id for z in [*([zone] if zone else []), *(zones or [])]]
         matches = await deps.farm.find_crop_masters(ctx.actor, crop_name, variety)
         added = False
         if matches:
@@ -324,56 +330,64 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         expected = parse_date(expected_harvest_date)
         if expected is None and planted and crop.growth_period_days:
             expected = planted + timedelta(days=crop.growth_period_days)
-        cycle = await deps.farm.create_crop_cycle(
+        cycle = await deps.farm.create_lot(
             ctx.actor,
-            CropCycleCreate(
+            LotCreate(
                 field_id=target.id,
                 crop_master_id=crop.id,
-                zone_id=zone_id,
+                zone_ids=zone_ids,
+                season=season,
+                number=number,
                 status=status,
                 planting_date=planted,
                 expected_harvest_date=expected,
                 notes=notes,
-                plant_count=plant_count,
+                quantity=quantity,
+                unit=unit or ("plantas" if quantity else None),
                 expected_yield_kg=expected_yield_kg,
                 expected_price=expected_price,
             ),
         )
         return {
-            "created_crop_cycle": compact(cycle),
+            "created_lot": compact(cycle),
             "field_name": target.name,
             "crop": compact(crop),
             "crop_added_to_catalog": added,
         }
 
     @tool
-    async def update_crop_cycle(
-        crop_cycle_id: str,
+    async def update_lot(
+        lot_id: str,
         status: Optional[str] = None,
         actual_harvest_date: Optional[str] = None,
         expected_harvest_date: Optional[str] = None,
         notes: Optional[str] = None,
         zone: Optional[str] = None,
+        season: Optional[str] = None,
+        number: Optional[int] = None,
     ) -> dict:
-        """Update a crop cycle: status (planned|planted|growing|harvested|failed), harvest dates (YYYY-MM-DD), notes,
-        zone (move it to e.g. 'cantero 2'; 'ninguna' takes it out of its zone)."""
+        """Update a lot: status (planned|seedbed|planted|growing|harvesting|harvested|failed), harvest dates
+        (YYYY-MM-DD), notes, season ("26/27"), number, zone (move it to e.g. 'cantero 2'; 'ninguna' takes it out
+        of its zones)."""
         values = {
             "status": status,
             "actual_harvest_date": parse_date(actual_harvest_date),
             "expected_harvest_date": parse_date(expected_harvest_date),
             "notes": notes,
+            "season": season,
+            "number": number,
         }
         values = {k: v for k, v in values.items() if v is not None}
         if zone is not None:
             if zone.strip().lower() in _NO_ZONE:
-                values["zone_id"] = None
+                values["zone_ids"] = []
             else:
-                current = await deps.farm.get_crop_cycle(ctx.actor, UUID(crop_cycle_id))
+                current = await deps.farm.get_lot(ctx.actor, UUID(lot_id))
                 field_read = await deps.farm.get_field(ctx.actor, current.field_id)
-                values["zone_id"] = (await resolve_zone(deps, ctx, field_read, zone)).id
-        update = CropCycleUpdate(**values)
-        cycle = await deps.farm.update_crop_cycle(ctx.actor, UUID(crop_cycle_id), update)
-        return {"updated_crop_cycle": compact(cycle)}
+                values["zone_ids"] = [(await resolve_zone(deps, ctx, field_read, zone)).id]
+        update = LotUpdate(**values)
+        cycle = await deps.farm.update_lot(ctx.actor, UUID(lot_id), update)
+        return {"updated_lot": compact(cycle)}
 
     @tool
     async def create_zone(
@@ -381,7 +395,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     ) -> dict:
         """Create a zone in a field: a numbered cajón, cantero, invernadero or hidroponía, e.g. zone='cantero 3'
         or just 'invernadero' (takes the next free number). name: optional nickname. Afterwards assign crops to it
-        with create_crop_cycle / update_crop_cycle (zone=...)."""
+        with create_lot / update_lot (zone=...)."""
         target = await resolve_field(deps, ctx, field)
         zone_type, number = parse_zone(zone)
         if zone_type is None:
@@ -396,27 +410,27 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         """Soft-delete a field: it disappears from lists and reports, but the data is kept and can be
         restored by support if needed — it is not permanent. Even so, ONLY call this after the user has
         explicitly confirmed in a message of their own: first restate which field you're about to remove
-        and what that implies (its crop cycles and events stop showing up), then wait for an explicit yes.
+        and what that implies (its lots and events stop showing up), then wait for an explicit yes.
         Never call this in the same turn as the first request to delete something."""
         target = await resolve_field(deps, ctx, field)
         await deps.farm.delete_field(ctx.actor, target.id)
         return {"deleted_field": target.name}
 
     @tool
-    async def delete_crop_cycle(crop_cycle_id: str) -> dict:
-        """Soft-delete a crop cycle (recoverable, not permanent). Same rule as delete_field: restate what
+    async def delete_lot(lot_id: str) -> dict:
+        """Soft-delete a lot (recoverable, not permanent). Same rule as delete_field: restate what
         you're about to remove and wait for the user's explicit confirmation in a separate message first.
-        Use list_crop_cycles to find the id if you don't have it."""
-        await deps.farm.delete_crop_cycle(ctx.actor, UUID(crop_cycle_id))
-        return {"deleted_crop_cycle_id": crop_cycle_id}
+        Use list_lots to find the id if you don't have it."""
+        await deps.farm.delete_lot(ctx.actor, UUID(lot_id))
+        return {"deleted_lot_id": lot_id}
 
     return [
         create_field,
         update_field,
         add_crop_to_catalog,
         create_zone,
-        create_crop_cycle,
-        update_crop_cycle,
+        create_lot,
+        update_lot,
         delete_field,
-        delete_crop_cycle,
+        delete_lot,
     ]

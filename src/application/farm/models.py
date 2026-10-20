@@ -1,5 +1,5 @@
 """
-Farm domain: fields (plots / garden beds), crop catalog, crop cycles and field events.
+Farm domain: fields (plots / garden beds), zones, crop catalog, crop lots and field events.
 Everything hangs from an account; crop_masters with account_id NULL are the global catalog.
 """
 import uuid
@@ -22,8 +22,9 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from src.shared.database import Base
 from src.shared.domain.base import utcnow
 
-CROP_CYCLE_STATUSES = ("planned", "planted", "growing", "harvested", "failed")
-ACTIVE_CROP_CYCLE_STATUSES = ("planned", "planted", "growing")
+# A lot (lote) is one batch of a crop sown together: "T26/27 · Cantero 2 · Lote 2". seedbed = still in the almácigo.
+LOT_STATUSES = ("planned", "seedbed", "planted", "growing", "harvesting", "harvested", "failed")
+ACTIVE_LOT_STATUSES = ("planned", "seedbed", "planted", "growing", "harvesting")
 EVENT_TYPES = (
     "sowing",
     "transplant",
@@ -79,20 +80,14 @@ class Field(Base):
 
 
 class FieldZone(Base):
-    """A numbered growing unit inside a field (cajón, cantero, invernadero, hidroponía). Crop cycles, events and
-    tracking reports can belong to one; the daily tracking photo is taken per zone."""
+    """A numbered growing unit inside a field (cajón, cantero, invernadero, hidroponía). Lots, events and
+    tracking reports belong to one; the daily tracking photo is taken per zone. The number is the user's own and
+    can be changed; renumbering several zones at once is checked as a whole by the service, not by an index."""
     __tablename__ = "field_zones"
     __table_args__ = (
         CheckConstraint(f"type IN {ZONE_TYPES}", name="zone_type_valid"),
         CheckConstraint("number >= 1", name="zone_number_positive"),
-        Index(
-            "uq_field_zones_field_type_number_active",
-            "field_id",
-            "type",
-            "number",
-            unique=True,
-            postgresql_where=text("deleted_at IS NULL"),
-        ),
+        Index("ix_field_zones_field_type_number", "field_id", "type", "number"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -103,6 +98,11 @@ class FieldZone(Base):
     name = Column(String(255))  # optional nickname ("el de las aromáticas")
     notes = Column(Text)
     layout_object_id = Column(String(64))  # the drawn cantero on the field plan, if linked
+    length_m = Column(Float)
+    width_m = Column(Float)
+    # The zone's own soil where it differs from the field's (substrate or compost added):
+    # {nitrogen, potassium, carbon, ph, notes, updated_at}; missing keys fall back to the field's soil context.
+    soil = Column(JSONB, nullable=False, default=dict, server_default="{}")
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True))
@@ -135,30 +135,47 @@ class CropMaster(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
 
-class CropCycle(Base):
-    __tablename__ = "crop_cycles"
+class Lot(Base):
+    """One batch of a crop sown together (lote). `season` ("26/27") and `number` are the user's own labels,
+    free to set and to fix; a lot sown the same day in several zones lists them all in lot_zones."""
+    __tablename__ = "lots"
     __table_args__ = (
-        CheckConstraint(f"status IN {CROP_CYCLE_STATUSES}", name="status_valid"),
-        Index("ix_crop_cycles_account_status", "account_id", "status"),
+        CheckConstraint(f"status IN {LOT_STATUSES}", name="status_valid"),
+        CheckConstraint("number IS NULL OR number >= 1", name="number_positive"),
+        Index("ix_lots_account_status", "account_id", "status"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), nullable=False, index=True)
     crop_master_id = Column(UUID(as_uuid=True), ForeignKey("crop_masters.id", ondelete="RESTRICT"), nullable=False)
-    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"), index=True)
-    planting_date = Column(Date)
+    season = Column(String(10))
+    number = Column(Integer)
+    planting_date = Column(Date)  # sown, or planted out for bought plantines
+    transplant_date = Column(Date)
     expected_harvest_date = Column(Date)
     actual_harvest_date = Column(Date)
-    plant_count = Column(Integer)
+    quantity = Column(Float)
+    unit = Column(String(30))  # plantas | semillas | gramos | m2 ...
     expected_yield_kg = Column(Float)
     expected_price = Column(Float)  # per kg, in the account's currency
     status = Column(String(20), nullable=False, default="planned")
     notes = Column(Text)
+    plan_id = Column(UUID(as_uuid=True), ForeignKey("crop_plans.id", ondelete="SET NULL", use_alter=True), index=True)
+    origin_lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))  # its almácigo
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True))
+
+
+class LotZone(Base):
+    """The zones a lot occupies (usually one; the first names it)."""
+    __tablename__ = "lot_zones"
+
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="CASCADE"), primary_key=True)
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="CASCADE"), primary_key=True, index=True)
+    position = Column(Integer, nullable=False, default=0)
 
 
 class FieldEvent(Base):
@@ -174,7 +191,7 @@ class FieldEvent(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), nullable=False)
-    crop_cycle_id = Column(UUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"))
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
     zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
     author_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     type = Column(String(30), nullable=False)

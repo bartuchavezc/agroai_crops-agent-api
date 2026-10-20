@@ -1,6 +1,6 @@
 """Planning tools: reminders (agenda) and crop plans — the same data the web's Planificación tab edits.
 
-Reminders are notified in-app when due (a batch job). A crop cycle's stage plan (germinación, traspaso,
+Reminders are notified in-app when due (a batch job). A lot's stage plan (germinación, traspaso,
 etapas clave, posible cosecha) comes from its crop's template; a long plan (permaculture-style roadmap)
 holds stages and staggered sowings that split a seed lot over time, each sowing with its own reminder."""
 from datetime import datetime, timedelta
@@ -86,7 +86,7 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         description: Optional[str] = None,
         field: Optional[str] = None,
         zone: Optional[str] = None,
-        crop_cycle_id: Optional[str] = None,
+        lot_id: Optional[str] = None,
         recurrence: str = "none",
         every_days: Optional[int] = None,
         until: Optional[str] = None,
@@ -105,7 +105,7 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 interval_days=every_days,
                 until=parse_date(until),
                 assigned_to=await refs.member_value(assignee),
-                crop_cycle_id=UUID(crop_cycle_id) if crop_cycle_id else None,
+                lot_id=UUID(lot_id) if lot_id else None,
                 **await _where(deps, ctx, field, zone),
             ),
         )
@@ -126,7 +126,7 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def list_plans(field: Optional[str] = None, include_archived: bool = False) -> dict:
-        """Crop plans of the account: per crop cycle (kind ciclo) and long roadmaps (kind largo)."""
+        """Crop plans of the account: per lot (kind ciclo) and long roadmaps (kind largo)."""
         field_id = (await resolve_field(deps, ctx, field)).id if field else None
         plans = await deps.planning.list_plans(ctx.actor, field_id=field_id)
         if not include_archived:
@@ -139,10 +139,10 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return {"plan": compact(await deps.planning.get_plan(ctx.actor, UUID(plan_id)))}
 
     @tool
-    async def preview_crop_stage_plan(crop_cycle_id: str) -> dict:
-        """Proposed stages + reminders for a crop cycle from its crop's typical timeline (germinación,
+    async def preview_crop_stage_plan(lot_id: str) -> dict:
+        """Proposed stages + reminders for a lot from its crop's typical timeline (germinación,
         traspaso, etapas clave, posible cosecha). Nothing is saved: show it and offer generate_crop_stage_plan."""
-        return {"proposal": compact(await deps.planning.propose_cycle_plan(ctx.actor, UUID(crop_cycle_id)))}
+        return {"proposal": compact(await deps.planning.propose_cycle_plan(ctx.actor, UUID(lot_id)))}
 
     return [
         list_reminders,
@@ -159,10 +159,10 @@ def planning_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     """Plans, stages and sowings: owner / tecnico."""
 
     @tool
-    async def generate_crop_stage_plan(crop_cycle_id: str) -> dict:
-        """Save a crop cycle's stage plan and its reminders (germinación, traspaso, etapas clave, posible
+    async def generate_crop_stage_plan(lot_id: str) -> dict:
+        """Save a lot's stage plan and its reminders (germinación, traspaso, etapas clave, posible
         cosecha, cosecha estimada). Regenerating replaces what was generated before."""
-        result = await deps.planning.apply_cycle_plan(ctx.actor, UUID(crop_cycle_id))
+        result = await deps.planning.apply_cycle_plan(ctx.actor, UUID(lot_id))
         return {"applied": compact(result)}
 
     @tool
@@ -287,7 +287,7 @@ def planning_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def mark_sowing_done(sowing_id: str, sown_on: Optional[str] = None) -> dict:
-        """A planned sowing happened: starts its crop cycle (with its stage reminders) and discounts the seed."""
+        """A planned sowing happened: starts its lot (with its stage reminders) and discounts the seed."""
         sowing = await deps.planning.sow(
             ctx.actor, UUID(sowing_id), SowRequest(sown_on=parse_date(sown_on) if sown_on else None)
         )

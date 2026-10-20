@@ -86,7 +86,7 @@ def no_title_calls(container):
         yield
 
 
-async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_member, with_key, scripted_model):
+async def test_chat_turn_registers_lot_and_event(client, signup, add_member, with_key, scripted_model):
     owner = await signup("agent")
     await with_key(owner)
     h = owner["headers"]
@@ -97,7 +97,7 @@ async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_memb
     )
 
     scripted_model.script = [
-        ("call", "create_crop_cycle", {"crop_name": "Tomate", "variety": "Cherry", "field": "cantero 1"}),
+        ("call", "create_lot", {"crop_name": "Tomate", "variety": "Cherry", "field": "cantero 1"}),
         ("call", "log_event", {"event_type": "irrigation", "field": "Cantero 1", "quantity": 10, "unit": "litros"}),
         ("text", "¡Listo! Registré la siembra de tomate cherry y el riego de 10 litros en Cantero 1."),
     ]
@@ -109,7 +109,7 @@ async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_memb
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["response"].startswith("¡Listo!")
-    assert [t["name"] for t in body["metadata"]["tool_calls"]] == ["create_crop_cycle", "log_event"]
+    assert [t["name"] for t in body["metadata"]["tool_calls"]] == ["create_lot", "log_event"]
     assert all(t["ok"] for t in body["metadata"]["tool_calls"])
     conversation_id = body["metadata"]["conversation_id"]
 
@@ -127,7 +127,7 @@ async def test_chat_turn_registers_crop_cycle_and_event(client, signup, add_memb
     history = " ".join(str(c.parts) for c in scripted_model.requests[0].contents)
     assert "Fecha y hora local" in history and "Campos de la cuenta" not in history
 
-    cycles = (await client.get("/api/v1/farm-management/crop-cycles", headers=h)).json()
+    cycles = (await client.get("/api/v1/farm-management/lots", headers=h)).json()
     assert len(cycles) == 1 and cycles[0]["status"] == "planted" and cycles[0]["expected_harvest_date"]
     events = (await client.get("/api/v1/farm-management/events", headers=h)).json()
     assert events[0]["type"] == "irrigation" and events[0]["source"] == "agent" and events[0]["quantity"] == 10
@@ -203,7 +203,7 @@ async def test_staff_does_not_get_management_tools(client, signup, add_member, w
         f.name for tool in scripted_model.requests[0].config.tools or [] for f in (tool.function_declarations or [])
     }
     assert "log_event" in declared
-    assert "create_field" not in declared and "create_crop_cycle" not in declared
+    assert "create_field" not in declared and "create_lot" not in declared
 
 
 async def test_web_search_failure_does_not_break_the_turn(client, signup, with_key, scripted_model, container):

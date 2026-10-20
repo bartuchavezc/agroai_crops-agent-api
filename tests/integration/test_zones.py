@@ -32,7 +32,7 @@ async def _crop_id(client, h, name):
 
 async def _cycle(client, h, field_id, crop, zone_id=None, status="growing"):
     r = await client.post(
-        f"{FARM}/crop-cycles",
+        f"{FARM}/lots",
         headers=h,
         json={
             "field_id": field_id,
@@ -89,28 +89,28 @@ async def test_crops_and_events_belong_to_a_zone_of_their_own_field(client, sign
     cycle = await _cycle(client, h, field["id"], "tomate", zone_id=zone["id"])
     assert cycle["zone_id"] == zone["id"]
     wrong = await client.post(
-        f"{FARM}/crop-cycles",
+        f"{FARM}/lots",
         headers=h,
         json={"field_id": other_field["id"], "crop_master_id": cycle["crop_master_id"], "zone_id": zone["id"]},
     )
     assert wrong.status_code == 400
 
-    in_zone = (await client.get(f"{FARM}/crop-cycles?zone_id={zone['id']}", headers=h)).json()
+    in_zone = (await client.get(f"{FARM}/lots?zone_id={zone['id']}", headers=h)).json()
     assert [c["id"] for c in in_zone] == [cycle["id"]]
 
     event = await client.post(
-        f"{FARM}/events", headers=h, json={"field_id": field["id"], "crop_cycle_id": cycle["id"], "type": "irrigation"}
+        f"{FARM}/events", headers=h, json={"field_id": field["id"], "lot_id": cycle["id"], "type": "irrigation"}
     )
     assert event.json()["zone_id"] == zone["id"]  # taken from the cycle
 
     overview = (await client.get(f"{FARM}/overview", headers=h)).json()
     mine = next(o for o in overview if o["field"]["id"] == field["id"])
     assert mine["zones"][0]["label"] == "Cantero 1"
-    assert mine["active_cycles"][0]["zone_label"] == "Cantero 1"
+    assert mine["active_lots"][0]["zone_label"] == "Cantero 1"
 
     # Deleting the zone keeps the crop in the field, without a zone.
     assert (await client.delete(f"{FARM}/zones/{zone['id']}", headers=h)).status_code == 204
-    assert (await client.get(f"{FARM}/crop-cycles/{cycle['id']}", headers=h)).json()["zone_id"] is None
+    assert (await client.get(f"{FARM}/lots/{cycle['id']}", headers=h)).json()["zone_id"] is None
 
 
 def _overview_result(unlisted_plants: list[str] | None = None) -> ZoneOverviewResult:
@@ -121,7 +121,7 @@ def _group_result(cycles: list[tuple[dict, str]], risk="low", confidence=0.8) ->
     return ZoneGroupAssessment(
         crops=[
             ZoneCropAssessment(
-                crop_cycle_id=c["id"],
+                lot_id=c["id"],
                 crop_name=name,
                 visible_in_photos=True,
                 growth_stage="vegetativo",
@@ -202,7 +202,7 @@ async def test_zone_tracking_analyzes_every_active_crop_of_the_zone(client, sign
     assert report["status"] == "ANALYSIS_COMPLETED"
     assert report["zone_id"] == zone["id"] and report["field_id"] == field["id"]
     assert len(report["image_identifiers"]) == 2
-    assert set(report["crop_cycle_ids"]) == {tomato["id"], lettuce["id"]}
+    assert set(report["lot_ids"]) == {tomato["id"], lettuce["id"]}
     assert report["title"] == "Cantero 1 · seguimiento"
     crops = report["raw_analysis_data"]["llm_structured_zone"]["crops"]
     assert {c["crop_name"] for c in crops} == {"Tomate", "Lechuga"}
@@ -232,7 +232,7 @@ async def test_zone_tracking_analyzes_every_active_crop_of_the_zone(client, sign
     assert "ficha-lechuga" in lettuce_system and "ficha-tomate" not in lettuce_system
 
     # The report shows up in each covered cycle's history, and feeds its harvest verdict.
-    by_cycle = (await client.get(f"/api/v1/reports?crop_cycle_id={lettuce['id']}", headers=h)).json()
+    by_cycle = (await client.get(f"/api/v1/reports?lot_id={lettuce['id']}", headers=h)).json()
     assert [r["id"] for r in by_cycle] == [report["id"]]
     from uuid import UUID
 
@@ -303,7 +303,7 @@ async def test_agent_creates_zone_and_plants_in_it(client, signup, with_key, scr
 
     scripted_model.script = [
         ("call", "create_zone", {"zone": "cantero 3", "field": "huerta"}),
-        ("call", "create_crop_cycle", {"crop_name": "Lechuga", "field": "huerta", "zone": "Cantero 3"}),
+        ("call", "create_lot", {"crop_name": "Lechuga", "field": "huerta", "zone": "Cantero 3"}),
         ("call", "log_event", {"event_type": "irrigation", "field": "huerta", "zone": "cantero 3"}),
         ("text", "Listo: creé el Cantero 3, planté lechuga y registré el riego."),
     ]
@@ -313,7 +313,7 @@ async def test_agent_creates_zone_and_plants_in_it(client, signup, with_key, scr
 
     zones = (await client.get(f"{FARM}/fields/{field['id']}/zones", headers=h)).json()
     assert [z["label"] for z in zones] == ["Cantero 3"]
-    cycles = (await client.get(f"{FARM}/crop-cycles?zone_id={zones[0]['id']}", headers=h)).json()
+    cycles = (await client.get(f"{FARM}/lots?zone_id={zones[0]['id']}", headers=h)).json()
     assert len(cycles) == 1
     events = (await client.get(f"{FARM}/events", headers=h)).json()
     assert events[0]["zone_id"] == zones[0]["id"]

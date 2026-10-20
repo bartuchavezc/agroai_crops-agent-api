@@ -43,11 +43,11 @@ async def test_progress_endpoint_uses_the_plan_and_the_latest_zone_analysis(clie
     zone = (await client.post(f"{FARM}/fields/{field['id']}/zones", headers=h, json={"type": "cantero"})).json()
     cycle = await _cycle(client, h, field["id"], "tomate", zone_id=zone["id"])
     planted = date.today() - timedelta(days=30)
-    await client.put(f"{FARM}/crop-cycles/{cycle['id']}", headers=h, json={
+    await client.put(f"{FARM}/lots/{cycle['id']}", headers=h, json={
         "planting_date": planted.isoformat(), "expected_harvest_date": (planted + timedelta(days=120)).isoformat(),
     })
 
-    before = (await client.get(f"{P}/crop-cycles/{cycle['id']}/progress", headers=h)).json()
+    before = (await client.get(f"{P}/lots/{cycle['id']}/progress", headers=h)).json()
     assert before["expected_pct"] == 25.0 and before["status"] == "unknown" and before["evidence_report_id"] is None
     assert before["current_stage"] is not None and before["next_stage_at"] is not None
 
@@ -61,8 +61,8 @@ async def test_progress_endpoint_uses_the_plan_and_the_latest_zone_analysis(clie
         )
     assert up.status_code == 200, up.text
 
-    after = (await client.get(f"{P}/crop-cycles/{cycle['id']}/progress", headers=h)).json()
+    after = (await client.get(f"{P}/lots/{cycle['id']}/progress", headers=h)).json()
     assert after["status"] == "affected" and "hojas amarillas" in after["reason"]
     assert after["evidence_report_id"] == up.json()["report_id"]
-    missing = await client.get(f"{P}/crop-cycles/00000000-0000-0000-0000-000000000000/progress", headers=h)
+    missing = await client.get(f"{P}/lots/00000000-0000-0000-0000-000000000000/progress", headers=h)
     assert missing.status_code == 404

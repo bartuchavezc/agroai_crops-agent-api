@@ -48,11 +48,12 @@ traen foto, y la herramienta `expert_field_analysis` del agente (lectura de clim
 | GET / PUT / DELETE | `/farm-management/fields/{id}` | PUT/DELETE: owner/tecnico |
 | GET / POST | `/farm-management/crop-masters?q=` | Catálogo global + de la cuenta. `q` también busca por los nombres de otros países (`i18n`: `{"es-MX": "Jitomate"}`, `variety_i18n`); `name`/`variety` siguen siendo el valor neutro y el respaldo |
 | GET / DELETE | `/farm-management/crop-masters/{id}` | Solo se borran los de la cuenta |
-| GET / POST | `/farm-management/fields/{id}/zones` | Zonas del campo (`cajon`, `cantero`, `invernadero`, `hidroponia`), numeradas por tipo: `{type, number?, name?, notes?, layout_object_id?}` → `label` "Cantero 3". POST: owner/tecnico; sin `number` toma el siguiente libre |
-| PUT / DELETE | `/farm-management/zones/{id}` | owner/tecnico. Al borrar, sus ciclos quedan en el campo sin zona |
-| GET / POST | `/farm-management/crop-cycles?field_id=&status=&zone_id=` | POST: owner/tecnico. `zone_id` opcional (de una zona del mismo campo) |
-| GET / PUT / DELETE | `/farm-management/crop-cycles/{id}` | |
-| GET / POST | `/farm-management/events?field_id=&zone_id=&crop_cycle_id=&type=&since=&until=&before=&limit=` | Cualquier rol registra eventos. `zone_id` filtra por zona; `before=<occurred_at del último recibido>` pagina hacia atrás (más nuevos primero) |
+| GET / POST | `/farm-management/fields/{id}/zones` | Zonas del campo (`cajon`, `cantero`, `invernadero`, `hidroponia`): `{type, number?, name?, notes?, layout_object_id?, length_m?, width_m?, soil?}` → `label` "Cantero 3", `area_m2`. El número es del usuario y se puede cambiar; sin `number` toma el siguiente libre. `soil` `{nitrogen, potassium, carbon, ph, notes, updated_at}` pisa el suelo del campo (sustrato, compost). POST: owner/tecnico |
+| POST | `/farm-management/fields/{id}/zones/renumber` | `{numbers: {zone_id: número}}`: renumera varias zonas a la vez (p. ej. intercambiar 4 y 1); solo la numeración final tiene que ser única por tipo. owner/tecnico |
+| PUT / DELETE | `/farm-management/zones/{id}` | owner/tecnico. Al borrar, sus lotes quedan en el campo sin esa zona |
+| GET / POST | `/farm-management/lots?field_id=&status=&zone_id=` | Lotes: una tanda de un cultivo sembrada junta. `{field_id, crop_master_id, zone_ids[] (o zone_id), season? "26/27", number?, planting_date?, transplant_date?, quantity?, unit?, status, plan_id?, origin_lot_id?}`; `status` planned\|seedbed\|planted\|growing\|harvesting\|harvested\|failed. La lectura suma `zone_id` (la primera zona) y `label` "T26/27 · Cantero 2 · L2". POST: owner/tecnico |
+| GET / PUT / DELETE | `/farm-management/lots/{id}` | |
+| GET / POST | `/farm-management/events?field_id=&zone_id=&lot_id=&type=&since=&until=&before=&limit=` | Cualquier rol registra eventos. `zone_id` filtra por zona; `before=<occurred_at del último recibido>` pagina hacia atrás (más nuevos primero) |
 | PUT / DELETE | `/farm-management/events/{id}` | Autor u owner/tecnico |
 
 Tipos de evento: `sowing, transplant, irrigation, fertilization, treatment, pruning, weeding, pest_sighting,
@@ -75,10 +76,10 @@ disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, plan
 ## Imágenes, reportes y diagnóstico
 | Método | Ruta | Notas |
 |---|---|---|
-| POST | `/upload/image` | multipart `image_file`, opcional `field_id`, `crop_cycle_id` → `{report_id, image_identifier}` |
-| POST | `/upload/zone-tracking` | Seguimiento diario de una zona: multipart `zone_id` + 1-4 `image_files` → un reporte `periodic` con `zone_id`, `crop_cycle_ids` (ciclos activos de la zona) e `image_identifiers`; se analiza en segundo plano (`raw_analysis_data.llm_structured_zone`: resumen + una evaluación por cultivo) |
+| POST | `/upload/image` | multipart `image_file`, opcional `field_id`, `lot_id` → `{report_id, image_identifier}` |
+| POST | `/upload/zone-tracking` | Seguimiento diario de una zona: multipart `zone_id` + 1-4 `image_files` → un reporte `periodic` con `zone_id`, `lot_ids` (ciclos activos de la zona) e `image_identifiers`; se analiza en segundo plano (`raw_analysis_data.llm_structured_zone`: resumen + una evaluación por cultivo) |
 | POST | `/analyze` | `{report_id, image_identifier?, deep?}` → diagnóstico estructurado (Gemini multimodal). El análisis recibe fisiología vegetal, la ficha y la guía de plagas de cada cultivo del lote, NDVI/NDWI históricos, clima de 30 días, suelo y registros previos. `deep` (por defecto `ANALYSIS_DEEP`, activo) agrega una segunda pasada que busca fuentes en la web (Tavily) y refina el análisis; las fuentes quedan en `raw_analysis_data.research` y el diagnóstico las cita en `additional_notes`. Los análisis de suelo no usan `deep` |
-| GET / POST | `/reports?field_id=&crop_cycle_id=&zone_id=&report_type=&since=&until=` | `crop_cycle_id` incluye los seguimientos de zona que cubrieron ese ciclo |
+| GET / POST | `/reports?field_id=&lot_id=&zone_id=&report_type=&since=&until=` | `lot_id` incluye los seguimientos de zona que cubrieron ese ciclo |
 | GET / PUT / DELETE | `/reports/{id}` | `raw_analysis_data.llm_structured_diagnosis` |
 
 ## Planificación y recordatorios
@@ -89,18 +90,18 @@ ese integrante, si no a toda la cuenta.
 
 | Método | Ruta | Notas |
 |---|---|---|
-| GET / POST | `/planning/reminders?status=&since=&until=&field_id=&zone_id=&crop_cycle_id=&plan_id=&assigned_to=&before=` | `{title, due_at, description?, recurrence: none\|daily\|weekly\|every_n_days, interval_days?, until?, assigned_to?, field_id?, zone_id?, crop_cycle_id?, plan_id?}`. `assigned_to=<id>` = los suyos + los sin asignar; `none` = sin asignar |
+| GET / POST | `/planning/reminders?status=&since=&until=&field_id=&zone_id=&lot_id=&plan_id=&assigned_to=&before=` | `{title, due_at, description?, recurrence: none\|daily\|weekly\|every_n_days, interval_days?, until?, assigned_to?, field_id?, zone_id?, lot_id?, plan_id?}`. `assigned_to=<id>` = los suyos + los sin asignar; `none` = sin asignar |
 | PUT / DELETE | `/planning/reminders/{id}` | PUT parcial (posponer = cambiar `due_at`). DELETE: manager o quien lo creó |
 | POST | `/planning/reminders/{id}/complete` | Uno recurrente pasa a su próxima ocurrencia (y termina después de `until`). Cada vez que se completa queda registrado (lo lee la línea de tiempo de la zona) |
 | GET | `/planning/calendar?since=&until=&field_id=` | Fechas locales inclusivas, hasta 400 días. `items`: recordatorios con sus recurrencias expandidas (desde la ocurrencia actual: las anteriores no se guardaron), siembras planificadas y etapas en su día de inicio; `ranges`: las etapas de planes activos como tramos |
-| GET | `/planning/crop-cycles/{id}/progress` | `expected_pct`, `current_stage`, `next_stage_at` (según el plan del ciclo o la plantilla del cultivo) y `status` ok\|late\|affected\|unknown con `reason` y `evidence_report_id` (último análisis completado que cubrió el ciclo) |
+| GET | `/planning/lots/{id}/progress` | `expected_pct`, `current_stage`, `next_stage_at` (según el plan del ciclo o la plantilla del cultivo) y `status` ok\|late\|affected\|unknown con `reason` y `evidence_report_id` (último análisis completado que cubrió el ciclo) |
 | GET / POST | `/planning/plans?field_id=&status=` | `{name, kind: ciclo\|largo, field_id?, zone_id?, start_date?, end_date?, notes?, stages[], sowings[]}`; cada siembra crea su recordatorio |
 | GET / PUT / DELETE | `/planning/plans/{id}` | GET con `stages`, `sowings`, `reminders`. Archivar o borrar cancela los recordatorios pendientes |
 | POST | `/planning/plans/{id}/stages` | `{name, stage, start_date, end_date?, remind?}` — `PUT/DELETE /planning/stages/{id}` |
 | POST | `/planning/plans/{id}/sowings` | `{crop_master_id, sow_date, zone_id?, quantity?, unit?, seed_lot_id?}` — `PUT/DELETE /planning/sowings/{id}` |
 | POST | `/planning/plans/{id}/sowings/staggered` | Siembra escalonada: `{crop_master_id, start_date, count, every_days, total_quantity?, unit?, zone_id?, seed_lot_id?}` divide la cantidad en partes iguales |
-| POST | `/planning/sowings/{id}/sow` | Siembra hecha: `{sown_on?, create_crop_cycle=true, consume_seed_lot=true}` arranca el ciclo (con su plan por etapas) y descuenta el lote |
-| GET / POST | `/planning/crop-cycles/{id}/stage-plan` | GET: propuesta de etapas + recordatorios del ciclo según la plantilla del cultivo (germinación, traspaso, etapas clave, posible cosecha, cosecha estimada). POST: la guarda (regenerar reemplaza lo generado; los hechos quedan) |
+| POST | `/planning/sowings/{id}/sow` | Siembra hecha: `{sown_on?, create_lot=true, consume_seed_lot=true}` arranca el ciclo (con su plan por etapas) y descuenta el lote |
+| GET / POST | `/planning/lots/{id}/stage-plan` | GET: propuesta de etapas + recordatorios del ciclo según la plantilla del cultivo (germinación, traspaso, etapas clave, posible cosecha, cosecha estimada). POST: la guarda (regenerar reemplaza lo generado; los hechos quedan) |
 
 ## Alertas
 `GET /alerts?acknowledged=&severity=&field_id=`, `POST /alerts`, `GET /alerts/active`, `GET/DELETE /alerts/{id}`,
@@ -166,7 +167,7 @@ Todo es aditivo: parámetros y campos opcionales; un cliente que no los usa no n
 | GET | `/management/budget/summary?cycle_id=&crop_master_id=` | Con `cycle_id`: `cost_per_plant`, `break_even_kg`, `expected_revenue` y `margin` (null si faltan `plant_count`, `expected_yield_kg` o `expected_price` del ciclo). Los totales van en la moneda de la cuenta (`currency`); lo cargado en otra va aparte en `other_currencies` |
 | GET | `/upload/image/{id}?max_side=320` | Miniatura JPEG (32 a 1536 px), generada una vez y guardada junto al original |
 
-Datos nuevos: `crop_cycles.plant_count`, `expected_yield_kg`, `expected_price` (por kg); `accounts.currency`
+Datos nuevos: `lots.plant_count`, `expected_yield_kg`, `expected_price` (por kg); `accounts.currency`
 (según el país del owner: ARS, MXN, COP) y `budget_entries.currency` (opcional); país `CO`.
 
 Textos del back: los que genera el sistema (alertas, recordatorios, notificaciones) están en español neutro (sin

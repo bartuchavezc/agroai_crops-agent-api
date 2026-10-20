@@ -15,10 +15,10 @@ from src.shared.domain.actor import Actor
 from src.shared.utils.routing import route_with_and_without_slash as _both
 
 from .schemas import (
-    CropCycleCreate,
-    CropCycleRead,
-    CropCycleStatus,
-    CropCycleUpdate,
+    LotCreate,
+    LotRead,
+    LotStatus,
+    LotUpdate,
     CropMasterCreate,
     CropMasterRead,
     EventType,
@@ -34,6 +34,7 @@ from .schemas import (
     FieldZoneUpdate,
     SunExposureRead,
     SunMapRead,
+    ZoneRenumber,
 )
 from .service import FarmService
 from .summary import FieldSummary, FieldSummaryService
@@ -49,7 +50,7 @@ SATELLITE = Provide["application.satellite_service"]
 
 # ---------- overview ----------
 
-@router.get("/overview", response_model=List[FieldOverview], summary="Fields with active crop cycles")
+@router.get("/overview", response_model=List[FieldOverview], summary="Fields with active lots")
 @inject
 async def overview(actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
     return await farm.overview(actor)
@@ -121,6 +122,18 @@ async def create_zone(
     return await farm.create_zone(actor, field_id, body)
 
 
+@router.post(
+    "/fields/{field_id}/zones/renumber", response_model=List[FieldZoneRead],
+    summary="Renumber several zones at once (owner/tecnico)",
+)
+@inject
+async def renumber_zones(
+    field_id: UUID, body: ZoneRenumber, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
+):
+    """E.g. swap Cantero 4 and Cantero 1: only the final numbering has to be unique per zone type."""
+    return await farm.renumber_zones(actor, field_id, body)
+
+
 @router.get("/zones/{zone_id}", response_model=FieldZoneRead, summary="Get a zone")
 @inject
 async def get_zone(zone_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
@@ -151,7 +164,7 @@ async def update_zone(
 @router.delete("/zones/{zone_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a zone (owner/tecnico)")
 @inject
 async def delete_zone(zone_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
-    """Its crop cycles stay in the field, without a zone."""
+    """Its lots stay in the field, without a zone."""
     await farm.delete_zone(actor, zone_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -238,49 +251,49 @@ async def delete_crop_master(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# ---------- crop cycles ----------
+# ---------- lots ----------
 
-@_both(router.get, "/crop-cycles", response_model=List[CropCycleRead], summary="List Crop Cycles")
+@_both(router.get, "/lots", response_model=List[LotRead], summary="List Crop Cycles")
 @inject
-async def list_crop_cycles(
+async def list_lots(
     field_id: Optional[UUID] = None,
-    status_filter: Optional[CropCycleStatus] = Query(None, alias="status"),
+    status_filter: Optional[LotStatus] = Query(None, alias="status"),
     zone_id: Optional[UUID] = None,
     actor: Actor = Depends(get_actor),
     farm: FarmService = Depends(FARM),
 ):
-    return await farm.list_crop_cycles(actor, field_id=field_id, status=status_filter, zone_id=zone_id)
+    return await farm.list_lots(actor, field_id=field_id, status=status_filter, zone_id=zone_id)
 
 
 @_both(
-    router.post, "/crop-cycles", response_model=CropCycleRead, status_code=status.HTTP_201_CREATED,
+    router.post, "/lots", response_model=LotRead, status_code=status.HTTP_201_CREATED,
     summary="Create Crop Cycle",
 )
 @inject
-async def create_crop_cycle(
-    body: CropCycleCreate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
+async def create_lot(
+    body: LotCreate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
 ):
-    return await farm.create_crop_cycle(actor, body)
+    return await farm.create_lot(actor, body)
 
 
-@router.get("/crop-cycles/{cycle_id}", response_model=CropCycleRead, summary="Get Crop Cycle")
+@router.get("/lots/{cycle_id}", response_model=LotRead, summary="Get Crop Cycle")
 @inject
-async def get_crop_cycle(cycle_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
-    return await farm.get_crop_cycle(actor, cycle_id)
+async def get_lot(cycle_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
+    return await farm.get_lot(actor, cycle_id)
 
 
-@router.put("/crop-cycles/{cycle_id}", response_model=CropCycleRead, summary="Update Crop Cycle")
+@router.put("/lots/{cycle_id}", response_model=LotRead, summary="Update Crop Cycle")
 @inject
-async def update_crop_cycle(
-    cycle_id: UUID, body: CropCycleUpdate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
+async def update_lot(
+    cycle_id: UUID, body: LotUpdate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
 ):
-    return await farm.update_crop_cycle(actor, cycle_id, body)
+    return await farm.update_lot(actor, cycle_id, body)
 
 
-@router.delete("/crop-cycles/{cycle_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete Crop Cycle")
+@router.delete("/lots/{cycle_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete Crop Cycle")
 @inject
-async def delete_crop_cycle(cycle_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
-    await farm.delete_crop_cycle(actor, cycle_id)
+async def delete_lot(cycle_id: UUID, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)):
+    await farm.delete_lot(actor, cycle_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -290,7 +303,7 @@ async def delete_crop_cycle(cycle_id: UUID, actor: Actor = Depends(get_actor), f
 @inject
 async def list_events(
     field_id: Optional[UUID] = None,
-    crop_cycle_id: Optional[UUID] = None,
+    lot_id: Optional[UUID] = None,
     zone_id: Optional[UUID] = None,
     type: Optional[EventType] = None,
     since: Optional[datetime] = None,
@@ -301,7 +314,7 @@ async def list_events(
     farm: FarmService = Depends(FARM),
 ):
     return await farm.list_events(
-        actor, field_id=field_id, crop_cycle_id=crop_cycle_id, event_type=type, since=since, until=until, limit=limit,
+        actor, field_id=field_id, lot_id=lot_id, event_type=type, since=since, until=until, limit=limit,
         zone_id=zone_id, before=before,
     )
 

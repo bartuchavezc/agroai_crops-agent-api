@@ -1,5 +1,5 @@
 """
-Farm service: the single write path for fields, crop catalog, crop cycles and events.
+Farm service: the single write path for fields, crop catalog, lots and events.
 Used by both the HTTP routers and the agent tools.
 """
 import logging
@@ -17,12 +17,14 @@ from src.shared.utils.errors import InvalidInputError, NotFoundError, Permission
 from src.application.notifications.service import NotificationService
 from src.application.soil_data.service import SoilContextService
 
-from .models import ACTIVE_CROP_CYCLE_STATUSES, CropCycle, CropMaster, Field, FieldEvent, FieldZone
+from .models import ACTIVE_LOT_STATUSES, Lot, CropMaster, Field, FieldEvent, FieldZone
 from .schemas import (
-    ActiveCycleSummary,
-    CropCycleCreate,
-    CropCycleRead,
-    CropCycleUpdate,
+    ActiveLotSummary,
+    LotCreate,
+    LotRead,
+    LotUpdate,
+    ZoneRenumber,
+    lot_label,
     CropMasterCreate,
     CropMasterRead,
     FieldCreate,
@@ -341,7 +343,7 @@ class FarmService:
         try:
             deleted = await self.repo.delete_crop_master(actor.account_id, crop_master_id)
         except IntegrityError:
-            raise InvalidInputError("This crop is used by crop cycles and cannot be deleted.") from None
+            raise InvalidInputError("This crop is used by lots and cannot be deleted.") from None
         if not deleted:
             raise NotFoundError(f"Crop {crop_master_id} not found (global catalog entries cannot be deleted).")
 
@@ -368,70 +370,110 @@ class FarmService:
         number = data.number or await self.repo.next_zone_number(field_id, data.type)
         if await self.repo.zone_number_taken(field_id, data.type, number):
             raise InvalidInputError(f"That field already has a {data.type} number {number}.")
-        zone = await self.repo.create_zone(
-            FieldZone(account_id=actor.account_id, field_id=field_id, **{**data.model_dump(), "number": number})
-        )
+        values = {**data.model_dump(), "number": number, "soil": data.soil.model_dump(mode="json") if data.soil else {}}
+        zone = await self.repo.create_zone(FieldZone(account_id=actor.account_id, field_id=field_id, **values))
         return FieldZoneRead.model_validate(zone)
 
     async def update_zone(self, actor: Actor, zone_id: UUID, data: FieldZoneUpdate) -> FieldZoneRead:
         _require_manager(actor)
         current = await self.get_zone(actor, zone_id)
         values = data.model_dump(exclude_unset=True)
+        if "soil" in values:
+            values["soil"] = data.soil.model_dump(mode="json", exclude_none=True) if data.soil else {}
         zone_type, number = values.get("type") or current.type, values.get("number") or current.number
         if await self.repo.zone_number_taken(current.field_id, zone_type, number, exclude_id=zone_id):
-            raise InvalidInputError(f"That field already has a {zone_type} number {number}.")
+            raise InvalidInputError(
+                f"That field already has a {zone_type} number {number}. To swap numbers, renumber both at once."
+            )
         zone = await self.repo.update_zone(actor.account_id, zone_id, values)
         return FieldZoneRead.model_validate(zone)
+
+    async def renumber_zones(self, actor: Actor, field_id: UUID, data: ZoneRenumber) -> list[FieldZoneRead]:
+        """Sets several zone numbers at once (e.g. swap 4 and 1); only the final numbering must be unique per type."""
+        _require_manager(actor)
+        zones = {z.id: z for z in await self.list_zones(actor, field_id)}
+        missing = [str(z) for z in data.numbers if z not in zones]
+        if missing:
+            raise NotFoundError(f"Zones not in that field: {', '.join(missing)}.")
+        final = {(z.type, data.numbers.get(z.id, z.number)) for z in zones.values()}
+        if len(final) != len(zones):
+            raise InvalidInputError("Two zones of the same type would end up with the same number.")
+        await self.repo.renumber_zones(actor.account_id, data.numbers)
+        return await self.list_zones(actor, field_id)
 
     async def delete_zone(self, actor: Actor, zone_id: UUID) -> None:
         _require_manager(actor)
         if not await self.repo.delete_zone(actor.account_id, zone_id):
             raise NotFoundError(f"Zone {zone_id} not found.")
 
-    # ---------- crop cycles ----------
+    # ---------- lots ----------
 
-    async def list_crop_cycles(
+    async def lot_reads(self, actor: Actor, lots) -> list[LotRead]:
+        """ORM lots -> LotRead with their zones and label ("T26/27 · Cantero 2 · L2")."""
+        lots = list(lots)
+        zone_ids = await self.repo.lot_zone_ids(lot.id for lot in lots)
+        labels = {}
+        if any(zone_ids.values()):
+            zones = await self.repo.list_zones(actor.account_id)
+            labels = {z.id: z.label for z in (FieldZoneRead.model_validate(z) for z in zones)}
+        out = []
+        for lot in lots:
+            ids = zone_ids.get(lot.id, [])
+            read = LotRead.model_validate(lot).model_copy(update={"zone_ids": ids})
+            zone_names = " + ".join(labels[i] for i in ids if i in labels) or None
+            out.append(read.model_copy(update={"label": lot_label(lot.season, zone_names, lot.number)}))
+        return out
+
+    async def list_lots(
         self,
         actor: Actor,
         field_id: Optional[UUID] = None,
         status: Optional[str] = None,
         zone_id: Optional[UUID] = None,
-    ) -> list[CropCycleRead]:
-        statuses = [status] if status else None
-        items = await self.repo.list_crop_cycles(
-            actor.account_id, field_id=field_id, statuses=statuses, zone_id=zone_id
-        )
-        return [CropCycleRead.model_validate(c) for c in items]
+        statuses: Optional[list[str]] = None,
+    ) -> list[LotRead]:
+        statuses = [status] if status else statuses
+        items = await self.repo.list_lots(actor.account_id, field_id=field_id, statuses=statuses, zone_id=zone_id)
+        return await self.lot_reads(actor, items)
 
-    async def get_crop_cycle(self, actor: Actor, cycle_id: UUID) -> CropCycleRead:
-        cycle = await self.repo.get_crop_cycle(actor.account_id, cycle_id)
-        if cycle is None:
-            raise NotFoundError(f"Crop cycle {cycle_id} not found.")
-        return CropCycleRead.model_validate(cycle)
+    async def get_lot(self, actor: Actor, lot_id: UUID) -> LotRead:
+        lot = await self.repo.get_lot(actor.account_id, lot_id)
+        if lot is None:
+            raise NotFoundError(f"Lot {lot_id} not found.")
+        return (await self.lot_reads(actor, [lot]))[0]
 
-    async def create_crop_cycle(self, actor: Actor, data: CropCycleCreate) -> CropCycleRead:
+    async def _check_zones_in_field(self, actor: Actor, zone_ids: list[UUID], field_id: UUID) -> None:
+        for zone_id in zone_ids:
+            await self._check_zone_in_field(actor, zone_id, field_id)
+
+    async def create_lot(self, actor: Actor, data: LotCreate) -> LotRead:
         _require_manager(actor)
         await self.get_field(actor, data.field_id)
         await self.get_crop_master(actor, data.crop_master_id)
-        await self._check_zone_in_field(actor, data.zone_id, data.field_id)
-        cycle = await self.repo.create_crop_cycle(
-            CropCycle(account_id=actor.account_id, created_by=actor.user_id, **data.model_dump())
+        await self._check_zones_in_field(actor, data.zone_ids, data.field_id)
+        if data.origin_lot_id:
+            await self.get_lot(actor, data.origin_lot_id)
+        values = data.model_dump(exclude={"zone_ids", "zone_id"})
+        lot = await self.repo.create_lot(
+            Lot(account_id=actor.account_id, created_by=actor.user_id, **values), zone_ids=data.zone_ids
         )
-        return CropCycleRead.model_validate(cycle)
+        return await self.get_lot(actor, lot.id)
 
-    async def update_crop_cycle(self, actor: Actor, cycle_id: UUID, data: CropCycleUpdate) -> CropCycleRead:
+    async def update_lot(self, actor: Actor, lot_id: UUID, data: LotUpdate) -> LotRead:
         _require_manager(actor)
-        if data.zone_id:
-            await self._check_zone_in_field(actor, data.zone_id, (await self.get_crop_cycle(actor, cycle_id)).field_id)
-        cycle = await self.repo.update_crop_cycle(actor.account_id, cycle_id, data.model_dump(exclude_unset=True))
-        if cycle is None:
-            raise NotFoundError(f"Crop cycle {cycle_id} not found.")
-        return CropCycleRead.model_validate(cycle)
+        current = await self.get_lot(actor, lot_id)
+        if data.zone_ids:
+            await self._check_zones_in_field(actor, data.zone_ids, current.field_id)
+        values = data.model_dump(exclude_unset=True, exclude={"zone_ids", "zone_id"})
+        lot = await self.repo.update_lot(actor.account_id, lot_id, values, zone_ids=data.zone_ids)
+        if lot is None:
+            raise NotFoundError(f"Lot {lot_id} not found.")
+        return await self.get_lot(actor, lot_id)
 
-    async def delete_crop_cycle(self, actor: Actor, cycle_id: UUID) -> None:
+    async def delete_lot(self, actor: Actor, lot_id: UUID) -> None:
         _require_manager(actor)
-        if not await self.repo.delete_crop_cycle(actor.account_id, cycle_id):
-            raise NotFoundError(f"Crop cycle {cycle_id} not found.")
+        if not await self.repo.delete_lot(actor.account_id, lot_id):
+            raise NotFoundError(f"Lot {lot_id} not found.")
 
     # ---------- events ----------
 
@@ -439,7 +481,7 @@ class FarmService:
         self,
         actor: Actor,
         field_id: Optional[UUID] = None,
-        crop_cycle_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None,
         event_type: Optional[str] = None,
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
@@ -450,7 +492,7 @@ class FarmService:
         items = await self.repo.list_events(
             actor.account_id,
             field_id=field_id,
-            crop_cycle_id=crop_cycle_id,
+            lot_id=lot_id,
             event_type=event_type,
             since=since,
             until=until,
@@ -469,12 +511,12 @@ class FarmService:
     async def create_event(self, actor: Actor, data: FieldEventCreate) -> FieldEventRead:
         await self.get_field(actor, data.field_id)
         await self._check_zone_in_field(actor, data.zone_id, data.field_id)
-        if data.crop_cycle_id:
-            cycle = await self.get_crop_cycle(actor, data.crop_cycle_id)
-            if cycle.field_id != data.field_id:
-                raise InvalidInputError("The crop cycle does not belong to that field.")
+        if data.lot_id:
+            lot = await self.get_lot(actor, data.lot_id)
+            if lot.field_id != data.field_id:
+                raise InvalidInputError("The lot does not belong to that field.")
             if data.zone_id is None:
-                data = data.model_copy(update={"zone_id": cycle.zone_id})
+                data = data.model_copy(update={"zone_id": lot.zone_id})
         values = data.model_dump()
         values["occurred_at"] = values["occurred_at"] or utcnow()
         event = await self.repo.create_event(
@@ -518,30 +560,36 @@ class FarmService:
 
     async def overview(self, actor: Actor) -> list[FieldOverview]:
         fields = await self.repo.list_fields(actor.account_id)
-        cycles = await self.repo.active_cycles_with_crop(actor.account_id)
+        rows = await self.repo.active_lots_with_crop(actor.account_id)
         last_events = await self.repo.last_event_by_field(actor.account_id)
         zones = [FieldZoneRead.model_validate(z) for z in await self.repo.list_zones(actor.account_id)]
+        lots = {lot.id: lot for lot in await self.lot_reads(actor, [row[0] for row in rows])}
         labels = {z.id: z.label for z in zones}
-        by_field: dict[UUID, list[ActiveCycleSummary]] = {}
-        for cycle, crop in cycles:
-            by_field.setdefault(cycle.field_id, []).append(
-                ActiveCycleSummary(
-                    id=cycle.id,
+        by_field: dict[UUID, list[ActiveLotSummary]] = {}
+        for row, crop in rows:
+            lot = lots[row.id]
+            by_field.setdefault(lot.field_id, []).append(
+                ActiveLotSummary(
+                    id=lot.id,
                     crop_name=crop.name,
                     crop_i18n=crop.i18n or {},
                     variety=crop.variety,
-                    status=cycle.status,
-                    planting_date=cycle.planting_date,
-                    expected_harvest_date=cycle.expected_harvest_date,
-                    zone_id=cycle.zone_id,
-                    zone_label=labels.get(cycle.zone_id),
+                    status=lot.status,
+                    planting_date=lot.planting_date,
+                    expected_harvest_date=lot.expected_harvest_date,
+                    zone_id=lot.zone_id,
+                    zone_ids=lot.zone_ids,
+                    zone_label=labels.get(lot.zone_id),
+                    season=lot.season,
+                    number=lot.number,
+                    label=lot.label,
                 )
             )
         return [
             FieldOverview(
                 field=FieldRead.model_validate(f),
                 zones=[z for z in zones if z.field_id == f.id],
-                active_cycles=by_field.get(f.id, []),
+                active_lots=by_field.get(f.id, []),
                 last_event_at=last_events.get(f.id),
             )
             for f in fields
@@ -639,10 +687,10 @@ class FarmService:
         )
         if crop_master_id:
             cycle_ids = {
-                c.id for c in await self.repo.list_crop_cycles(actor.account_id, field_id=field_id)
+                c.id for c in await self.repo.list_lots(actor.account_id, field_id=field_id)
                 if c.crop_master_id == crop_master_id
             }
-            events = [e for e in events if e.crop_cycle_id in cycle_ids]
+            events = [e for e in events if e.lot_id in cycle_ids]
         by_unit: dict[str, float] = {}
         for e in events:
             if e.quantity is None:
@@ -655,4 +703,4 @@ class FarmService:
             "totals_by_unit": {k: round(v, 2) for k, v in by_unit.items()},
         }
 
-__all__ = ["FarmService", "ACTIVE_CROP_CYCLE_STATUSES"]
+__all__ = ["FarmService", "ACTIVE_LOT_STATUSES"]

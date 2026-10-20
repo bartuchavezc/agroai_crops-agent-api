@@ -9,7 +9,7 @@ from src.agent.reasoning.zone_grouping import MAX_CYCLES_PER_GROUP, group_cycles
 
 def _crop(cycle_id: str, name: str, health: str = "good") -> ZoneCropAssessment:
     return ZoneCropAssessment(
-        crop_cycle_id=cycle_id,
+        lot_id=cycle_id,
         crop_name=name,
         visible_in_photos=True,
         growth_stage="vegetativo",
@@ -106,7 +106,7 @@ def test_merge_needs_human_expert_is_true_if_any_group_says_so():
 def test_merge_fills_a_defensive_entry_for_a_cycle_missing_from_every_group():
     resolved = [_group([_crop("c1", "Tomate")])]  # c2's group failed entirely, or dropped the id
     result = merge_zone_result(["c1", "c2"], resolved, _overview(), _synthesis())
-    ids = [c.crop_cycle_id for c in result.crops]
+    ids = [c.lot_id for c in result.crops]
     assert ids == ["c1", "c2"]
     assert result.crops[1].health_status == "unknown" and result.crops[1].visible_in_photos is False
 

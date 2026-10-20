@@ -1,5 +1,5 @@
 """
-Planning module: crop plans (one crop cycle, or a long permaculture-style roadmap), their stages and
+Planning module: crop plans (one lot, or a long permaculture-style roadmap), their stages and
 staggered sowings, and schedulable reminders that the `reminders` batch job turns into in-app
 notifications when due. Same account / soft-delete pattern as management.
 """
@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from src.shared.database import Base
 from src.shared.domain.base import utcnow
 
-PLAN_KINDS = ("ciclo", "largo")  # one crop cycle | long roadmap (perennials, staggered sowings, seasons)
+PLAN_KINDS = ("ciclo", "largo")  # one lot | long roadmap (perennials, staggered sowings, seasons)
 PLAN_STATUSES = ("borrador", "activo", "archivado")
 STAGE_TYPES = (
     "germinacion", "plantin", "traspaso", "vegetativo", "floracion", "fructificacion", "cosecha",
@@ -36,7 +36,7 @@ class CropPlan(Base):
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
     zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
-    crop_cycle_id = Column(UUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"), index=True)
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"), index=True)
     name = Column(String(255), nullable=False)
     kind = Column(String(10), nullable=False, default="ciclo")
     status = Column(String(10), nullable=False, default="activo")
@@ -59,7 +59,7 @@ class PlanStage(Base):
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     plan_id = Column(UUID(as_uuid=True), ForeignKey("crop_plans.id", ondelete="CASCADE"), nullable=False, index=True)
     crop_master_id = Column(UUID(as_uuid=True), ForeignKey("crop_masters.id", ondelete="SET NULL"))
-    crop_cycle_id = Column(UUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"))
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
     zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
     stage = Column(String(20), nullable=False, default="otro")
     name = Column(String(255), nullable=False)
@@ -74,7 +74,7 @@ class PlanStage(Base):
 
 class PlanSowing(Base):
     """One planned sowing: which crop, where, which week and how much seed (staggered sowings split a lot
-    over several weeks). Marking it sown can start the crop cycle and discount the seed lot."""
+    over several weeks). Marking it sown can start the lot and discount the seed lot."""
     __tablename__ = "plan_sowings"
     __table_args__ = (CheckConstraint(f"status IN {SOWING_STATUSES}", name="sowing_status_valid"),)
 
@@ -88,7 +88,7 @@ class PlanSowing(Base):
     unit = Column(String(30))
     seed_lot_id = Column(UUID(as_uuid=True), ForeignKey("seed_lots.id", ondelete="SET NULL"))
     status = Column(String(10), nullable=False, default="pendiente")
-    crop_cycle_id = Column(UUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"))
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
     notes = Column(Text)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
@@ -112,7 +112,7 @@ class Reminder(Base):
     plan_id = Column(UUID(as_uuid=True), ForeignKey("crop_plans.id", ondelete="CASCADE"), index=True)
     stage_id = Column(UUID(as_uuid=True), ForeignKey("plan_stages.id", ondelete="SET NULL"))
     sowing_id = Column(UUID(as_uuid=True), ForeignKey("plan_sowings.id", ondelete="CASCADE"))
-    crop_cycle_id = Column(UUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"), index=True)
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"), index=True)
     field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
     zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
     title = Column(String(255), nullable=False)
@@ -147,7 +147,7 @@ class ReminderCompletion(Base):
     reminder_id = Column(UUID(as_uuid=True), ForeignKey("reminders.id", ondelete="SET NULL"))
     field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
     zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
-    crop_cycle_id = Column(UUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"))
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
     title = Column(String(255), nullable=False)
     description = Column(Text)
     completed_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)

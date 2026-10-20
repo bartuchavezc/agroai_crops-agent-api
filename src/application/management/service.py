@@ -48,8 +48,8 @@ class ManagementService:
     async def _check_refs(self, actor: Actor, values: dict) -> None:
         await self._check_field(actor, values.get("field_id"))
         await self._check_assignee(actor, values.get("assigned_to"))
-        if values.get("crop_cycle_id") and self.farm is not None:
-            await self.farm.get_crop_cycle(actor, values["crop_cycle_id"])
+        if values.get("lot_id") and self.farm is not None:
+            await self.farm.get_lot(actor, values["lot_id"])
 
     async def list_members(self, actor: Actor) -> list:
         """Active members, for assigning items (the agent resolves names/emails with this)."""
@@ -127,12 +127,12 @@ class ManagementService:
         self, actor: Actor, field_id: IdFilter = None, since: Optional[str] = None, until: Optional[str] = None,
         cycle_id: Optional[UUID] = None, crop_master_id: Optional[UUID] = None,
     ) -> BudgetSummary:
-        cycle = await self.farm.get_crop_cycle(actor, cycle_id) if cycle_id and self.farm is not None else None
+        cycle = await self.farm.get_lot(actor, cycle_id) if cycle_id and self.farm is not None else None
         if crop_master_id and self.farm is not None:
             await self.farm.get_crop_master(actor, crop_master_id)
         entries = await self.repo.list_budget_entries(
             actor.account_id, field_id=field_id, since=since, until=until,
-            crop_cycle_id=cycle_id, crop_master_id=crop_master_id,
+            lot_id=cycle_id, crop_master_id=crop_master_id,
         )
         currency = await self.repo.account_currency(actor.account_id)
         # The totals are in the account's currency; entries in another one are reported apart, never mixed in.
@@ -163,8 +163,8 @@ class ManagementService:
         )
         if cycle is not None:
             # Only a single cycle has an expected yield and price to read the cost against; missing data -> null.
-            if cycle.plant_count:
-                summary.cost_per_plant = round(total_gastos / cycle.plant_count, 2)
+            if cycle.quantity and (cycle.unit or "plantas") == "plantas":
+                summary.cost_per_plant = round(total_gastos / cycle.quantity, 2)
             if cycle.expected_price:
                 summary.break_even_kg = round(total_gastos / cycle.expected_price, 2)
             if cycle.expected_yield_kg is not None and cycle.expected_price is not None:

@@ -74,7 +74,7 @@ class BudgetEntryCreate(BaseModel):
     type: BudgetType
     date: date
     field_id: Optional[UUID] = None
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     category: Optional[str] = PField(default=None, max_length=100)
     currency: Optional[str] = PField(
         default=None, pattern=r"^[A-Z]{3}$", description="ISO-4217; omit for the account's"
@@ -89,7 +89,7 @@ class BudgetEntryUpdate(PartialUpdate):
     type: Optional[BudgetType] = None
     date: Optional[dt.date] = None
     field_id: Optional[UUID] = None
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     category: Optional[str] = PField(default=None, max_length=100)
     currency: Optional[str] = PField(
         default=None, pattern=r"^[A-Z]{3}$", description="ISO-4217; omit for the account's"
@@ -100,7 +100,7 @@ class BudgetEntryRead(ORMModel):
     id: UUID
     account_id: UUID
     field_id: Optional[UUID] = None
-    crop_cycle_id: Optional[UUID] = None
+    lot_id: Optional[UUID] = None
     description: str
     category: Optional[str] = None
     currency: Optional[str] = None

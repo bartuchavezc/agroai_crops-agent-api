@@ -27,10 +27,10 @@ class ReportModel(Base):
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id = Column(PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(PGUUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
-    crop_cycle_id = Column(PGUUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"))
-    # Zone tracking: one report covers every active crop of the zone (crop_cycle_ids), from 1-4 photos.
+    lot_id = Column(PGUUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
+    # Zone tracking: one report covers every active crop of the zone (lot_ids), from 1-4 photos.
     zone_id = Column(PGUUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
-    crop_cycle_ids = Column(JSONB, nullable=False, default=list, server_default="[]")
+    lot_ids = Column(JSONB, nullable=False, default=list, server_default="[]")
     image_identifiers = Column(JSONB, nullable=False, default=list, server_default="[]")
     notes = Column(Text)  # the user's own observations at submission time, fed to the model as context
     created_by = Column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
@@ -52,7 +52,7 @@ class SQLAlchemyReportsRepository:
 
     async def create(self, account_id: UUID, created_by: Optional[UUID], data: ReportCreate) -> Report:
         values = data.model_dump()
-        values["crop_cycle_ids"] = [str(c) for c in data.crop_cycle_ids]  # JSONB
+        values["lot_ids"] = [str(c) for c in data.lot_ids]  # JSONB
         model = ReportModel(account_id=account_id, created_by=created_by, **values)
         async with self.session_factory() as session:
             session.add(model)
@@ -73,7 +73,7 @@ class SQLAlchemyReportsRepository:
         self,
         account_id: UUID,
         field_id: Optional[UUID] = None,
-        crop_cycle_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None,
         report_type: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
@@ -85,12 +85,12 @@ class SQLAlchemyReportsRepository:
         stmt = select(ReportModel).where(ReportModel.account_id == account_id)
         if field_id:
             stmt = stmt.where(ReportModel.field_id == field_id)
-        if crop_cycle_id:
+        if lot_id:
             # Its own reports plus the zone tracking reports that covered it.
             stmt = stmt.where(
                 or_(
-                    ReportModel.crop_cycle_id == crop_cycle_id,
-                    ReportModel.crop_cycle_ids.contains([str(crop_cycle_id)]),
+                    ReportModel.lot_id == lot_id,
+                    ReportModel.lot_ids.contains([str(lot_id)]),
                 )
             )
         if zone_id:

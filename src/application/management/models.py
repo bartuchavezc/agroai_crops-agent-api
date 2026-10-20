@@ -49,7 +49,7 @@ class BudgetEntry(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
-    crop_cycle_id = Column(UUID(as_uuid=True), ForeignKey("crop_cycles.id", ondelete="SET NULL"))
+    lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
     description = Column(String(255), nullable=False)
     category = Column(String(100))
     currency = Column(String(3))  # ISO-4217; NULL = the account's currency

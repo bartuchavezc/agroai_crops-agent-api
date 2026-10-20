@@ -81,15 +81,15 @@ class PlanningRepository:
         account_id: UUID,
         field_id: Optional[UUID] = None,
         status: Optional[str] = None,
-        crop_cycle_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None,
     ) -> Sequence[CropPlan]:
         stmt = select(CropPlan).where(CropPlan.account_id == account_id, CropPlan.deleted_at.is_(None))
         if field_id:
             stmt = stmt.where(CropPlan.field_id == field_id)
         if status:
             stmt = stmt.where(CropPlan.status == status)
-        if crop_cycle_id:
-            stmt = stmt.where(CropPlan.crop_cycle_id == crop_cycle_id)
+        if lot_id:
+            stmt = stmt.where(CropPlan.lot_id == lot_id)
         stmt = stmt.order_by(CropPlan.start_date.desc().nulls_last(), CropPlan.created_at.desc())
         async with self.session_factory() as session:
             return (await session.execute(stmt)).scalars().all()
@@ -148,7 +148,7 @@ class PlanningRepository:
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
         field_id: Optional[UUID] = None,
-        crop_cycle_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None,
         plan_id: Optional[UUID] = None,
         assigned_to: IdFilter = None,
         limit: int = 200,
@@ -168,8 +168,8 @@ class PlanningRepository:
             stmt = stmt.where(Reminder.due_at < until)
         if field_id:
             stmt = stmt.where(Reminder.field_id == field_id)
-        if crop_cycle_id:
-            stmt = stmt.where(Reminder.crop_cycle_id == crop_cycle_id)
+        if lot_id:
+            stmt = stmt.where(Reminder.lot_id == lot_id)
         if plan_id:
             stmt = stmt.where(Reminder.plan_id == plan_id)
         if assigned_to == NONE:

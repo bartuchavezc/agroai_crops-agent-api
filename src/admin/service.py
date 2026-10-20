@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.application.farm.models import ACTIVE_CROP_CYCLE_STATUSES
+from src.application.farm.models import ACTIVE_LOT_STATUSES
 
 from .schemas import (
     AccountsStats,
@@ -383,15 +383,15 @@ class AdminMetricsService:
         cycles = await run.one(
             f"""
             SELECT count(*), count(*) FILTER (WHERE status = ANY(:active)), count(*) FILTER (WHERE created_at >= :since)
-              FROM crop_cycles WHERE {live}
+              FROM lots WHERE {live}
             """,
-            active=list(ACTIVE_CROP_CYCLE_STATUSES),
+            active=list(ACTIVE_LOT_STATUSES),
         )
-        by_status = await run.all(f"SELECT status, count(*) FROM crop_cycles WHERE {live} GROUP BY 1 ORDER BY 2 DESC")
+        by_status = await run.all(f"SELECT status, count(*) FROM lots WHERE {live} GROUP BY 1 ORDER BY 2 DESC")
         top_crops = await run.all(
             f"""
             SELECT initcap(lower(cm.name)), count(*)
-              FROM crop_cycles cc JOIN crop_masters cm ON cm.id = cc.crop_master_id
+              FROM lots cc JOIN crop_masters cm ON cm.id = cc.crop_master_id
              WHERE cc.{live} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 15
             """
         )
@@ -413,9 +413,9 @@ class AdminMetricsService:
             fields_with_boundary=int(fields[9]),
             fields_with_layout=int(fields[10]),
             avg_fields_per_account=round(int(fields[0]) / accounts_with_fields, 2) if accounts_with_fields else 0.0,
-            crop_cycles_total=int(cycles[0]),
-            crop_cycles_active=int(cycles[1]),
-            crop_cycles_in_window=int(cycles[2]),
+            lots_total=int(cycles[0]),
+            lots_active=int(cycles[1]),
+            lots_in_window=int(cycles[2]),
             cycles_by_status=_buckets(by_status),
             top_crops=_buckets(top_crops),
             events_total=int(events[0]),
@@ -442,7 +442,7 @@ class AdminMetricsService:
             ("Chat con el agente", "conversations", None),
             ("Diagnóstico por foto", "reports", PHOTO_REPORTS),
             ("Campos", "fields", "deleted_at IS NULL"),
-            ("Ciclos de cultivo", "crop_cycles", "deleted_at IS NULL"),
+            ("Ciclos de cultivo", "lots", "deleted_at IS NULL"),
             ("Registro de eventos", "field_events", "source = 'user'"),
             ("Memoria del agente", "agent_memories", "superseded_at IS NULL"),
             ("Inventario de semillas", "seed_lots", "deleted_at IS NULL"),
@@ -582,7 +582,7 @@ class AdminMetricsService:
                                   coalesce(sum(area_m2) FILTER (WHERE area_m2 > 0), 0) AS area
                              FROM fields WHERE deleted_at IS NULL GROUP BY account_id),
                      cc AS (SELECT account_id, count(*) AS n, count(*) FILTER (WHERE status = ANY(:active)) AS active
-                              FROM crop_cycles WHERE deleted_at IS NULL GROUP BY account_id),
+                              FROM lots WHERE deleted_at IS NULL GROUP BY account_id),
                      photos AS (SELECT account_id, count(*) AS n FROM reports WHERE {PHOTO_REPORTS} GROUP BY 1),
                      convs AS (SELECT account_id, count(*) AS n FROM conversations GROUP BY 1),
                      msgs AS (SELECT c.account_id, count(*) AS n FROM conversation_messages m
@@ -595,7 +595,7 @@ class AdminMetricsService:
                        coalesce(members.owners, 0) AS owners, coalesce(members.tecnicos, 0) AS tecnicos,
                        coalesce(members.staff, 0) AS staff,
                        coalesce(f.n, 0) AS fields, coalesce(f.area, 0) AS area_m2,
-                       coalesce(cc.n, 0) AS crop_cycles, coalesce(cc.active, 0) AS crop_cycles_active,
+                       coalesce(cc.n, 0) AS lots, coalesce(cc.active, 0) AS lots_active,
                        coalesce(photos.n, 0) AS photos, coalesce(convs.n, 0) AS conversations,
                        coalesce(msgs.n, 0) AS user_messages, coalesce(events.n, 0) AS events,
                        last_active.at AS last_active_at
@@ -610,7 +610,7 @@ class AdminMetricsService:
                   LEFT JOIN last_active ON last_active.account_id = a.id
                  ORDER BY last_active.at DESC NULLS LAST, a.created_at DESC
                 """,
-                active=list(ACTIVE_CROP_CYCLE_STATUSES),
+                active=list(ACTIVE_LOT_STATUSES),
             )
         return [AdminAccountRow(**{**r, "area_m2": _f(r["area_m2"])}) for r in rows]
 

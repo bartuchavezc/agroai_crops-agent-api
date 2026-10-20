@@ -107,21 +107,21 @@ async def test_recurring_reminders_move_to_the_next_occurrence(client, signup, c
     assert short["recurrence"] == "every_n_days"
 
 
-async def test_crop_cycle_stage_plan_from_template(client, signup):
+async def test_lot_stage_plan_from_template(client, signup):
     owner = await signup("stageplan")
     h = owner["headers"]
     field, zone = await _field_zone(client, h)
     sown = date.today()
     cycle = (
         await client.post(
-            f"{FARM}/crop-cycles", headers=h,
+            f"{FARM}/lots", headers=h,
             json={"field_id": field["id"], "zone_id": zone["id"], "crop_master_id": await _crop_id(client, h, "tomate"),
                   "status": "planted", "planting_date": sown.isoformat(),
                   "expected_harvest_date": (sown + timedelta(days=100)).isoformat()},
         )
     ).json()
 
-    preview = (await client.get(f"{P}/crop-cycles/{cycle['id']}/stage-plan", headers=h)).json()
+    preview = (await client.get(f"{P}/lots/{cycle['id']}/stage-plan", headers=h)).json()
     stages = [s["stage"] for s in preview["stages"]]
     assert stages[0] == "germinacion" and "plantin" in stages and stages[-1] == "cosecha"
     titles = [r["title"] for r in preview["reminders"]]
@@ -132,16 +132,16 @@ async def test_crop_cycle_stage_plan_from_template(client, signup):
     assert _local(transplant["due_at"]).startswith((sown + timedelta(days=35)).isoformat() + "T09:00")
     assert (await client.get(f"{P}/plans", headers=h)).json() == []  # preview saves nothing
 
-    applied = (await client.post(f"{P}/crop-cycles/{cycle['id']}/stage-plan", headers=h)).json()
+    applied = (await client.post(f"{P}/lots/{cycle['id']}/stage-plan", headers=h)).json()
     plan = (await client.get(f"{P}/plans/{applied['plan_id']}", headers=h)).json()
-    assert plan["kind"] == "ciclo" and plan["crop_cycle_id"] == cycle["id"] and "Cantero 1" in plan["name"]
+    assert plan["kind"] == "ciclo" and plan["lot_id"] == cycle["id"] and "Cantero 1" in plan["name"]
     assert len(plan["stages"]) == len(preview["stages"])
     assert len(plan["reminders"]) == len(preview["reminders"])
-    assert all(r["zone_id"] == zone["id"] and r["crop_cycle_id"] == cycle["id"] for r in plan["reminders"])
+    assert all(r["zone_id"] == zone["id"] and r["lot_id"] == cycle["id"] for r in plan["reminders"])
 
     # Regenerating replaces, without duplicating; a reminder already done is kept.
     await client.post(f"{P}/reminders/{plan['reminders'][0]['id']}/complete", headers=h)
-    await client.post(f"{P}/crop-cycles/{cycle['id']}/stage-plan", headers=h)
+    await client.post(f"{P}/lots/{cycle['id']}/stage-plan", headers=h)
     again = (await client.get(f"{P}/plans/{applied['plan_id']}", headers=h)).json()
     assert len(again["stages"]) == len(preview["stages"])
     assert len(again["reminders"]) == len(preview["reminders"]) + 1
@@ -185,14 +185,14 @@ async def test_long_plan_with_staggered_sowings_and_seed_lot(client, signup):
 
     # The first sowing happens: crop cycle in the zone, seed discounted, its reminder done, stage reminders.
     done = (await client.post(f"{P}/sowings/{sowings[0]['id']}/sow", headers=h, json={})).json()
-    assert done["status"] == "sembrado" and done["crop_cycle_id"]
-    cycle = (await client.get(f"{FARM}/crop-cycles/{done['crop_cycle_id']}", headers=h)).json()
+    assert done["status"] == "sembrado" and done["lot_id"]
+    cycle = (await client.get(f"{FARM}/lots/{done['lot_id']}", headers=h)).json()
     assert cycle["zone_id"] == zone["id"] and cycle["status"] == "planted"
     lots = (await client.get("/api/v1/inventory/seed-lots", headers=h)).json()
     assert lots[0]["quantity"] == 400
     reminders = (await client.get(f"{P}/reminders?plan_id={plan['id']}", headers=h)).json()
     assert next(r for r in reminders if r["sowing_id"] == sowings[0]["id"])["status"] == "hecho"
-    cycle_plans = [p for p in (await client.get(f"{P}/plans", headers=h)).json() if p["crop_cycle_id"] == cycle["id"]]
+    cycle_plans = [p for p in (await client.get(f"{P}/plans", headers=h)).json() if p["lot_id"] == cycle["id"]]
     assert len(cycle_plans) == 1
     assert (await client.post(f"{P}/sowings/{sowings[0]['id']}/sow", headers=h, json={})).status_code == 400
 

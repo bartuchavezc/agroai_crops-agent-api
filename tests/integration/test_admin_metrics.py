@@ -82,7 +82,7 @@ async def test_overview_and_listings_reflect_usage(client, container, signup, ad
                                json={"name": "Huerta", "area_m2": 120, "latitude": -34.9, "longitude": -57.9})).json()
     await client.post("/api/v1/farm-management/fields", headers=h, json={"name": "Maceta", "area_m2": 0.5})
     crops = (await client.get("/api/v1/farm-management/crop-masters?q=tomate", headers=h)).json()
-    cycle = await client.post("/api/v1/farm-management/crop-cycles", headers=h,
+    cycle = await client.post("/api/v1/farm-management/lots", headers=h,
                               json={"field_id": field["id"], "crop_master_id": crops[0]["id"], "status": "growing"})
     assert cycle.status_code == 201, cycle.text
     event = await client.post("/api/v1/farm-management/events", headers=staff["headers"],
@@ -107,7 +107,7 @@ async def test_overview_and_listings_reflect_usage(client, container, signup, ad
     assert after["users"]["dau"] >= 2  # owner chatted, staff uploaded and logged an event
     assert after["photos"]["uploads"] - before["photos"]["uploads"] == 1
     assert after["farm"]["fields_total"] - before["farm"]["fields_total"] == 2
-    assert after["farm"]["crop_cycles_active"] - before["farm"]["crop_cycles_active"] == 1
+    assert after["farm"]["lots_active"] - before["farm"]["lots_active"] == 1
     assert after["conversations"]["total"] - before["conversations"]["total"] == 2
     assert after["conversations"]["user_messages"] - before["conversations"]["user_messages"] == 4
     assert after["sessions"]["total"] - before["sessions"]["total"] == 2
@@ -120,7 +120,7 @@ async def test_overview_and_listings_reflect_usage(client, container, signup, ad
     accounts = (await client.get(ADMIN + "/accounts", headers=headers)).json()
     row = next(a for a in accounts if a["id"] == owner["account"]["id"])
     assert (row["users"], row["owners"], row["tecnicos"], row["staff"]) == (3, 1, 1, 1)
-    assert (row["fields"], row["area_m2"], row["crop_cycles_active"]) == (2, 120.5, 1)
+    assert (row["fields"], row["area_m2"], row["lots_active"]) == (2, 120.5, 1)
     assert (row["photos"], row["conversations"], row["user_messages"], row["events"]) == (1, 2, 4, 1)
     assert row["last_active_at"] is not None
 

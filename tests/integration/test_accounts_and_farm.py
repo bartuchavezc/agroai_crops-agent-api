@@ -64,7 +64,7 @@ async def test_farm_flow_and_trailing_slashes(client, signup):
     assert cherry["account_id"] is None  # global catalog seeded by the migration
 
     cycle = await client.post(
-        "/api/v1/farm-management/crop-cycles",
+        "/api/v1/farm-management/lots",
         headers=h,
         json={"field_id": field_id, "crop_master_id": cherry["id"], "status": "planted", "planting_date": "2026-09-20"},
     )
@@ -79,7 +79,7 @@ async def test_farm_flow_and_trailing_slashes(client, signup):
     assert event.json()["source"] == "user"
 
     overview = (await client.get("/api/v1/farm-management/overview", headers=h)).json()
-    assert overview[0]["active_cycles"][0]["crop_name"] == "Tomate"
+    assert overview[0]["active_lots"][0]["crop_name"] == "Tomate"
     assert overview[0]["last_event_at"] is not None
 
 
@@ -178,22 +178,22 @@ async def test_field_soft_delete_frees_the_name_and_hides_history(client, signup
     assert recreated.json()["id"] != field["id"]
 
 
-async def test_crop_cycle_soft_delete(client, signup):
+async def test_lot_soft_delete(client, signup):
     owner = await signup("softdel-cycle")
     h = owner["headers"]
     field = (await client.post("/api/v1/farm-management/fields", headers=h, json={"name": "Cantero Y"})).json()
     crops = (await client.get("/api/v1/farm-management/crop-masters?q=tomate", headers=h)).json()
     cycle = await client.post(
-        "/api/v1/farm-management/crop-cycles",
+        "/api/v1/farm-management/lots",
         headers=h,
         json={"field_id": field["id"], "crop_master_id": crops[0]["id"], "status": "planted"},
     )
     cycle_id = cycle.json()["id"]
 
-    assert (await client.delete(f"/api/v1/farm-management/crop-cycles/{cycle_id}", headers=h)).status_code == 204
-    assert (await client.get("/api/v1/farm-management/crop-cycles", headers=h)).json() == []
+    assert (await client.delete(f"/api/v1/farm-management/lots/{cycle_id}", headers=h)).status_code == 204
+    assert (await client.get("/api/v1/farm-management/lots", headers=h)).json() == []
     overview = (await client.get("/api/v1/farm-management/overview", headers=h)).json()
-    assert overview[0]["active_cycles"] == []
+    assert overview[0]["active_lots"] == []
 
 
 async def test_webp_upload_is_accepted(client, signup):
@@ -220,7 +220,7 @@ _TINY_PNG = (
 )
 
 
-async def test_periodic_upload_requires_crop_cycle_id(client, signup):
+async def test_periodic_upload_requires_lot_id(client, signup):
     import base64
 
     user = await signup("periodic-missing-cycle")
@@ -258,7 +258,7 @@ async def test_periodic_upload_responds_immediately_and_creates_the_report(clien
     crops = (await client.get("/api/v1/farm-management/crop-masters?q=tomate", headers=h)).json()
     cycle = (
         await client.post(
-            "/api/v1/farm-management/crop-cycles",
+            "/api/v1/farm-management/lots",
             headers=h,
             json={"field_id": field["id"], "crop_master_id": crops[0]["id"], "status": "planted"},
         )
@@ -267,7 +267,7 @@ async def test_periodic_upload_responds_immediately_and_creates_the_report(clien
     up = await client.post(
         "/api/v1/upload/image",
         headers=h,
-        data={"field_id": field["id"], "crop_cycle_id": cycle["id"], "report_type": "periodic"},
+        data={"field_id": field["id"], "lot_id": cycle["id"], "report_type": "periodic"},
         files={"image_file": ("hoja.png", base64.b64decode(_TINY_PNG), "image/png")},
     )
     # The upload itself must respond immediately with a well-formed report, whatever the background
@@ -275,7 +275,7 @@ async def test_periodic_upload_responds_immediately_and_creates_the_report(clien
     assert up.status_code == 200, up.text
     report = (await client.get(f"/api/v1/reports/{up.json()['report_id']}", headers=h)).json()
     assert report["report_type"] == "periodic"
-    assert report["crop_cycle_id"] == cycle["id"]
+    assert report["lot_id"] == cycle["id"]
     assert report["status"] in ("PENDING_ANALYSIS", "ANALYSIS_FAILED", "ANALYSIS_COMPLETED")
 
 
@@ -291,7 +291,7 @@ async def test_periodic_upload_marks_failed_when_background_analysis_errors(clie
     crops = (await client.get("/api/v1/farm-management/crop-masters?q=tomate", headers=h)).json()
     cycle = (
         await client.post(
-            "/api/v1/farm-management/crop-cycles",
+            "/api/v1/farm-management/lots",
             headers=h,
             json={"field_id": field["id"], "crop_master_id": crops[0]["id"], "status": "planted"},
         )
@@ -300,7 +300,7 @@ async def test_periodic_upload_marks_failed_when_background_analysis_errors(clie
     up = await client.post(
         "/api/v1/upload/image",
         headers=h,
-        data={"field_id": field["id"], "crop_cycle_id": cycle["id"], "report_type": "periodic"},
+        data={"field_id": field["id"], "lot_id": cycle["id"], "report_type": "periodic"},
         files={"image_file": ("hoja.png", base64.b64decode(_TINY_PNG), "image/png")},
     )
     report_id = up.json()["report_id"]
@@ -316,7 +316,7 @@ async def test_periodic_upload_marks_failed_when_background_analysis_errors(clie
 
 async def test_manual_diagnosis_failure_is_also_persisted(client, signup):
     """The same failure-marking applies to the manual "Analizar con el agente" flow (diagnosis reports,
-    uploaded without a crop_cycle_id): a failed attempt must not leave the report silently PENDING_ANALYSIS
+    uploaded without a lot_id): a failed attempt must not leave the report silently PENDING_ANALYSIS
     forever if the user misses the error toast — it becomes ANALYSIS_FAILED, visible and retryable."""
     import base64
 
@@ -337,21 +337,21 @@ async def test_manual_diagnosis_failure_is_also_persisted(client, signup):
     assert report["status"] == "ANALYSIS_FAILED"
 
 
-async def test_reports_filter_by_crop_cycle_and_type(client, signup):
+async def test_reports_filter_by_lot_and_type(client, signup):
     user = await signup("reports-filter")
     h = user["headers"]
     field = (await client.post("/api/v1/farm-management/fields", headers=h, json={"name": "Cantero"})).json()
     crops = (await client.get("/api/v1/farm-management/crop-masters?q=tomate", headers=h)).json()
     cycle_a = (
         await client.post(
-            "/api/v1/farm-management/crop-cycles",
+            "/api/v1/farm-management/lots",
             headers=h,
             json={"field_id": field["id"], "crop_master_id": crops[0]["id"], "status": "planted"},
         )
     ).json()
     cycle_b = (
         await client.post(
-            "/api/v1/farm-management/crop-cycles",
+            "/api/v1/farm-management/lots",
             headers=h,
             json={"field_id": field["id"], "crop_master_id": crops[0]["id"], "status": "planted"},
         )
@@ -361,16 +361,16 @@ async def test_reports_filter_by_crop_cycle_and_type(client, signup):
         await client.post(
             "/api/v1/reports",
             headers=h,
-            json={"field_id": field["id"], "crop_cycle_id": cycle_a["id"], "report_type": "periodic"},
+            json={"field_id": field["id"], "lot_id": cycle_a["id"], "report_type": "periodic"},
         )
     ).json()
     await client.post(
         "/api/v1/reports",
         headers=h,
-        json={"field_id": field["id"], "crop_cycle_id": cycle_b["id"], "report_type": "diagnosis"},
+        json={"field_id": field["id"], "lot_id": cycle_b["id"], "report_type": "diagnosis"},
     )
 
-    only_a = (await client.get(f"/api/v1/reports?crop_cycle_id={cycle_a['id']}", headers=h)).json()
+    only_a = (await client.get(f"/api/v1/reports?lot_id={cycle_a['id']}", headers=h)).json()
     assert [r["id"] for r in only_a] == [r1["id"]]
 
     only_periodic = (await client.get("/api/v1/reports?report_type=periodic", headers=h)).json()

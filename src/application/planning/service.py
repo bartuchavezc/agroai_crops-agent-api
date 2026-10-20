@@ -1,17 +1,17 @@
 """
 Planning: reminders (one-off or recurring, notified in-app by the `reminders` batch job), crop plans with
-stages and staggered sowings, and the stage plan of a crop cycle generated from its crop's template
+stages and staggered sowings, and the stage plan of a lot generated from its crop's template
 (germinación -> traspaso -> etapas clave -> posible cosecha).
 
 Permissions: every member can create and tick reminders (staff does the daily work); plans, stages and
-sowings are manager-only, like crop cycles. Reminders without assignee notify the whole account.
+sowings are manager-only, like lots. Reminders without assignee notify the whole account.
 """
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from src.application.farm.schemas import CropCycleCreate
+from src.application.farm.schemas import LotCreate
 from src.shared.domain.locale import localized
 from src.shared.domain.messages import adapt
 from src.shared.domain.actor import Actor
@@ -115,8 +115,8 @@ class PlanningService:
             zone = await self.farm.get_zone(actor, values["zone_id"])
             if values.get("field_id") and zone.field_id != values["field_id"]:
                 raise InvalidInputError("The zone does not belong to that field.")
-        if values.get("crop_cycle_id"):
-            await self.farm.get_crop_cycle(actor, values["crop_cycle_id"])
+        if values.get("lot_id"):
+            await self.farm.get_lot(actor, values["lot_id"])
         if values.get("crop_master_id"):
             await self.farm.get_crop_master(actor, values["crop_master_id"])
         if values.get("assigned_to"):
@@ -137,7 +137,7 @@ class PlanningService:
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
         field_id: Optional[UUID] = None,
-        crop_cycle_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None,
         plan_id: Optional[UUID] = None,
         assigned_to: IdFilter = None,
         limit: int = 200,
@@ -145,7 +145,7 @@ class PlanningService:
         before: Optional[datetime] = None,
     ) -> list[ReminderRead]:
         rows = await self.repo.list_reminders(
-            actor.account_id, status, since, until, field_id, crop_cycle_id, plan_id, assigned_to, min(limit, 500),
+            actor.account_id, status, since, until, field_id, lot_id, plan_id, assigned_to, min(limit, 500),
             zone_id=zone_id, before=before,
         )
         return [ReminderRead.model_validate(r) for r in rows]
@@ -189,7 +189,7 @@ class PlanningService:
     async def _record_completion(self, actor: Actor, reminder: Reminder, at: datetime) -> None:
         await self.repo.add(ReminderCompletion(
             account_id=actor.account_id, reminder_id=reminder.id, field_id=reminder.field_id,
-            zone_id=reminder.zone_id, crop_cycle_id=reminder.crop_cycle_id, title=reminder.title,
+            zone_id=reminder.zone_id, lot_id=reminder.lot_id, title=reminder.title,
             description=reminder.description, completed_at=at, completed_by=actor.user_id,
         ))
 
@@ -356,7 +356,7 @@ class PlanningService:
                     account_id=actor.account_id,
                     plan_id=plan.id,
                     stage_id=stage.id,
-                    crop_cycle_id=data.crop_cycle_id or plan.crop_cycle_id,
+                    lot_id=data.lot_id or plan.lot_id,
                     field_id=plan.field_id,
                     zone_id=data.zone_id or plan.zone_id,
                     title=f"{plan.name}: {data.name}",
@@ -457,7 +457,7 @@ class PlanningService:
             raise NotFoundError(f"Sowing {sowing_id} not found.")
 
     async def sow(self, actor: Actor, sowing_id: UUID, data: SowRequest) -> SowingRead:
-        """The planned sowing happened: start its crop cycle (with its stage reminders) and discount the seed."""
+        """The planned sowing happened: start its lot (with its stage reminders) and discount the seed."""
         _require_manager(actor)
         sowing = await self.repo.get(PlanSowing, actor.account_id, sowing_id)
         if sowing is None:
@@ -467,16 +467,16 @@ class PlanningService:
         plan = await self._plan(actor, sowing.plan_id)
         sown_on = data.sown_on or utcnow().astimezone(self._tz(actor)).date()
         values: dict = {"status": "sembrado", "sow_date": sown_on}
-        if data.create_crop_cycle:
+        if data.create_lot:
             field_id = plan.field_id
             if sowing.zone_id:
                 field_id = (await self.farm.get_zone(actor, sowing.zone_id)).field_id
             if not field_id:
                 raise InvalidInputError("The plan has no field: set one (or a zone on the sowing) to start the crop.")
             crop = await self.farm.get_crop_master(actor, sowing.crop_master_id)
-            cycle = await self.farm.create_crop_cycle(
+            cycle = await self.farm.create_lot(
                 actor,
-                CropCycleCreate(
+                LotCreate(
                     field_id=field_id,
                     crop_master_id=sowing.crop_master_id,
                     zone_id=sowing.zone_id,
@@ -487,21 +487,21 @@ class PlanningService:
                     notes=f"Siembra del plan «{plan.name}»",
                 ),
             )
-            values["crop_cycle_id"] = cycle.id
+            values["lot_id"] = cycle.id
         if data.consume_seed_lot and sowing.seed_lot_id and sowing.quantity:
             await self.inventory.consume_seed_lot(actor, sowing.seed_lot_id, sowing.quantity, sowing.unit)
         updated = await self.repo.update(PlanSowing, actor.account_id, sowing_id, values)
         await self._sync_sowing_reminders(actor, updated)
-        if updated.crop_cycle_id:
-            await self.apply_cycle_plan(actor, updated.crop_cycle_id)
+        if updated.lot_id:
+            await self.apply_cycle_plan(actor, updated.lot_id)
         return SowingRead.model_validate(updated)
 
-    # ---------- crop cycle stage plan ----------
+    # ---------- lot stage plan ----------
 
     async def propose_cycle_plan(self, actor: Actor, cycle_id: UUID) -> CyclePlanProposal:
-        """Stages and reminders for a crop cycle from its crop's template: emergence, transplant, key
+        """Stages and reminders for a lot from its crop's template: emergence, transplant, key
         milestones, "posible cosecha" and the expected harvest. Nothing is saved."""
-        cycle = await self.farm.get_crop_cycle(actor, cycle_id)
+        cycle = await self.farm.get_lot(actor, cycle_id)
         crop = await self.farm.get_crop_master(actor, cycle.crop_master_id)
         crop_name = f"{localized(crop.name, crop.i18n, actor.locale)}{' ' + crop.variety if crop.variety else ''}"
         sowing = cycle.planting_date or utcnow().astimezone(self._tz(actor)).date()
@@ -551,7 +551,7 @@ class PlanningService:
                 )
             )
         return CyclePlanProposal(
-            crop_cycle_id=cycle.id,
+            lot_id=cycle.id,
             crop_name=crop_name,
             sowing_date=sowing,
             expected_harvest_date=harvest,
@@ -563,8 +563,8 @@ class PlanningService:
         """Save the proposal as the cycle's plan (replacing what was generated before; done reminders stay)."""
         _require_manager(actor)
         proposal = await self.propose_cycle_plan(actor, cycle_id)
-        cycle = await self.farm.get_crop_cycle(actor, cycle_id)
-        existing = await self.repo.list_plans(actor.account_id, crop_cycle_id=cycle_id)
+        cycle = await self.farm.get_lot(actor, cycle_id)
+        existing = await self.repo.list_plans(actor.account_id, lot_id=cycle_id)
         if existing:
             plan = existing[0]
             await self.repo.clear_generated(plan.id)
@@ -574,7 +574,7 @@ class PlanningService:
                 account_id=actor.account_id,
                 field_id=cycle.field_id,
                 zone_id=cycle.zone_id,
-                crop_cycle_id=cycle.id,
+                lot_id=cycle.id,
                 name=f"{proposal.crop_name}{' — ' + where if where else ''}",
                 kind="ciclo",
                 start_date=proposal.sowing_date,
@@ -588,7 +588,7 @@ class PlanningService:
                 account_id=actor.account_id,
                 plan_id=plan.id,
                 crop_master_id=cycle.crop_master_id,
-                crop_cycle_id=cycle.id,
+                lot_id=cycle.id,
                 zone_id=cycle.zone_id,
                 position=i,
                 source="plan",
@@ -604,7 +604,7 @@ class PlanningService:
                     account_id=actor.account_id,
                     plan_id=plan.id,
                     stage_id=getattr(stage_by_start.get(r.due_at.date()), "id", None),
-                    crop_cycle_id=cycle.id,
+                    lot_id=cycle.id,
                     field_id=cycle.field_id,
                     zone_id=cycle.zone_id,
                     title=r.title,

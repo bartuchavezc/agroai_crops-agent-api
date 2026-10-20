@@ -14,21 +14,21 @@ class ReportsService:
         self.repo = reports_repository
         self.farm = farm_service
 
-    async def _check_links(self, actor: Actor, field_id: Optional[UUID], crop_cycle_id: Optional[UUID]) -> None:
+    async def _check_links(self, actor: Actor, field_id: Optional[UUID], lot_id: Optional[UUID]) -> None:
         if self.farm is None:
             return
         if field_id:
             await self.farm.get_field(actor, field_id)
-        if crop_cycle_id:
-            await self.farm.get_crop_cycle(actor, crop_cycle_id)
+        if lot_id:
+            await self.farm.get_lot(actor, lot_id)
 
     async def create_report(self, actor: Actor, data: ReportCreate) -> Report:
-        await self._check_links(actor, data.field_id, data.crop_cycle_id)
+        await self._check_links(actor, data.field_id, data.lot_id)
         if self.farm is not None and data.zone_id:
             await self.farm.get_zone(actor, data.zone_id)
-        if self.farm is not None and data.crop_cycle_id and not data.zone_id:
+        if self.farm is not None and data.lot_id and not data.zone_id:
             # A photo of one crop is also part of its zone's history.
-            cycle = await self.farm.get_crop_cycle(actor, data.crop_cycle_id)
+            cycle = await self.farm.get_lot(actor, data.lot_id)
             data = data.model_copy(update={"zone_id": cycle.zone_id})
         return await self.repo.create(actor.account_id, actor.user_id, data)
 
@@ -42,7 +42,7 @@ class ReportsService:
         self,
         actor: Actor,
         field_id: Optional[UUID] = None,
-        crop_cycle_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None,
         report_type: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
@@ -51,11 +51,11 @@ class ReportsService:
         until: Optional[datetime] = None,
         status: Optional[str] = None,
     ) -> List[Report]:
-        """crop_cycle_id also matches zone tracking reports that covered that cycle."""
+        """lot_id also matches zone tracking reports that covered that cycle."""
         return await self.repo.list(
             actor.account_id,
             field_id=field_id,
-            crop_cycle_id=crop_cycle_id,
+            lot_id=lot_id,
             report_type=report_type,
             skip=skip,
             limit=min(limit, 500),
@@ -66,7 +66,7 @@ class ReportsService:
         )
 
     async def update_report(self, actor: Actor, report_id: UUID, data: ReportUpdate) -> Report:
-        await self._check_links(actor, data.field_id, data.crop_cycle_id)
+        await self._check_links(actor, data.field_id, data.lot_id)
         report = await self.repo.update(actor.account_id, report_id, data)
         if report is None:
             raise NotFoundError(f"Report {report_id} not found.")

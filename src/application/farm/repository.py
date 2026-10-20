@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import Text, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from .models import ACTIVE_CROP_CYCLE_STATUSES, CropCycle, CropMaster, Field, FieldEvent, FieldZone
+from .models import ACTIVE_LOT_STATUSES, CropMaster, Field, FieldEvent, FieldZone, Lot, LotZone
 
 
 def _like_escape(text: str) -> str:
@@ -207,6 +207,16 @@ class FarmRepository:
             ).scalar_one_or_none()
         return (current or 0) + 1
 
+    async def renumber_zones(self, account_id: UUID, numbers: dict[UUID, int]) -> None:
+        async with self.session_factory() as session:
+            for zone_id, number in numbers.items():
+                await session.execute(
+                    update(FieldZone)
+                    .where(FieldZone.id == zone_id, FieldZone.account_id == account_id)
+                    .values(number=number, updated_at=func.now())
+                )
+            await session.commit()
+
     async def zone_number_taken(
         self, field_id: UUID, zone_type: str, number: int, exclude_id: Optional[UUID] = None
     ) -> bool:
@@ -228,61 +238,90 @@ class FarmRepository:
         return await self._update(FieldZone, zone_id, account_id, values)
 
     async def delete_zone(self, account_id: UUID, zone_id: UUID) -> bool:
-        """Soft-deletes the zone; its crops stay in the field, just without a zone."""
+        """Soft-deletes the zone; its lots stay in the field, just without that zone."""
         deleted = await self._soft_delete(FieldZone, zone_id, account_id)
         if deleted:
             async with self.session_factory() as session:
-                await session.execute(
-                    update(CropCycle)
-                    .where(CropCycle.account_id == account_id, CropCycle.zone_id == zone_id)
-                    .values(zone_id=None)
-                )
+                await session.execute(delete(LotZone).where(LotZone.zone_id == zone_id))
                 await session.commit()
         return deleted
 
-    # ---------- crop cycles ----------
+    # ---------- lots ----------
 
-    async def list_crop_cycles(
+    async def list_lots(
         self,
         account_id: UUID,
         field_id: Optional[UUID] = None,
         statuses: Optional[Iterable[str]] = None,
         zone_id: Optional[UUID] = None,
-    ) -> Sequence[CropCycle]:
-        stmt = select(CropCycle).where(CropCycle.account_id == account_id, CropCycle.deleted_at.is_(None))
+    ) -> Sequence[Lot]:
+        stmt = select(Lot).where(Lot.account_id == account_id, Lot.deleted_at.is_(None))
         if field_id:
-            stmt = stmt.where(CropCycle.field_id == field_id)
+            stmt = stmt.where(Lot.field_id == field_id)
         if zone_id:
-            stmt = stmt.where(CropCycle.zone_id == zone_id)
+            stmt = stmt.where(Lot.id.in_(select(LotZone.lot_id).where(LotZone.zone_id == zone_id)))
         if statuses:
-            stmt = stmt.where(CropCycle.status.in_(list(statuses)))
-        stmt = stmt.order_by(CropCycle.planting_date.desc().nulls_last(), CropCycle.created_at.desc())
+            stmt = stmt.where(Lot.status.in_(list(statuses)))
+        stmt = stmt.order_by(Lot.planting_date.desc().nulls_last(), Lot.created_at.desc())
         async with self.session_factory() as session:
             return (await session.execute(stmt)).scalars().all()
 
-    async def get_crop_cycle(self, account_id: UUID, cycle_id: UUID) -> Optional[CropCycle]:
-        return await self._get(CropCycle, cycle_id, account_id)
+    async def get_lot(self, account_id: UUID, cycle_id: UUID) -> Optional[Lot]:
+        return await self._get(Lot, cycle_id, account_id)
 
-    async def create_crop_cycle(self, cycle: CropCycle) -> CropCycle:
-        return await self._add(cycle)
+    async def create_lot(self, lot: Lot, zone_ids: Sequence[UUID] = ()) -> Lot:
+        async with self.session_factory() as session:
+            session.add(lot)
+            await session.flush()
+            session.add_all(LotZone(lot_id=lot.id, zone_id=z, position=i) for i, z in enumerate(zone_ids))
+            await session.commit()
+            await session.refresh(lot)
+        return lot
 
-    async def update_crop_cycle(self, account_id: UUID, cycle_id: UUID, values: dict) -> Optional[CropCycle]:
-        return await self._update(CropCycle, cycle_id, account_id, values)
+    async def update_lot(
+        self, account_id: UUID, lot_id: UUID, values: dict, zone_ids: Optional[Sequence[UUID]] = None
+    ) -> Optional[Lot]:
+        lot = await self._update(Lot, lot_id, account_id, values)
+        if lot is not None and zone_ids is not None:
+            async with self.session_factory() as session:
+                await session.execute(delete(LotZone).where(LotZone.lot_id == lot_id))
+                session.add_all(LotZone(lot_id=lot_id, zone_id=z, position=i) for i, z in enumerate(zone_ids))
+                await session.commit()
+        return lot
 
-    async def delete_crop_cycle(self, account_id: UUID, cycle_id: UUID) -> bool:
-        return await self._soft_delete(CropCycle, cycle_id, account_id)
+    async def lot_zone_ids(self, lot_ids: Iterable[UUID]) -> dict[UUID, list[UUID]]:
+        """Each lot's zones, the naming one first (only zones still in use)."""
+        ids = list(lot_ids)
+        if not ids:
+            return {}
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(LotZone.lot_id, LotZone.zone_id)
+                    .join(FieldZone, FieldZone.id == LotZone.zone_id)
+                    .where(LotZone.lot_id.in_(ids), FieldZone.deleted_at.is_(None))
+                    .order_by(LotZone.lot_id, LotZone.position)
+                )
+            ).all()
+        out: dict[UUID, list[UUID]] = {i: [] for i in ids}
+        for lot_id, zone_id in rows:
+            out[lot_id].append(zone_id)
+        return out
 
-    async def active_cycles_with_crop(self, account_id: UUID) -> list[tuple[CropCycle, CropMaster]]:
+    async def delete_lot(self, account_id: UUID, cycle_id: UUID) -> bool:
+        return await self._soft_delete(Lot, cycle_id, account_id)
+
+    async def active_lots_with_crop(self, account_id: UUID) -> list[tuple[Lot, CropMaster]]:
         async with self.session_factory() as session:
             result = await session.execute(
-                select(CropCycle, CropMaster)
-                .join(CropMaster, CropMaster.id == CropCycle.crop_master_id)
+                select(Lot, CropMaster)
+                .join(CropMaster, CropMaster.id == Lot.crop_master_id)
                 .where(
-                    CropCycle.account_id == account_id,
-                    CropCycle.deleted_at.is_(None),
-                    CropCycle.status.in_(ACTIVE_CROP_CYCLE_STATUSES),
+                    Lot.account_id == account_id,
+                    Lot.deleted_at.is_(None),
+                    Lot.status.in_(ACTIVE_LOT_STATUSES),
                 )
-                .order_by(CropCycle.planting_date.desc().nulls_last())
+                .order_by(Lot.planting_date.desc().nulls_last())
             )
             return [(row[0], row[1]) for row in result.all()]
 
@@ -291,10 +330,10 @@ class FarmRepository:
         async with self.session_factory() as session:
             result = await session.execute(
                 select(CropMaster.family)
-                .join(CropCycle, CropCycle.crop_master_id == CropMaster.id)
+                .join(Lot, Lot.crop_master_id == CropMaster.id)
                 .where(
-                    CropCycle.account_id == account_id,
-                    CropCycle.deleted_at.is_(None),
+                    Lot.account_id == account_id,
+                    Lot.deleted_at.is_(None),
                     CropMaster.family.is_not(None),
                 )
                 .distinct()
@@ -307,7 +346,7 @@ class FarmRepository:
         self,
         account_id: UUID,
         field_id: Optional[UUID] = None,
-        crop_cycle_id: Optional[UUID] = None,
+        lot_id: Optional[UUID] = None,
         event_type: Optional[str] = None,
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
@@ -322,8 +361,8 @@ class FarmRepository:
             stmt = stmt.where(FieldEvent.zone_id == zone_id)
         if before:  # paging back in time: the next page starts after the oldest `occurred_at` already received
             stmt = stmt.where(FieldEvent.occurred_at < before)
-        if crop_cycle_id:
-            stmt = stmt.where(FieldEvent.crop_cycle_id == crop_cycle_id)
+        if lot_id:
+            stmt = stmt.where(FieldEvent.lot_id == lot_id)
         if event_type:
             stmt = stmt.where(FieldEvent.type == event_type)
         if since:

@@ -18,7 +18,7 @@ from uuid import UUID
 
 from src.application.alerts.rules_engine import RulesEngine
 from src.application.alerts.service import AlertService
-from src.application.farm.models import ACTIVE_CROP_CYCLE_STATUSES
+from src.application.farm.models import ACTIVE_LOT_STATUSES
 from src.application.farm.repository import FarmRepository
 from src.application.farm.schemas import FieldRead
 from src.application.farm.service import FarmService
@@ -190,8 +190,8 @@ class ZoneSatelliteService:
         return None
 
     async def _season(self, account_id: UUID, field_id: UUID) -> Optional[tuple[date, Optional[date]]]:
-        cycles = await self.farm_repo.list_crop_cycles(
-            account_id, field_id=field_id, statuses=ACTIVE_CROP_CYCLE_STATUSES
+        cycles = await self.farm_repo.list_lots(
+            account_id, field_id=field_id, statuses=ACTIVE_LOT_STATUSES
         )
         for cycle in cycles:
             if cycle.planting_date:
