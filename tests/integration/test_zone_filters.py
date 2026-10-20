@@ -165,7 +165,7 @@ async def test_bitacora_by_day_for_zone_and_lot(client, signup, container):
     assert (await client.get(f"{FARM}/log?zone_id={zone['id']}", headers=stranger["headers"])).status_code == 404
 
 
-async def test_planning_calendar_expands_recurrences_and_lists_stages_and_sowings(client, signup):
+async def test_planning_calendar_expands_recurrences_and_lists_stages_and_planned_lots(client, signup):
     owner = await signup("calendar")
     h = owner["headers"]
     field, (zone, _) = await _field_two_zones(client, h)
@@ -192,8 +192,8 @@ async def test_planning_calendar_expands_recurrences_and_lists_stages_and_sowing
     })
     assert stage.status_code == 201, stage.text
     tomato = (await client.get(f"{FARM}/crop-masters?q=tomate", headers=h)).json()[0]["id"]
-    sowing = await client.post(f"{P}/plans/{plan['id']}/sowings", headers=h, json={
-        "crop_master_id": tomato, "sow_date": "2026-11-15", "zone_id": zone["id"],
+    sowing = await client.post(f"{P}/plans/{plan['id']}/crops", headers=h, json={
+        "crop_master_id": tomato, "start_date": "2026-11-15", "zone_ids": [zone["id"]],
     })
     assert sowing.status_code == 201, sowing.text
 

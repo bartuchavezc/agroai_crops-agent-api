@@ -361,6 +361,7 @@ class LotCreate(BaseModel):
     notes: Optional[str] = None
     plan_id: Optional[UUID] = None
     origin_lot_id: Optional[UUID] = None
+    plan_crop_id: Optional[UUID] = None
 
     @model_validator(mode="after")
     def _zones(self):
@@ -388,6 +389,7 @@ class LotUpdate(BaseModel):
     notes: Optional[str] = None
     plan_id: Optional[UUID] = None
     origin_lot_id: Optional[UUID] = None
+    plan_crop_id: Optional[UUID] = None
 
     @model_validator(mode="after")
     def _zones(self):
@@ -419,6 +421,7 @@ class LotRead(ORMModel):
     notes: Optional[str] = None
     plan_id: Optional[UUID] = None
     origin_lot_id: Optional[UUID] = None
+    plan_crop_id: Optional[UUID] = None
     created_by: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime

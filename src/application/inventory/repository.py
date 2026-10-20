@@ -7,7 +7,7 @@ from sqlalchemy import String, cast, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.application.farm.models import CropMaster
-from src.application.planning.models import PlanSowing
+from src.application.planning.models import PlanCrop
 
 from .models import SeedLot
 
@@ -146,8 +146,8 @@ class SeedLotRepository:
             for key, value in values.items():
                 setattr(target, key, value)
             await session.execute(
-                update(PlanSowing)
-                .where(PlanSowing.account_id == account_id, PlanSowing.seed_lot_id.in_(source_ids))
+                update(PlanCrop)
+                .where(PlanCrop.account_id == account_id, PlanCrop.seed_lot_id.in_(source_ids))
                 .values(seed_lot_id=target_id)
             )
             await session.execute(

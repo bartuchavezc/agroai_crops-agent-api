@@ -106,6 +106,10 @@ class ApplicationContainer(containers.DeclarativeContainer):
         ManagementService, repository=management_repository, farm_service=farm_service
     )
 
+    task_repository = providers.Singleton(TaskRepository, session_factory=db_session_factory)
+    task_service = providers.Singleton(
+        TaskService, repository=task_repository, farm_service=farm_service, management_service=management_service
+    )
     planning_repository = providers.Singleton(PlanningRepository, session_factory=db_session_factory)
     planning_service = providers.Singleton(
         PlanningService,
@@ -115,15 +119,12 @@ class ApplicationContainer(containers.DeclarativeContainer):
         management_service=management_service,
         inventory_service=inventory_service,
         timezone_name=config.app.timezone,
+        task_service=task_service,
     )
 
     field_summary_service = providers.Singleton(
         FieldSummaryService, farm_service=farm_service, reports_service=reports_service,
         planning_service=planning_service, alert_service=alert_service, irrigation_service=irrigation_service,
-    )
-    task_repository = providers.Singleton(TaskRepository, session_factory=db_session_factory)
-    task_service = providers.Singleton(
-        TaskService, repository=task_repository, farm_service=farm_service, management_service=management_service
     )
     log_service = providers.Singleton(
         LogService, farm_service=farm_service, reports_service=reports_service, task_service=task_service

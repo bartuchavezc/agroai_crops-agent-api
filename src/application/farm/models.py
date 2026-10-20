@@ -167,6 +167,7 @@ class Lot(Base):
     notes = Column(Text)
     plan_id = Column(UUID(as_uuid=True), ForeignKey("crop_plans.id", ondelete="SET NULL", use_alter=True), index=True)
     origin_lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))  # its almácigo
+    plan_crop_id = Column(UUID(as_uuid=True), ForeignKey("plan_crops.id", ondelete="SET NULL"))  # planned by
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

@@ -1,17 +1,19 @@
 """
-Planning: reminders (one-off or recurring, notified in-app by the `reminders` batch job), crop plans with
-stages and staggered sowings, and the stage plan of a lot generated from its crop's template
+Planning: reminders (one-off or recurring notices, sent in-app by the `reminders` batch job), crop plans — general
+ones with objectives, zones and crops (once, staggered or perennial: each sowing a planned lot with its "Sembrar"
+task) — and the stage plan of a lot generated from its crop's template
 (germinación -> traspaso -> etapas clave -> posible cosecha).
 
-Permissions: every member can create and tick reminders (staff does the daily work); plans, stages and
-sowings are manager-only, like lots. Reminders without assignee notify the whole account.
+Permissions: every member can create reminders (staff does the daily work); plans, stages and plan crops are
+manager-only, like lots. Reminders without assignee notify the whole account.
 """
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from src.application.farm.schemas import LotCreate
+from src.application.farm.schemas import FieldEventCreate, LotCreate, LotRead, LotUpdate
+from src.application.tasks.schemas import TaskCreate, TaskUpdate
 from src.shared.domain.locale import localized
 from src.shared.domain.messages import adapt
 from src.shared.domain.actor import Actor
@@ -24,7 +26,7 @@ from .calendar import (
     CalendarResponse,
 )
 from .calendar import occurrences as calendar_occurrences
-from .models import CropPlan, PlanSowing, PlanStage, Reminder
+from .models import CropPlan, PlanCrop, PlanStage, Reminder
 from .repository import IdFilter, PlanningRepository
 from .schemas import (
     CyclePlanProposal,
@@ -37,11 +39,9 @@ from .schemas import (
     ReminderCreate,
     ReminderRead,
     ReminderUpdate,
-    SowingCreate,
-    SowingRead,
-    SowingUpdate,
-    SowRequest,
-    StaggeredSowingCreate,
+    LotSown,
+    PlanCropCreate,
+    PlanCropRead,
     StageCreate,
     StageRead,
     StageUpdate,
@@ -87,6 +87,7 @@ class PlanningService:
         management_service,
         inventory_service,
         timezone_name: str,
+        task_service=None,
     ):
         self.repo = repository
         self.farm = farm_service
@@ -94,6 +95,9 @@ class PlanningService:
         self.management = management_service
         self.inventory = inventory_service
         self.tz = ZoneInfo(timezone_name)
+        self.tasks = task_service
+        if task_service is not None:  # finishing a planned lot's "Sembrar" task sows the lot
+            task_service.lot_sown_hook = lambda actor, lot_id: self.lot_sown(actor, lot_id, from_task=True)
 
     def _tz(self, actor: Actor) -> ZoneInfo:
         """The user's own zone (a Colombian's 09:00 reminder is not 09:00 in Buenos Aires); the app's if unknown."""
@@ -245,11 +249,11 @@ class PlanningService:
                     title=reminder.title, due_at=when, recurring=reminder.recurrence != "none",
                     field_id=reminder.field_id, zone_id=reminder.zone_id, status=reminder.status,
                 ))
-        for sowing, plan, crop in sowings:
+        for lot, plan, crop in sowings:  # the lots plans sow in the window (ref_id: the lot)
             items.append(CalendarItem(
-                date=sowing.sow_date, kind="sowing", source=plan.source, ref_id=sowing.id,
-                title=f"Sembrar {localized(crop.name, crop.i18n, actor.locale)}", field_id=plan.field_id,
-                zone_id=sowing.zone_id or plan.zone_id, status=sowing.status,
+                date=lot.planting_date, kind="sowing", source=plan.source, ref_id=lot.id,
+                title=f"Sembrar {localized(crop.name, crop.i18n, actor.locale)}", field_id=lot.field_id,
+                zone_id=plan.zone_id, status=lot.status,
             ))
         ranges: list[CalendarRange] = []
         for stage, plan in stages:
@@ -273,27 +277,47 @@ class PlanningService:
             raise NotFoundError(f"Plan {plan_id} not found.")
         return plan
 
+    async def _plan_reads(self, plans) -> list[PlanRead]:
+        plans = list(plans)
+        zones = await self.repo.plan_zone_ids([p.id for p in plans])
+        return [PlanRead.model_validate(p).model_copy(update={"zone_ids": zones.get(p.id, [])}) for p in plans]
+
     async def list_plans(
         self, actor: Actor, field_id: Optional[UUID] = None, status: Optional[str] = None
     ) -> list[PlanRead]:
-        return [PlanRead.model_validate(p) for p in await self.repo.list_plans(actor.account_id, field_id, status)]
+        return await self._plan_reads(await self.repo.list_plans(actor.account_id, field_id, status))
 
     async def get_plan(self, actor: Actor, plan_id: UUID) -> PlanDetail:
         plan = await self._plan(actor, plan_id)
-        stages, sowings, reminders = await self.repo.plan_children(plan.id)
+        stages, crops, reminders = await self.repo.plan_children(plan.id)
+        lots = [lot for lot in await self.farm.list_lots(actor, field_id=plan.field_id) if lot.plan_id == plan.id] \
+            if plan.field_id else []
+        tasks = await self.tasks.list_tasks(actor, plan_id=plan.id) if self.tasks is not None else []
         return PlanDetail(
-            **PlanRead.model_validate(plan).model_dump(),
+            **(await self._plan_reads([plan]))[0].model_dump(),
             stages=[StageRead.model_validate(s) for s in stages],
-            sowings=[SowingRead.model_validate(s) for s in sowings],
+            crops=[PlanCropRead.model_validate(c) for c in crops],
+            lots=sorted(lots, key=lambda lot: (lot.planting_date or date.max, lot.created_at)),
+            tasks=tasks,
             reminders=[ReminderRead.model_validate(r) for r in reminders],
         )
 
+    async def _plan_zones(self, actor: Actor, zone_ids: list[UUID], field_id: Optional[UUID]) -> Optional[UUID]:
+        """Checks the zones (all of one field, the plan's if it has one) and returns that field."""
+        for zone_id in zone_ids:
+            zone = await self.farm.get_zone(actor, zone_id)
+            if field_id and zone.field_id != field_id:
+                raise InvalidInputError("Every zone of the plan must be in its field.")
+            field_id = zone.field_id
+        return field_id
+
     async def create_plan(self, actor: Actor, data: PlanCreate) -> PlanDetail:
         _require_manager(actor)
-        values = data.model_dump(exclude={"stages", "sowings"})
+        values = data.model_dump(exclude={"stages", "crops", "zone_ids"})
         await self._check_refs(actor, values)
         if data.zone_id and not data.field_id:
             values["field_id"] = (await self.farm.get_zone(actor, data.zone_id)).field_id
+        values["field_id"] = await self._plan_zones(actor, data.zone_ids, values.get("field_id"))
         plan = CropPlan(
             account_id=actor.account_id,
             created_by=actor.user_id,
@@ -301,27 +325,40 @@ class PlanningService:
             **values,
         )
         await self.repo.add(plan)
+        if data.zone_ids:
+            await self.repo.set_plan_zones(plan.id, data.zone_ids)
         for stage in data.stages:
             await self.add_stage(actor, plan.id, stage)
-        for sowing in data.sowings:
-            await self.add_sowing(actor, plan.id, sowing)
+        for crop in data.crops:
+            await self.add_plan_crop(actor, plan.id, crop)
         return await self.get_plan(actor, plan.id)
 
     async def update_plan(self, actor: Actor, plan_id: UUID, data: PlanUpdate) -> PlanRead:
         _require_manager(actor)
-        values = data.model_dump(exclude_unset=True)
+        values = data.model_dump(exclude_unset=True, exclude={"zone_ids"})
         await self._check_refs(actor, values)
+        current = await self._plan(actor, plan_id)
+        if data.zone_ids is not None:
+            field_id = await self._plan_zones(actor, data.zone_ids, values.get("field_id", current.field_id))
+            if field_id and not values.get("field_id", current.field_id):
+                values["field_id"] = field_id
         plan = await self.repo.update(CropPlan, actor.account_id, plan_id, values)
         if plan is None:
             raise NotFoundError(f"Plan {plan_id} not found.")
+        if data.zone_ids is not None:
+            await self.repo.set_plan_zones(plan_id, data.zone_ids)
         if values.get("status") == "archivado":
             await self.repo.cancel_plan_reminders(actor.account_id, plan_id)
-        return PlanRead.model_validate(plan)
+            if self.tasks is not None:
+                await self.tasks.cancel_plan_tasks(actor, plan_id)
+        return (await self._plan_reads([plan]))[0]
 
     async def delete_plan(self, actor: Actor, plan_id: UUID) -> None:
         _require_manager(actor)
         await self._plan(actor, plan_id)
         await self.repo.cancel_plan_reminders(actor.account_id, plan_id)
+        if self.tasks is not None:
+            await self.tasks.cancel_plan_tasks(actor, plan_id)
         await self.repo.remove(CropPlan, actor.account_id, plan_id)
 
     # ---------- stages ----------
@@ -366,119 +403,105 @@ class PlanningService:
         if not await self.repo.remove(PlanStage, actor.account_id, stage_id):
             raise NotFoundError(f"Stage {stage_id} not found.")
 
-    # ---------- sowings ----------
+    # ---------- plan crops: planned lots and their sowing tasks ----------
 
-    async def _sowing_reminder(self, actor: Actor, plan: CropPlan, sowing: PlanSowing) -> Reminder:
-        crop = await self.farm.get_crop_master(actor, sowing.crop_master_id)
-        where = (await self.farm.get_zone(actor, sowing.zone_id)).label if sowing.zone_id else None
-        amount = f" ({sowing.quantity:g} {sowing.unit or ''})".rstrip() if sowing.quantity else ""
-        title = f"Sembrar {crop.name}{' ' + crop.variety if crop.variety else ''}{amount}"
-        return Reminder(
-            account_id=actor.account_id,
-            plan_id=plan.id,
-            sowing_id=sowing.id,
-            field_id=plan.field_id,
-            zone_id=sowing.zone_id or plan.zone_id,
-            title=f"{title} en {where}" if where else title,
-            description=f"Siembra planificada en «{plan.name}».",
-            due_at=self.at_local(sowing.sow_date, tz=self._tz(actor)),
-            source="plan",
-            created_by=actor.user_id,
-        )
-
-    async def add_sowing(self, actor: Actor, plan_id: UUID, data: SowingCreate) -> SowingRead:
+    async def add_plan_crop(self, actor: Actor, plan_id: UUID, data: PlanCropCreate) -> PlanCropRead:
+        """Each sowing of the crop becomes a planned lot (in its zones, or the plan's) with a "Sembrar" task."""
         _require_manager(actor)
         plan = await self._plan(actor, plan_id)
         values = data.model_dump()
-        await self._check_refs(actor, values)
-        sowing = PlanSowing(account_id=actor.account_id, plan_id=plan.id, **values)
-        await self.repo.add(sowing)
-        await self.repo.add(await self._sowing_reminder(actor, plan, sowing))
-        return SowingRead.model_validate(sowing)
-
-    async def add_staggered_sowings(self, actor: Actor, plan_id: UUID, data: StaggeredSowingCreate) -> list[SowingRead]:
-        """Divide a sowing (and its seed) over time: count sowings, one every every_days."""
-        each = round(data.total_quantity / data.count, 2) if data.total_quantity else None
-        return [
-            await self.add_sowing(
-                actor,
-                plan_id,
-                SowingCreate(
-                    crop_master_id=data.crop_master_id,
-                    sow_date=data.start_date + timedelta(days=i * data.every_days),
-                    zone_id=data.zone_id,
-                    quantity=each,
-                    unit=data.unit,
-                    seed_lot_id=data.seed_lot_id,
-                    notes=data.notes or (f"Siembra escalonada {i + 1} de {data.count}" if data.count > 1 else None),
-                ),
-            )
-            for i in range(data.count)
-        ]
-
-    async def update_sowing(self, actor: Actor, sowing_id: UUID, data: SowingUpdate) -> SowingRead:
-        _require_manager(actor)
-        values = data.model_dump(exclude_unset=True)
-        await self._check_refs(actor, values)
-        sowing = await self.repo.update(PlanSowing, actor.account_id, sowing_id, values)
-        if sowing is None:
-            raise NotFoundError(f"Sowing {sowing_id} not found.")
-        await self._sync_sowing_reminders(actor, sowing)
-        return SowingRead.model_validate(sowing)
-
-    async def _sync_sowing_reminders(self, actor: Actor, sowing: PlanSowing) -> None:
-        reminders = await self.repo.list_reminders(actor.account_id, plan_id=sowing.plan_id, status="activo")
-        for r in (r for r in reminders if r.sowing_id == sowing.id):
-            if sowing.status != "pendiente":
-                values = {"status": "terminado"}
-            else:
-                values = {"due_at": self.at_local(sowing.sow_date, tz=self._tz(actor))}
-            await self.repo.update(Reminder, actor.account_id, r.id, values)
-
-    async def delete_sowing(self, actor: Actor, sowing_id: UUID) -> None:
-        _require_manager(actor)
-        if not await self.repo.remove(PlanSowing, actor.account_id, sowing_id):
-            raise NotFoundError(f"Sowing {sowing_id} not found.")
-
-    async def sow(self, actor: Actor, sowing_id: UUID, data: SowRequest) -> SowingRead:
-        """The planned sowing happened: start its lot (with its stage reminders) and discount the seed."""
-        _require_manager(actor)
-        sowing = await self.repo.get(PlanSowing, actor.account_id, sowing_id)
-        if sowing is None:
-            raise NotFoundError(f"Sowing {sowing_id} not found.")
-        if sowing.status == "sembrado":
-            raise InvalidInputError("That sowing is already done.")
-        plan = await self._plan(actor, sowing.plan_id)
-        sown_on = data.sown_on or utcnow().astimezone(self._tz(actor)).date()
-        values: dict = {"status": "sembrado", "sow_date": sown_on}
-        if data.create_lot:
-            field_id = plan.field_id
-            if sowing.zone_id:
-                field_id = (await self.farm.get_zone(actor, sowing.zone_id)).field_id
-            if not field_id:
-                raise InvalidInputError("The plan has no field: set one (or a zone on the sowing) to start the crop.")
-            crop = await self.farm.get_crop_master(actor, sowing.crop_master_id)
-            cycle = await self.farm.create_lot(
+        await self._check_refs(actor, {"crop_master_id": data.crop_master_id, "seed_lot_id": data.seed_lot_id})
+        zone_ids = data.zone_ids or (await self.repo.plan_zone_ids([plan.id])).get(plan.id) or (
+            [plan.zone_id] if plan.zone_id else []
+        )
+        zones = [await self.farm.get_zone(actor, z) for z in zone_ids]
+        field_id = plan.field_id or (zones[0].field_id if zones else None)
+        if not field_id:
+            raise InvalidInputError("The plan has no field: set one (or zones) to plan its crops.")
+        if any(z.field_id != field_id for z in zones):
+            raise InvalidInputError("Every zone must be in the plan's field.")
+        crop = await self.farm.get_crop_master(actor, data.crop_master_id)
+        plan_crop = PlanCrop(
+            account_id=actor.account_id, plan_id=plan.id, **{**values, "zone_ids": [str(z) for z in zone_ids]}
+        )
+        await self.repo.add(plan_crop)
+        crop_name = f"{localized(crop.name, crop.i18n, actor.locale)}{' ' + crop.variety if crop.variety else ''}"
+        where = " + ".join(z.label for z in zones)
+        for i in range(data.count):
+            sow_on = data.start_date + timedelta(days=i * (data.every_days or 0))
+            lot = await self.farm.create_lot(
                 actor,
                 LotCreate(
-                    field_id=field_id,
-                    crop_master_id=sowing.crop_master_id,
-                    zone_id=sowing.zone_id,
-                    status="planted",
-                    planting_date=sown_on,
-                    expected_harvest_date=sown_on + timedelta(days=crop.growth_period_days)
-                    if crop.growth_period_days else None,
-                    notes=f"Siembra del plan «{plan.name}»",
+                    field_id=field_id, crop_master_id=data.crop_master_id, zone_ids=zone_ids, status="planned",
+                    planting_date=sow_on, quantity=data.quantity, unit=data.unit, plan_id=plan.id,
+                    plan_crop_id=plan_crop.id,
+                    expected_harvest_date=sow_on + timedelta(days=crop.growth_period_days)
+                    if crop.growth_period_days and data.mode != "perennial" else None,
+                    notes=data.notes or (f"Siembra {i + 1} de {data.count} de «{plan.name}»" if data.count > 1
+                                         else f"Plan «{plan.name}»"),
                 ),
             )
-            values["lot_id"] = cycle.id
-        if data.consume_seed_lot and sowing.seed_lot_id and sowing.quantity:
-            await self.inventory.consume_seed_lot(actor, sowing.seed_lot_id, sowing.quantity, sowing.unit)
-        updated = await self.repo.update(PlanSowing, actor.account_id, sowing_id, values)
-        await self._sync_sowing_reminders(actor, updated)
-        if updated.lot_id:
-            await self.apply_cycle_plan(actor, updated.lot_id)
-        return SowingRead.model_validate(updated)
+            if self.tasks is not None:
+                amount = f" ({data.quantity:g} {data.unit or ''})".rstrip() if data.quantity else ""
+                await self.tasks.create_task(
+                    actor,
+                    TaskCreate(
+                        title=f"Sembrar {crop_name}{amount}" + (f" en {where}" if where else ""),
+                        description=f"Siembra planificada en «{plan.name}».", field_id=field_id,
+                        zone_id=zone_ids[0] if len(zone_ids) == 1 else None, lot_id=lot.id, plan_id=plan.id,
+                        due_date=sow_on, result_event_type="sowing",
+                    ),
+                    source="plan",
+                )
+        return PlanCropRead.model_validate(plan_crop)
+
+    async def delete_plan_crop(self, actor: Actor, crop_id: UUID) -> None:
+        """Drops a crop from the plan with the lots it planned and not yet sown (and their open tasks)."""
+        _require_manager(actor)
+        plan_crop = await self.repo.get(PlanCrop, actor.account_id, crop_id)
+        if plan_crop is None:
+            raise NotFoundError(f"Plan crop {crop_id} not found.")
+        for lot in await self.farm.list_lots(actor, statuses=["planned"]):
+            if lot.plan_crop_id == crop_id:
+                if self.tasks is not None:
+                    for task in await self.tasks.list_tasks(actor, lot_id=lot.id, open_only=True):
+                        await self.tasks.update_task(actor, task.id, TaskUpdate(status="cancelada"))
+                await self.farm.delete_lot(actor, lot.id)
+        await self.repo.delete_plan_crop(actor.account_id, crop_id)
+
+    async def lot_sown(
+        self, actor: Actor, lot_id: UUID, data: Optional[LotSown] = None, from_task: bool = False
+    ) -> LotRead:
+        """A planned lot was sown: it is planted (on `sown_on`), logged in the bitácora, its seed comes off the seed
+        lot of its plan crop, its "Sembrar" task is done and its stage plan generated. Finishing that task does the
+        same (`from_task`: the task already logged the sowing)."""
+        _require_manager(actor)
+        data = data or LotSown()
+        lot = await self.farm.get_lot(actor, lot_id)
+        if lot.status != "planned":
+            raise InvalidInputError("That lot is already sown.")
+        sown_on = data.sown_on or utcnow().astimezone(self._tz(actor)).date()
+        lot = await self.farm.update_lot(actor, lot_id, LotUpdate(status="planted", planting_date=sown_on))
+        if not from_task:
+            await self.farm.create_event(
+                actor,
+                FieldEventCreate(
+                    field_id=lot.field_id, zone_id=lot.zone_id, lot_ids=[lot.id], type="sowing",
+                    occurred_at=self.at_local(sown_on, tz=self._tz(actor)), quantity=lot.quantity, unit=lot.unit,
+                ),
+            )
+        if data.consume_seed_lot and lot.plan_crop_id and lot.quantity:
+            plan_crop = await self.repo.get(PlanCrop, actor.account_id, lot.plan_crop_id)
+            if plan_crop is not None and plan_crop.seed_lot_id:
+                await self.inventory.consume_seed_lot(actor, plan_crop.seed_lot_id, lot.quantity, lot.unit)
+        if self.tasks is not None and not from_task:
+            for task in await self.tasks.list_tasks(actor, lot_id=lot_id, open_only=True):
+                if task.result_event_type == "sowing":
+                    await self.tasks.repo.update(
+                        actor.account_id, task.id, {"status": "hecha", "completed_at": utcnow()}
+                    )
+        await self.apply_cycle_plan(actor, lot_id)
+        return await self.farm.get_lot(actor, lot_id)
 
     # ---------- lot stage plan ----------
 

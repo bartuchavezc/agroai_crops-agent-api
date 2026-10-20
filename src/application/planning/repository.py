@@ -8,11 +8,11 @@ from uuid import UUID
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.application.farm.models import CropMaster
+from src.application.farm.models import CropMaster, Lot
 
-from .models import CropPlan, PlanSowing, PlanStage, Reminder
+from .models import CropPlan, PlanCrop, PlanStage, PlanZone, Reminder
 
-Row = TypeVar("Row", CropPlan, PlanStage, PlanSowing, Reminder)
+Row = TypeVar("Row", CropPlan, PlanStage, PlanCrop, Reminder)
 
 # Filter sentinel: "only rows where this column is NULL" (same convention as management).
 NONE = "none"
@@ -96,7 +96,7 @@ class PlanningRepository:
 
     async def plan_children(
         self, plan_id: UUID
-    ) -> tuple[Sequence[PlanStage], Sequence[PlanSowing], Sequence[Reminder]]:
+    ) -> tuple[Sequence[PlanStage], Sequence[PlanCrop], Sequence[Reminder]]:
         async with self.session_factory() as session:
             stages = (
                 await session.execute(
@@ -105,9 +105,11 @@ class PlanningRepository:
                     .order_by(PlanStage.start_date, PlanStage.position)
                 )
             ).scalars().all()
-            sowings = (
+            crops = (
                 await session.execute(
-                    select(PlanSowing).where(PlanSowing.plan_id == plan_id).order_by(PlanSowing.sow_date)
+                    select(PlanCrop)
+                    .where(PlanCrop.plan_id == plan_id)
+                    .order_by(PlanCrop.start_date, PlanCrop.created_at)
                 )
             ).scalars().all()
             reminders = (
@@ -117,7 +119,33 @@ class PlanningRepository:
                     .order_by(Reminder.due_at)
                 )
             ).scalars().all()
-        return stages, sowings, reminders
+        return stages, crops, reminders
+
+    async def plan_zone_ids(self, plan_ids: Sequence[UUID]) -> dict[UUID, list[UUID]]:
+        if not plan_ids:
+            return {}
+        async with self.session_factory() as session:
+            rows = (await session.execute(
+                select(PlanZone.plan_id, PlanZone.zone_id).where(PlanZone.plan_id.in_(list(plan_ids)))
+            )).all()
+        out: dict[UUID, list[UUID]] = {i: [] for i in plan_ids}
+        for plan_id, zone_id in rows:
+            out[plan_id].append(zone_id)
+        return out
+
+    async def set_plan_zones(self, plan_id: UUID, zone_ids: Sequence[UUID]) -> None:
+        async with self.session_factory() as session:
+            await session.execute(delete(PlanZone).where(PlanZone.plan_id == plan_id))
+            session.add_all(PlanZone(plan_id=plan_id, zone_id=z) for z in dict.fromkeys(zone_ids))
+            await session.commit()
+
+    async def delete_plan_crop(self, account_id: UUID, crop_id: UUID) -> bool:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                delete(PlanCrop).where(PlanCrop.id == crop_id, PlanCrop.account_id == account_id)
+            )
+            await session.commit()
+        return result.rowcount > 0
 
     async def clear_generated(self, plan_id: UUID) -> None:
         """Drop what a template generated for a plan (stages, and reminders not yet done), before regenerating."""
@@ -200,10 +228,10 @@ class PlanningRepository:
     async def calendar_rows(
         self, account_id: UUID, since: date, until: date, since_dt: datetime, until_dt: datetime,
         field_id: Optional[UUID] = None,
-    ) -> tuple[list[tuple[PlanStage, CropPlan]], list[tuple[PlanSowing, CropPlan, CropMaster]], list[Reminder]]:
+    ) -> tuple[list[tuple[PlanStage, CropPlan]], list[tuple[Lot, CropPlan, CropMaster]], list[Reminder]]:
         """What falls in [since, until] (dates, inclusive) / [since_dt, until_dt) (instants): the stages of active
-        plans, the planned or done sowings, and the pending reminders (recurring ones from before the window too:
-        they repeat into it). Reminders already represented by a stage or a sowing are left out."""
+        plans, the lots those plans sow then, and the active reminders (recurring ones from before the window too:
+        they repeat into it). Reminders already represented by a stage are left out."""
         plan_ok = (CropPlan.account_id == account_id, CropPlan.deleted_at.is_(None), CropPlan.status == "activo")
         if field_id:
             plan_ok = (*plan_ok, CropPlan.field_id == field_id)
@@ -215,16 +243,16 @@ class PlanningRepository:
                 ).order_by(PlanStage.start_date, PlanStage.position)
             )).all()
             sowings = (await session.execute(
-                select(PlanSowing, CropPlan, CropMaster)
-                .join(CropPlan, CropPlan.id == PlanSowing.plan_id)
-                .join(CropMaster, CropMaster.id == PlanSowing.crop_master_id)
-                .where(*plan_ok, PlanSowing.status.in_(("pendiente", "sembrado")), PlanSowing.sow_date >= since,
-                       PlanSowing.sow_date <= until)
-                .order_by(PlanSowing.sow_date)
+                select(Lot, CropPlan, CropMaster)
+                .join(CropPlan, CropPlan.id == Lot.plan_id)
+                .join(CropMaster, CropMaster.id == Lot.crop_master_id)
+                .where(*plan_ok, Lot.deleted_at.is_(None), Lot.status != "failed", Lot.planting_date >= since,
+                       Lot.planting_date <= until)
+                .order_by(Lot.planting_date)
             )).all()
             remind = select(Reminder).where(
                 Reminder.account_id == account_id, Reminder.deleted_at.is_(None), Reminder.status == "activo",
-                Reminder.stage_id.is_(None), Reminder.sowing_id.is_(None), Reminder.due_at < until_dt,
+                Reminder.stage_id.is_(None), Reminder.due_at < until_dt,
                 or_(Reminder.recurrence != "none", Reminder.due_at >= since_dt),
                 or_(Reminder.until.is_(None), Reminder.until >= since),
             )

@@ -4,7 +4,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field as PField, model_validator
 
+from src.application.farm.schemas import LotRead
 from src.application.management.schemas import ORMModel, PartialUpdate
+from src.application.tasks.schemas import TaskRead
 
 PlanKind = Literal["ciclo", "largo"]
 PlanStatus = Literal["borrador", "activo", "archivado"]
@@ -12,7 +14,6 @@ StageType = Literal[
     "germinacion", "plantin", "traspaso", "vegetativo", "floracion", "fructificacion", "cosecha",
     "establecimiento", "poda", "descanso", "otro",
 ]
-SowingStatus = Literal["pendiente", "sembrado", "cancelado"]
 ReminderStatus = Literal["activo", "pausado", "terminado"]
 Recurrence = Literal["none", "daily", "weekly", "every_n_days"]
 Source = Literal["user", "agent", "plan"]
@@ -76,7 +77,6 @@ class ReminderRead(ORMModel):
     lot_id: Optional[UUID] = None
     plan_id: Optional[UUID] = None
     stage_id: Optional[UUID] = None
-    sowing_id: Optional[UUID] = None
     source: Source
     created_at: datetime
 
@@ -121,60 +121,52 @@ class StageRead(ORMModel):
     source: Source
 
 
-class SowingCreate(BaseModel):
-    crop_master_id: UUID
-    sow_date: date
-    zone_id: Optional[UUID] = None
-    quantity: Optional[float] = PField(default=None, gt=0)
-    unit: Optional[str] = PField(default=None, max_length=30)
-    seed_lot_id: Optional[UUID] = None
-    notes: Optional[str] = None
+PlanCropMode = Literal["single", "staggered", "perennial"]
 
 
-class StaggeredSowingCreate(BaseModel):
-    """Split a sowing over time: `count` sowings every `every_days` from `start_date`, dividing
-    total_quantity evenly (e.g. 300 lettuce seeds in 6 sowings, one every 15 days)."""
+class PlanCropCreate(BaseModel):
+    """A crop the plan means to grow. single: one sowing on start_date; staggered: `count` sowings every
+    `every_days` (lettuce every 15 days for continuous harvest); perennial: planted once to stay. Each sowing becomes
+    a planned lot (in `zone_ids`, the plan's zones by default) with its "Sembrar" task."""
     crop_master_id: UUID
+    mode: PlanCropMode = "single"
     start_date: date
-    count: int = PField(ge=1, le=52)
-    every_days: int = PField(ge=1, le=180)
-    zone_id: Optional[UUID] = None
-    total_quantity: Optional[float] = PField(default=None, gt=0)
+    count: int = PField(default=1, ge=1, le=52)
+    every_days: Optional[int] = PField(default=None, ge=1, le=365)
+    quantity: Optional[float] = PField(default=None, gt=0, description="Per sowing")
     unit: Optional[str] = PField(default=None, max_length=30)
+    zone_ids: list[UUID] = PField(default_factory=list)
     seed_lot_id: Optional[UUID] = None
     notes: Optional[str] = None
 
-
-class SowingUpdate(PartialUpdate):
-    REQUIRED = ("sow_date", "status")
-
-    sow_date: Optional[date] = None
-    zone_id: Optional[UUID] = None
-    quantity: Optional[float] = PField(default=None, gt=0)
-    unit: Optional[str] = PField(default=None, max_length=30)
-    seed_lot_id: Optional[UUID] = None
-    status: Optional[SowingStatus] = None
-    notes: Optional[str] = None
+    @model_validator(mode="after")
+    def _check(self):
+        if self.mode == "staggered":
+            if self.count < 2 or not self.every_days:
+                raise ValueError("A staggered crop needs count >= 2 and every_days.")
+        else:
+            self.count, self.every_days = 1, None
+        return self
 
 
-class SowingRead(ORMModel):
+class PlanCropRead(ORMModel):
     id: UUID
     plan_id: UUID
     crop_master_id: UUID
-    zone_id: Optional[UUID] = None
-    sow_date: date
+    mode: PlanCropMode
+    start_date: date
+    count: int
+    every_days: Optional[int] = None
     quantity: Optional[float] = None
     unit: Optional[str] = None
+    zone_ids: list[UUID] = []
     seed_lot_id: Optional[UUID] = None
-    status: SowingStatus
-    lot_id: Optional[UUID] = None
     notes: Optional[str] = None
 
 
-class SowRequest(BaseModel):
-    """Mark a planned sowing as done: optionally start its lot and discount the seed lot."""
+class LotSown(BaseModel):
+    """A planned lot was sown: it is planted, its seed is discounted and its stage plan generated."""
     sown_on: Optional[date] = None
-    create_lot: bool = True
     consume_seed_lot: bool = True
 
 
@@ -184,11 +176,13 @@ class PlanCreate(BaseModel):
     status: PlanStatus = "activo"
     field_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
+    zone_ids: list[UUID] = PField(default_factory=list, description="The zones a general plan covers")
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    objectives: Optional[str] = None
     notes: Optional[str] = None
     stages: list[StageCreate] = PField(default_factory=list)
-    sowings: list[SowingCreate] = PField(default_factory=list)
+    crops: list[PlanCropCreate] = PField(default_factory=list)
 
 
 class PlanUpdate(PartialUpdate):
@@ -198,8 +192,10 @@ class PlanUpdate(PartialUpdate):
     status: Optional[PlanStatus] = None
     field_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
+    zone_ids: Optional[list[UUID]] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    objectives: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -211,8 +207,10 @@ class PlanRead(ORMModel):
     field_id: Optional[UUID] = None
     zone_id: Optional[UUID] = None
     lot_id: Optional[UUID] = None
+    zone_ids: list[UUID] = []
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    objectives: Optional[str] = None
     notes: Optional[str] = None
     source: Source
     created_at: datetime
@@ -220,7 +218,9 @@ class PlanRead(ORMModel):
 
 class PlanDetail(PlanRead):
     stages: list[StageRead] = []
-    sowings: list[SowingRead] = []
+    crops: list[PlanCropRead] = []
+    lots: list[LotRead] = []  # the lots it planned (or sowed)
+    tasks: list[TaskRead] = []
     reminders: list[ReminderRead] = []
 
 

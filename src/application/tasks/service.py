@@ -22,6 +22,8 @@ class TaskService:
         self.repo = repository
         self.farm = farm_service
         self.management = management_service
+        # Set by the planning service: finishing a planned lot's sowing task sows the lot (seed, stage plan).
+        self.lot_sown_hook = None
 
     async def _resolve_place(self, actor: Actor, values: dict) -> dict:
         """Checks the field / zone / lot belong to the account and agree; fills the field from the zone or lot."""
@@ -123,8 +125,10 @@ class TaskService:
             lot = await self.farm.get_lot(actor, task.lot_id)
             today = today_in(actor.timezone)
             changes: dict = {}
-            if task.result_event_type == "sowing" and lot.status == "planned":
-                changes = {"status": "planted", "planting_date": lot.planting_date or today}
+            if task.result_event_type == "sowing" and lot.status == "planned" and self.lot_sown_hook is not None:
+                await self.lot_sown_hook(actor, task.lot_id)
+            elif task.result_event_type == "sowing" and lot.status == "planned":
+                changes = {"status": "planted", "planting_date": today}
             elif task.result_event_type == "transplant":
                 changes = {"transplant_date": today, **({"status": "planted"} if lot.status in ("planned", "seedbed")
                                                        else {})}
