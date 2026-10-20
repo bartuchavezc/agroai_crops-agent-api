@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from src.application.changes.schemas import ProposalDecision, ProposalRead
+from src.application.changes.service import ChangeSetService
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 
@@ -24,6 +26,7 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 
 RUNNER = Provide["agent.runner"]
 CONVERSATIONS = Provide["agent.conversation_service"]
+CHANGES = Provide["application.change_set_service"]
 
 
 class ChatContext(BaseModel):
@@ -192,3 +195,44 @@ async def clear_memory(
 ):
     await conversations.delete(actor, conversation_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------- proposals: writes the agent prepared, applied or rejected by the user ----------
+
+@router.get("/proposals/{proposal_id}", response_model=ProposalRead, summary="A change proposal with its preview")
+@inject
+async def get_proposal(
+    proposal_id: UUID, actor: Actor = Depends(get_actor), changes: ChangeSetService = Depends(CHANGES)
+):
+    return await changes.get_proposal(actor, proposal_id)
+
+
+async def _decide(actor: Actor, proposal_id: UUID, apply: bool, excluded, changes, conversations) -> ProposalRead:
+    proposal = await changes.decide(actor, proposal_id, apply=apply, excluded=excluded)
+    if proposal.conversation_id:
+        await conversations.add_note(actor, proposal.conversation_id, changes.note(proposal))
+    return proposal
+
+
+@router.post("/proposals/{proposal_id}/apply", response_model=ProposalRead, summary="Apply a proposal")
+@inject
+async def apply_proposal(
+    proposal_id: UUID,
+    body: ProposalDecision,
+    actor: Actor = Depends(get_actor),
+    changes: ChangeSetService = Depends(CHANGES),
+    conversations: ConversationService = Depends(CONVERSATIONS),
+):
+    """`excluded`: the indexes the user unticked. The conversation gets a line saying what was applied."""
+    return await _decide(actor, proposal_id, True, body.excluded, changes, conversations)
+
+
+@router.post("/proposals/{proposal_id}/reject", response_model=ProposalRead, summary="Reject a proposal")
+@inject
+async def reject_proposal(
+    proposal_id: UUID,
+    actor: Actor = Depends(get_actor),
+    changes: ChangeSetService = Depends(CHANGES),
+    conversations: ConversationService = Depends(CONVERSATIONS),
+):
+    return await _decide(actor, proposal_id, False, [], changes, conversations)

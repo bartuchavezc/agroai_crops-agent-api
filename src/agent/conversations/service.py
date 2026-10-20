@@ -231,3 +231,11 @@ class ConversationService:
                 read = read.model_copy(update={"status": "error", "error_code": "TURN_INTERRUPTED"})
             result.append(read)
         return result
+
+    async def add_note(self, actor: Actor, conversation_id: UUID, text: str) -> None:
+        """An assistant line written outside a turn (e.g. the user applied a proposal from the panel), so the
+        conversation, and the agent on its next turn, knows it."""
+        async with self.session_factory() as session:
+            await self._owned(session, actor, conversation_id)
+            session.add(ConversationMessage(conversation_id=conversation_id, role="assistant", content=text))
+            await session.commit()

@@ -5,6 +5,7 @@ from .alerts.forecast_alerts import ForecastAlertService
 from .alerts.rules_engine import RulesEngine
 from .alerts.service import AlertService
 from .farm.summary import FieldSummaryService
+from .changes.service import ChangeSetService
 from .farm.log import LogService
 from .tasks.repository import TaskRepository
 from .tasks.service import TaskService
@@ -125,6 +126,10 @@ class ApplicationContainer(containers.DeclarativeContainer):
     field_summary_service = providers.Singleton(
         FieldSummaryService, farm_service=farm_service, reports_service=reports_service,
         planning_service=planning_service, alert_service=alert_service, irrigation_service=irrigation_service,
+    )
+    change_set_service = providers.Singleton(
+        ChangeSetService, session_factory=db_session_factory, farm_service=farm_service,
+        planning_service=planning_service, task_service=task_service, inventory_service=inventory_service,
     )
     log_service = providers.Singleton(
         LogService, farm_service=farm_service, reports_service=reports_service, task_service=task_service

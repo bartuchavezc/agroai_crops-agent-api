@@ -418,7 +418,9 @@ class AgentRunner:
                 "" if error_code else "No pude generar una respuesta. ¿Podés reformular la consulta?"
             )
             sources = list({s["uri"]: Source(**s) for s in turn.ctx.sources}.values())
-            attachments = list({a["image_identifier"]: Attachment(**a) for a in turn.ctx.attachments}.values())
+            attachments = list({
+                a.get("image_identifier") or a.get("proposal_id"): Attachment(**a) for a in turn.ctx.attachments
+            }.values())
             await self.conversations.finish_turn(
                 turn.assistant_message_id,
                 assistant_text=text,

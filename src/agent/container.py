@@ -75,6 +75,7 @@ class AgentContainer(containers.DeclarativeContainer):
         nasa_power=nasa_power,
         log=application.log_service,
         tasks=application.task_service,
+        changes=application.change_set_service,
     )
     runner = providers.Singleton(
         AgentRunner,

@@ -18,6 +18,7 @@ from src.agent.providers.router import router as provider_credentials_router
 from src.agent.reasoning.router import layout_router
 from src.agent.reasoning.router import router as analyze_router
 from src.application.alerts.router import router as alerts_router
+from src.application.changes.router import router as changes_router
 from src.application.farm.router import router as farm_router
 from src.application.inventory.router import router as inventory_router
 from src.application.irrigation.router import router as irrigation_router
@@ -57,6 +58,7 @@ ROUTERS = [
     management_router,
     planning_router,
     tasks_router,
+    changes_router,
     satellite_router,
     admin_router,
 ]
@@ -78,6 +80,7 @@ WIRED_MODULES = [
     "src.application.management.router",
     "src.application.planning.router",
     "src.application.tasks.router",
+    "src.application.changes.router",
     "src.application.satellite.router",
     "src.admin.router",
 ]

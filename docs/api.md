@@ -70,6 +70,20 @@ disease_sighting, harvest, observation, photo`. Estados de ciclo: `planned, plan
 | GET | `/chat/conversations/{id}/messages?limit=&before=` | Cada mensaje trae `status`: `complete`, `pending` (se está generando: volver a consultar) o `error` (+`error_code`; reintentar con `retry_message_id` = id del último mensaje del usuario) |
 | POST | `/chat/conversations/{id}/stop` | Detiene la respuesta en curso; lo generado se conserva |
 | DELETE | `/chat/memory?conversation_id=` | Deprecado |
+| GET | `/chat/proposals/{id}` | Propuesta de cambios que armó el agente (`propose_changes`, llega como adjunto `{type: "proposal", proposal_id}`): `{id, title, status: pending\|applied\|rejected\|failed, operations[], preview[], result?}`. Nada se escribe hasta confirmar |
+| POST | `/chat/proposals/{id}/apply` | `{excluded: [índices]}` (los ítems destildados). Aplica en orden; deja una nota en la conversación para el siguiente turno. 400 si ya se decidió |
+| POST | `/chat/proposals/{id}/reject` | La descarta (también deja la nota) |
+
+## Cambios en lote
+Varias escrituras de una vez, por los mismos servicios que las rutas individuales (mismos permisos). Operación:
+`{op: create|update|delete, entity: zone|lot|event|seed_lot|task|reminder|plan|plan_crop|stage, id?, data}`; en `data`
+`"$N"` es el id que creó la operación N. Si una falla, se borra lo que el conjunto creó y el resto se saltea; los
+cambios a registros existentes hechos antes del error quedan (no es una transacción única).
+
+| Método | Ruta | Notas |
+|---|---|---|
+| POST | `/changes/preview` | `{operations[]}` → `{ok, items[{index, title, before?, after?, error?}]}`. No escribe |
+| POST | `/changes` | `{operations[], excluded?[]}` → `{applied, failed, undone, items[{index, op, entity, ok, id?, error?, skipped, undone}]}` |
 
 ## Memoria del agente (compartida por cuenta)
 `GET /agent/memories`, `GET /agent/memories/search?q=`, `DELETE /agent/memories/{id}`
