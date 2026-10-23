@@ -1,8 +1,9 @@
 """
 In-app notifications, fan-out to every user of an account (there is no finer-grained membership
 than the account today, so "all users of a field" == "all users of the account that owns it").
-No push/email — this is DB-backed and polled by the frontend.
+DB-backed (the app lists them) and, when Web Push is configured, also pushed to the recipients' phones.
 """
+import logging
 import uuid
 from typing import Optional
 from uuid import UUID
@@ -18,11 +19,21 @@ from src.shared.utils.errors import NotFoundError
 from .models import NotificationModel
 from .schemas import EntityType, Notification, NotificationType
 
+logger = logging.getLogger(__name__)
+
+# Every bitácora entry notifies the other members in the app; on the phone that would be noise — the daily summary
+# carries it. What reaches the phone is what asks for attention.
+NOT_PUSHED = ("event",)
+
 
 class NotificationService:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession], user_repository: UserRepositoryInterface):
         self.session_factory = session_factory
         self.users = user_repository
+        self.push = None  # PushService, set by the container once both exist
+
+    def set_push(self, push_service) -> None:
+        self.push = push_service
 
     async def notify_account(
         self,
@@ -68,6 +79,14 @@ class NotificationService:
         async with self.session_factory() as session:
             await session.execute(NotificationModel.__table__.insert(), rows)
             await session.commit()
+        if self.push is not None and self.push.enabled and type not in NOT_PUSHED:
+            try:
+                await self.push.send(
+                    [m.id for m in recipients], title, message, self.push.url_for(entity_type, entity_id, field_id),
+                    tag=f"{entity_type}:{entity_id}",
+                )
+            except Exception:  # noqa: BLE001 - the in-app notification is already there
+                logger.exception("Web push failed")
 
     async def list_for_user(
         self, actor: Actor, unread_only: bool = False, limit: int = 50, type: Optional[str] = None

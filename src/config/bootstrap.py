@@ -17,4 +17,6 @@ def build_container() -> Container:
     # The planning service hooks itself into the task service (a planned lot's "Sembrar" task sows the lot):
     # build it now so the hook is there whatever is used first.
     container.application.planning_service()
+    # Notifications reach the phone through the push service once both exist.
+    container.application.notification_service().set_push(container.application.push_service())
     return container

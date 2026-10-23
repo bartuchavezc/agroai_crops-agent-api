@@ -3,6 +3,7 @@ from google.adk.sessions import DatabaseSessionService
 
 from .conversations.service import ConversationService
 from .memory.service import MemoryService
+from .nudges import NudgeEngine
 from .providers.credentials_service import CredentialsService
 from .providers.encryption import SecretBox
 from .providers.gemini import GeminiGateway
@@ -96,4 +97,18 @@ class AgentContainer(containers.DeclarativeContainer):
         max_image_side=config.gemini.max_image_side,
         preflight_enabled=config.agent.preflight,
         preflight_max_tokens=config.agent.preflight_max_tokens,
+    )
+    nudge_engine = providers.Singleton(
+        NudgeEngine,
+        session_factory=db_session_factory,
+        gemini=gemini,
+        farm_service=application.farm_service,
+        application_service=application.application_service,
+        supply_service=application.supply_service,
+        task_service=application.task_service,
+        weather_service=weather_service,
+        alert_service=application.alert_service,
+        conversation_service=conversation_service,
+        push_service=application.push_service,
+        notification_service=application.notification_service,
     )

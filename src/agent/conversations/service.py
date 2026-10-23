@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Awaitable, Callable, Optional
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.shared.domain.actor import Actor
@@ -110,6 +110,7 @@ class ConversationService:
         user_text: str,
         image_identifier: Optional[str],
         retry_message_id: Optional[UUID] = None,
+        audio_identifier: Optional[str] = None,
     ) -> tuple[UUID, UUID]:
         """Save the user's message and a `pending` assistant placeholder before the agent runs, so a
         turn that fails or outlives the client is still in the transcript. With retry_message_id the
@@ -132,6 +133,7 @@ class ConversationService:
                     role="user",
                     content=user_text,
                     image_identifier=image_identifier,
+                    audio_identifier=audio_identifier,
                     created_at=utcnow(),
                 )
                 session.add(user_msg)
@@ -237,5 +239,43 @@ class ConversationService:
         conversation, and the agent on its next turn, knows it."""
         async with self.session_factory() as session:
             await self._owned(session, actor, conversation_id)
-            session.add(ConversationMessage(conversation_id=conversation_id, role="assistant", content=text))
+            session.add(ConversationMessage(
+                conversation_id=conversation_id, role="assistant", content=text, origin="note"
+            ))
             await session.commit()
+
+    async def unseen_notes(self, actor: Actor, conversation_id: UUID) -> list[str]:
+        """What the assistant wrote outside a turn (notes, nudges) since the person's last message: the model's own
+        history (the ADK session) doesn't have it, so the next turn is told."""
+        async with self.session_factory() as session:
+            await self._owned(session, actor, conversation_id)
+            last_user = (await session.execute(
+                select(func.max(ConversationMessage.created_at)).where(
+                    ConversationMessage.conversation_id == conversation_id, ConversationMessage.role == "user"
+                )
+            )).scalar()
+            stmt = select(ConversationMessage.content).where(
+                ConversationMessage.conversation_id == conversation_id, ConversationMessage.origin != "turn"
+            )
+            if last_user is not None:
+                stmt = stmt.where(ConversationMessage.created_at > last_user)
+            rows = (await session.execute(stmt.order_by(ConversationMessage.created_at))).scalars().all()
+        return [r for r in rows if r]
+
+    async def post_nudge(self, actor: Actor, conversation_id: Optional[UUID], title: str, text: str,
+                         field_id: Optional[UUID] = None) -> UUID:
+        """The agent writes first: into the given conversation, or a new one titled `title`. Returns its id."""
+        async with self.session_factory() as session:
+            if conversation_id is not None:
+                conversation = await self._owned(session, actor, conversation_id)
+            else:
+                conversation = Conversation(user_id=actor.user_id, account_id=actor.account_id, title=title,
+                                            field_id=field_id)
+                session.add(conversation)
+                await session.flush()
+            session.add(ConversationMessage(
+                conversation_id=conversation.id, role="assistant", content=text, origin="nudge", created_at=utcnow()
+            ))
+            conversation.updated_at = utcnow()
+            await session.commit()
+            return conversation.id

@@ -10,7 +10,7 @@ import json
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.application.changes.schemas import ProposalDecision, ProposalRead
 from src.application.changes.service import ChangeSetService
@@ -35,13 +35,22 @@ class ChatContext(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
+    message: str = Field("", max_length=4000, description="May be empty when an audio carries the message")
     conversation_id: Optional[UUID] = None
     image_identifier: Optional[str] = Field(None, description="From POST /upload/image")
+    audio_identifier: Optional[str] = Field(
+        None, description="From POST /upload/audio: transcribed into the message and kept as evidence"
+    )
     context: ChatContext = Field(default_factory=ChatContext)
     retry_message_id: Optional[UUID] = Field(
         None, description="Resend this failed user message (the last one of the conversation) instead of `message`"
     )
+
+    @model_validator(mode="after")
+    def _something_to_say(self):
+        if not (self.message.strip() or self.audio_identifier or self.retry_message_id):
+            raise ValueError("Send a message, an audio or a retry_message_id.")
+        return self
 
 
 @router.post("", response_model=ChatResponse, summary="Send a message to the agent")
@@ -54,6 +63,7 @@ async def chat(body: ChatRequest, actor: Actor = Depends(get_actor), runner: Age
         conversation_id=body.conversation_id,
         field_id=body.context.field_id,
         image_identifier=body.image_identifier,
+        audio_identifier=body.audio_identifier,
         report_id=body.context.report_id,
         retry_message_id=body.retry_message_id,
     )
@@ -74,6 +84,7 @@ async def chat_stream(body: ChatRequest, actor: Actor = Depends(get_actor), runn
         conversation_id=body.conversation_id,
         field_id=body.context.field_id,
         image_identifier=body.image_identifier,
+        audio_identifier=body.audio_identifier,
         report_id=body.context.report_id,
         retry_message_id=body.retry_message_id,
     )

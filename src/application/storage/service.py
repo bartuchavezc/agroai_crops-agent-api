@@ -57,6 +57,20 @@ class StorageService:
             logger.exception("Could not cache the thumbnail")
         return data, "image/jpeg"
 
+    async def save_audio(self, actor: Actor, file_name: Optional[str], data: bytes, content_type: str) -> str:
+        try:
+            return await self.file_repository.save_file(str(actor.account_id), file_name or "audio", data, content_type)
+        except Exception as e:
+            logger.error(f"Error saving audio: {e}", exc_info=True)
+            raise StorageError("Error saving audio.") from e
+
+    async def get_audio(self, actor: Actor, identifier: str) -> Tuple[bytes, str]:
+        data = await self.file_repository.get_file_data(str(actor.account_id), identifier)
+        if data is None:
+            raise NotFoundError(f"Audio not found: {identifier}")
+        raw, metadata = data
+        return raw, metadata.get("content_type") or "audio/webm"
+
     async def delete_image(self, actor: Actor, identifier: str) -> bool:
         return await self.file_repository.delete_file(str(actor.account_id), identifier)
 

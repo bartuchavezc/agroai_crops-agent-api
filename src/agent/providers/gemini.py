@@ -84,6 +84,12 @@ async def validate_gemini_key(api_key: str) -> None:
         raise translate_provider_error(exc) from None
 
 
+TRANSCRIBE_PROMPT = (
+    "Transcribí este audio palabra por palabra, en el idioma en que se habla, con puntuación. Es una persona contando "
+    "lo que hizo o vio en su huerta o campo: respetá nombres de cultivos, productos, números, dosis y unidades tal "
+    "como se dicen. Solo la transcripción, sin comentarios. Si no se entiende nada, devolvé una cadena vacía."
+)
+
 class GeminiGateway:
     """Builds per-user clients and wraps the one-shot calls used outside the agent loop."""
 
@@ -214,6 +220,17 @@ class GeminiGateway:
         client = await self.client_for(user_id)
         chain = models or list(dict.fromkeys([model or self.lite_model, *self.chat_chain]))
         response = await self._generate(client, chain, contents=prompt)
+        return (response.text or "").strip()
+
+    async def transcribe(self, user_id: UUID, audio: bytes, mime_type: str) -> str:
+        """A voice message, word for word (lite chain: a transcription needs no reasoning). Empty when nothing was
+        said."""
+        client = await self.client_for(user_id)
+        chain = list(dict.fromkeys([self.lite_model, *self.chat_chain]))
+        response = await self._generate(
+            client, chain,
+            contents=[types.Part.from_bytes(data=audio, mime_type=mime_type), TRANSCRIBE_PROMPT],
+        )
         return (response.text or "").strip()
 
     async def embed(self, user_id: UUID, texts: Sequence[str], task_type: str) -> list[list[float]]:

@@ -33,6 +33,7 @@ dependencies = [
     "pygeomag>=1.1.0",
     "shapely>=2.1.2",
     "fpdf2>=2.8",
+    "pywebpush>=2.0",
 ]
 
 [dependency-groups]

@@ -16,17 +16,21 @@ src/
 │   ├── farm/      campos, catálogo de cultivos, ciclos, eventos
 │   ├── reports/   reportes / diagnósticos
 │   ├── alerts/    alertas, motor de reglas, alertas proactivas por pronóstico
-│   └── storage/   subida de imágenes (separadas por cuenta)
+│   ├── applications/  registro de aplicaciones auditable (versiones, carencias) y cuaderno PDF/CSV
+│   ├── supplies/  insumos en stock (fitosanitarios, fertilizantes, sustratos) y su libro de movimientos
+│   ├── proactive/ lluvia en la bitácora, resúmenes diario/semanal, Web Push y preferencias de avisos
+│   └── storage/   subida de imágenes y audios (separados por cuenta)
 ├── agent/         IA
 │   ├── providers/ Gemini BYOK: keys cifradas (Fernet), gateway, endpoints
 │   ├── conversations/  conversaciones privadas por usuario + endpoint de chat
 │   ├── memory/    memoria del agente (tsvector + pgvector, fusión RRF), compartida por cuenta
 │   ├── tools/     tools del agente (atadas al usuario autenticado)
 │   ├── reasoning/ diagnóstico multimodal con salida estructurada (/analyze)
-│   └── runner.py  turno de Google ADK
+│   ├── nudges.py  el asistente escribe primero: señales abiertas, decide el modelo, límites de la persona
+│   └── runner.py  turno de Google ADK (texto, foto o audio transcripto)
 ├── config/        settings, container DI, bootstrap
 ├── main.py        FastAPI
-└── batch.py       jobs batch (SMN + alertas, recordatorios, serie satelital)
+└── batch.py       jobs batch (SMN + alertas, recordatorios, serie satelital, proactivo)
 ```
 
 Dependencias entre capas: `agent → application → providers`. `auth` y `shared` son transversales.
@@ -82,6 +86,23 @@ Copernicus un recorte pequeño del campo (bandas + clasificación de nubes SCL) 
 20 días; `satellite-backfill` completa las de toda la serie. Los mapas (`ndvi`, `ndmi`, `ndwi`, `rgb`) se calculan
 localmente con la mediana píxel a píxel de los últimos 15 días, usando solo los píxeles limpios de cada pasada,
 así que mostrar una imagen no llama a Copernicus ni gasta créditos.
+
+### Registro auditable y asistente proactivo
+- **Bitácora con lo que no se hizo**: cada entrada es `done` o `skipped` con su motivo («no regué: llovió»); la lluvia
+  la escribe el sistema (Open-Meteo, fuente `system`). Los lotes guardan lo sembrado y su cantidad viva sale de las
+  pérdidas y los conteos; una resiembra es un lote nuevo que reemplaza (en parte) al anterior.
+- **Aplicaciones** (`application/applications`): borrador → confirmada; una confirmada no se edita ni se borra (las
+  correcciones y anulaciones son versiones con motivo). Los productos se copian como texto formal del registro SENASA
+  (o escritos a mano y marcados «no verificado»), con dosis, carencia leída de la etiqueta, clima de esa hora y
+  evidencia (audio, foto). Descuenta stock y deja cada lote tratado con «no cosechar hasta»; `/applications/export`
+  da el cuaderno en PDF o CSV.
+- **Audio**: `POST /upload/audio` y `audio_identifier` en `/chat`: Gemini lo transcribe, el turno corre con el texto y
+  el audio queda como evidencia.
+- **Proactivo** (`python -m src.batch proactive --every-minutes 15`): lluvia cada 6 h, resumen a la tarde (y el
+  semanal el domingo) para owner/tecnico, y dos chequeos por día (`NUDGE_WINDOWS`) más uno por hora para lo urgente.
+  El código junta señales abiertas; una llamada por cuenta (con la key de un owner) decide si escribir, a quién y qué
+  —o callarse—; el máximo de mensajes por día y el horario de silencio de cada persona se aplican después. El mensaje
+  queda en una conversación y Web Push (`VAPID_*`) lo lleva al teléfono. `/nudges/log` muestra cada decisión.
 
 ## Puesta en marcha
 

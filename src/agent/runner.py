@@ -223,7 +223,8 @@ class AgentRunner:
         return "\n".join(lines)
 
     async def _account_snapshot(
-        self, actor: Actor, overview, default_field_id: Optional[UUID], report_note: Optional[str]
+        self, actor: Actor, overview, default_field_id: Optional[UUID], report_note: Optional[str],
+        notes: Optional[list[str]] = None, from_audio: bool = False,
     ) -> str:
         """Per-turn account state (date, role, field in focus, alerts, report context) rebuilt fresh on every turn.
         Kept out of the system instruction on purpose — see `_static_instruction` — and instead
@@ -247,6 +248,14 @@ class AgentRunner:
 
         if report_note:
             lines.append(f"\n{report_note}")
+        if notes:
+            lines.append("\nAntes de este mensaje, el asistente escribió en esta conversación por su cuenta:")
+            lines += [f"- «{n}»" for n in notes[-3:]]
+        if from_audio:
+            lines.append(
+                "\nEl mensaje llegó como audio y es su transcripción automática: puede traer errores en nombres, "
+                "números o dosis. Ante uno que cambie lo que se registra, preguntar antes de registrarlo."
+            )
 
         return "\n".join(lines)
 
@@ -272,6 +281,7 @@ class AgentRunner:
         image_identifier: Optional[str] = None,
         report_id: Optional[UUID] = None,
         retry_message_id: Optional[UUID] = None,
+        audio_identifier: Optional[str] = None,
     ) -> PreparedTurn:
         """Everything that can fail with a plain HTTP error (missing key, unknown conversation/field/image,
         a turn already running) happens here, before a streaming response is opened. A new conversation
@@ -288,13 +298,19 @@ class AgentRunner:
             if conversation is None:
                 raise InvalidInputError("retry_message_id requires conversation_id.")
             message, image_identifier = await self.conversations.retry_text(actor, conversation.id, retry_message_id)
+            audio_identifier = None  # its transcription is already the message
+        elif audio_identifier:
+            message = await self._transcribed(actor, message, audio_identifier)
 
         default_field_id = field_id or (conversation.field_id if conversation else None)
         overview = await self.farm.overview(actor)
         crop_families = await self.farm.crop_families(actor)
         report_note = await self._report_note(actor, report_id) if report_id else None
         instruction = await self._static_instruction(actor, overview, crop_families)
-        context_snapshot = await self._account_snapshot(actor, overview, default_field_id, report_note)
+        notes = await self.conversations.unseen_notes(actor, conversation.id) if conversation is not None else []
+        context_snapshot = await self._account_snapshot(
+            actor, overview, default_field_id, report_note, notes=notes, from_audio=bool(audio_identifier)
+        )
         new_content = await self._user_content(actor, message, image_identifier, context_snapshot)
 
         recent: list[tuple[str, str]] = []
@@ -306,7 +322,8 @@ class AgentRunner:
         if await self.sessions.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id) is None:
             await self.sessions.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
         _, assistant_message_id = await self.conversations.start_turn(
-            actor, conversation.id, message, image_identifier, retry_message_id=retry_message_id
+            actor, conversation.id, message, image_identifier, retry_message_id=retry_message_id,
+            audio_identifier=audio_identifier,
         )
         ctx = TurnContext(
             actor=replace(actor, via="agent"),
@@ -314,6 +331,7 @@ class AgentRunner:
             tz=self._tz_for(actor),
             default_field_id=default_field_id,
             image_identifier=image_identifier,
+            audio_identifier=audio_identifier,
         )
         tools = build_tools(self.tool_deps, ctx)
         preflight = None
@@ -354,6 +372,14 @@ class AgentRunner:
             snapshot=context_snapshot,
             preflight=preflight,
         )
+
+    async def _transcribed(self, actor: Actor, message: str, audio_identifier: str) -> str:
+        """The voice message as text (what the agent reads and the transcript shows); typed text goes first."""
+        data, mime = await self.storage.get_audio(actor, audio_identifier)
+        transcript = await self.gemini.transcribe(actor.user_id, data, mime)
+        if not transcript and not message.strip():
+            raise InvalidInputError("No se entendió el audio. ¿Podés grabarlo de nuevo o escribirlo?")
+        return "\n\n".join(p for p in (message.strip(), transcript) if p)
 
     def is_running(self, conversation_id: UUID) -> bool:
         return conversation_id in self._running
@@ -577,9 +603,11 @@ class AgentRunner:
         image_identifier: Optional[str] = None,
         report_id: Optional[UUID] = None,
         retry_message_id: Optional[UUID] = None,
+        audio_identifier: Optional[str] = None,
     ) -> ChatResponse:
         turn = await self.prepare_turn(
-            actor, message, conversation_id, field_id, image_identifier, report_id, retry_message_id
+            actor, message, conversation_id, field_id, image_identifier, report_id, retry_message_id,
+            audio_identifier=audio_identifier,
         )
         async for event in self.start_stream(turn):
             if event["event"] == "done":

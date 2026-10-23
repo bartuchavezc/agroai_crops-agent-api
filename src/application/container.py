@@ -20,6 +20,9 @@ from .management.repository import ManagementRepository
 from .management.service import ManagementService
 from .notifications.service import NotificationService
 from .planning.progress import CycleProgressService
+from .proactive.digests import DigestService
+from .proactive.push import PushService
+from .proactive.rain import RainLogService
 from .products.service import ProductRegistryService
 from .planning.repository import PlanningRepository
 from .planning.service import PlanningService
@@ -135,6 +138,17 @@ class ApplicationContainer(containers.DeclarativeContainer):
         inventory_service=inventory_service,
         timezone_name=config.app.timezone,
         task_service=task_service,
+    )
+
+    push_service = providers.Singleton(PushService, session_factory=db_session_factory, config=config.proactive)
+    rain_log_service = providers.Singleton(
+        RainLogService, farm_repository=farm_repository, weather_service=weather_service,
+        timezone_name=config.app.timezone,
+    )
+    digest_service = providers.Singleton(
+        DigestService, session_factory=db_session_factory, farm_service=farm_service,
+        application_service=application_service, supply_service=supply_service, task_service=task_service,
+        notification_service=notification_service, preferences=push_service,
     )
 
     field_summary_service = providers.Singleton(

@@ -9,6 +9,8 @@ Batch jobs.
     python -m src.batch satellite                     # sync every field's satellite series + alerts, once
     python -m src.batch satellite --every-hours 24    # same, forever (the `satellite` compose service)
     python -m src.batch satellite-backfill --years 5 [--field-id ID] [--source sentinel2|sentinel1]
+    python -m src.batch proactive                     # rain log, summaries and the assistant's checks, once
+    python -m src.batch proactive --every-minutes 15  # same, forever (the `proactive` compose service)
 """
 import argparse
 import asyncio
@@ -85,6 +87,21 @@ async def run_reminders(container) -> None:
         logger.info(f"Reminders: {result}")
 
 
+_proactive_job = None
+
+
+async def run_proactive(container) -> None:
+    """One instance per process: it remembers when it last logged the rain."""
+    global _proactive_job
+    from src.agent.proactive_job import ProactiveJob
+
+    if _proactive_job is None:
+        _proactive_job = ProactiveJob(container)
+    result = await _proactive_job.run()
+    if result["rain"] or result["digests"] or result["nudges"]:
+        logger.info(f"Proactive: {result}")
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m src.batch")
     sub = parser.add_subparsers(dest="job", required=True)
@@ -99,9 +116,14 @@ async def main() -> None:
     backfill.add_argument("--years", type=int, required=True)
     backfill.add_argument("--field-id", default=None)
     backfill.add_argument("--source", choices=["sentinel2", "sentinel1"], default=None)
+    proactive = sub.add_parser("proactive", help="Rain log, daily/weekly summaries and the assistant's checks")
+    proactive.add_argument("--every-minutes", type=float, default=None)
     args = parser.parse_args()
 
-    if args.job == "reminders":
+    if args.job == "proactive":
+        job, name = run_proactive, "Proactive"
+        interval = args.every_minutes * 60 if args.every_minutes else None
+    elif args.job == "reminders":
         job, name = run_reminders, "Reminders"
         interval = args.every_minutes * 60 if args.every_minutes else None
     elif args.job == "satellite":

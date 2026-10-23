@@ -118,6 +118,18 @@ DEFAULT_CONFIG = {
         "s1_enabled": True,
         "s1_orbit_direction": "DESCENDING",
     },
+    "proactive": {
+        # Web Push (VAPID). Without keys the assistant still writes its messages and summaries in the app; it just
+        # can't reach the phone. Generate a pair with `python -m src.scripts.vapid_keys`.
+        "vapid_public_key": "",
+        "vapid_private_key": "",
+        "vapid_subject": "mailto:soporte@agroai.app",
+        # Where a notification opens (the web app's origin).
+        "web_base_url": "http://localhost:3000",
+        "daily_digest_hour": 19,  # local time
+        "weekly_digest_weekday": 6,  # Sunday (Monday = 0)
+        "nudge_windows": ["08:00", "17:30"],  # local times the assistant weighs whether to say something
+    },
 }
 
 
@@ -227,6 +239,15 @@ def _apply_env_overrides(config: dict) -> None:
     satellite["min_valid_fraction"] = float(env("SATELLITE_MIN_VALID_FRACTION", satellite["min_valid_fraction"]))
     satellite["s1_enabled"] = _env_bool("SATELLITE_S1_ENABLED", satellite["s1_enabled"])
     satellite["s1_orbit_direction"] = env("SATELLITE_S1_ORBIT_DIRECTION", satellite["s1_orbit_direction"]).upper()
+
+    proactive = config["proactive"]
+    proactive["vapid_public_key"] = env("VAPID_PUBLIC_KEY", proactive["vapid_public_key"])
+    proactive["vapid_private_key"] = env("VAPID_PRIVATE_KEY", proactive["vapid_private_key"])
+    proactive["vapid_subject"] = env("VAPID_SUBJECT", proactive["vapid_subject"])
+    proactive["web_base_url"] = env("WEB_BASE_URL", proactive["web_base_url"]).rstrip("/")
+    proactive["daily_digest_hour"] = int(env("DAILY_DIGEST_HOUR", proactive["daily_digest_hour"]))
+    if env("NUDGE_WINDOWS") is not None:
+        proactive["nudge_windows"] = [w.strip() for w in env("NUDGE_WINDOWS").split(",") if w.strip()]
 
 
 def _validate(config: dict) -> None:

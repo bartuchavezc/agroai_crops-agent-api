@@ -74,6 +74,18 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The assistant writes first: rain into the bitácora, the evening/weekly summaries and its morning/evening checks
+  # (one model call per account per window, on the account's own Gemini key). Web Push needs VAPID_* in .env.
+  proactive:
+    build: .
+    command: ["python", "-m", "src.batch", "proactive", "--every-minutes", "${PROACTIVE_INTERVAL_MINUTES:-15}"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agroai}:${POSTGRES_PASSWORD:-agroai}@db:5432/${POSTGRES_DB:-agroai}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   # Copernicus satellite series: backfill + new passes for every field, then series-based alerts. Does
   # nothing until SATELLITE_INGEST_ENABLED=true (measure the real cost first: src/scripts/copernicus_measure.py).
   satellite:

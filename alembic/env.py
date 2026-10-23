@@ -24,6 +24,7 @@ import src.application.inventory.models  # noqa: F401,E402
 import src.application.management.models  # noqa: F401,E402
 import src.application.notifications.models  # noqa: F401,E402
 import src.application.planning.models  # noqa: F401,E402
+import src.application.proactive.models  # noqa: F401,E402
 import src.application.products.models  # noqa: F401,E402
 import src.application.supplies.models  # noqa: F401,E402
 import src.application.tasks.models  # noqa: F401,E402
