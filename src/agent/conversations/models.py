@@ -41,7 +41,8 @@ class ConversationMessage(Base):
     )
     role = Column(String(10), nullable=False)
     content = Column(Text, nullable=False, default="")
-    image_identifier = Column(String(255))
+    image_identifier = Column(String(255))  # the first photo (kept for older clients)
+    image_identifiers = Column(JSONB, nullable=False, default=list, server_default="[]")  # every photo, up to 4
     audio_identifier = Column(String(255))  # a voice message: `content` holds its transcription
     # turn: part of a chat turn; note: written outside a turn (a proposal applied); nudge: the agent wrote first.
     origin = Column(String(10), nullable=False, default="turn", server_default="turn")
