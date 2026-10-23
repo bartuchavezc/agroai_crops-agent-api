@@ -851,3 +851,32 @@ async def test_preflight_router_tokens_count_in_the_turn_usage(client, signup, w
     )
     usage = response.json()["metadata"]["usage"]
     assert usage["llm_calls"] == 2 and usage["prompt_tokens"] == 1700 and usage["output_tokens"] == 80
+
+
+async def test_a_message_carries_up_to_four_photos_and_keeps_them(client, signup, with_key, scripted_model):
+    import base64
+
+    user = await signup("chat-photos")
+    await with_key(user)
+    h = user["headers"]
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    ids = [
+        (await client.post("/api/v1/upload/image", headers=h, files={"image_file": (f"f{i}.png", png, "image/png")}))
+        .json()["image_identifier"]
+        for i in range(3)
+    ]
+    scripted_model.script = [("text", "Veo tres fotos del cantero")]
+    r = await client.post("/api/v1/chat", headers=h, json={"message": "¿cómo lo ves?", "image_identifiers": ids})
+    assert r.status_code == 200, r.text
+    parts = scripted_model.requests[-1].contents[-1].parts
+    assert sum(1 for p in parts if p.inline_data) == 3
+    assert "trae 3 fotos" in str(parts)
+    messages = (
+        await client.get(f"/api/v1/chat/conversations/{r.json()['metadata']['conversation_id']}/messages", headers=h)
+    ).json()
+    assert (messages[0]["image_identifiers"], messages[0]["image_identifier"]) == (ids, ids[0])
+
+    too_many = await client.post("/api/v1/chat", headers=h, json={"message": "x", "image_identifiers": ids + ids[:2]})
+    assert too_many.status_code == 422

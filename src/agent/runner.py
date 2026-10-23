@@ -76,7 +76,7 @@ _ERRORS_BY_CODE = {
 class PreparedTurn:
     actor: Actor
     message: str
-    image_identifier: Optional[str]
+    image_identifiers: list[str]
     conversation_id: UUID
     is_new: bool
     content: types.Content
@@ -260,11 +260,11 @@ class AgentRunner:
         return "\n".join(lines)
 
     async def _user_content(
-        self, actor: Actor, message: str, image_identifier: Optional[str], context_snapshot: str
+        self, actor: Actor, message: str, image_identifiers: list[str], context_snapshot: str
     ) -> types.Content:
         parts = []
-        if image_identifier:
-            data, mime = await self.storage.get_image_for_model(actor, image_identifier, self.max_image_side)
+        for identifier in image_identifiers:
+            data, mime = await self.storage.get_image_for_model(actor, identifier, self.max_image_side)
             parts.append(types.Part.from_bytes(data=data, mime_type=mime))
         # The account-state snapshot rides along with the message text (not the system instruction,
         # see _account_snapshot) and is never shown to the user: ConversationService persists the
@@ -278,7 +278,7 @@ class AgentRunner:
         message: str,
         conversation_id: Optional[UUID] = None,
         field_id: Optional[UUID] = None,
-        image_identifier: Optional[str] = None,
+        image_identifiers: Optional[list[str]] = None,
         report_id: Optional[UUID] = None,
         retry_message_id: Optional[UUID] = None,
         audio_identifier: Optional[str] = None,
@@ -297,7 +297,7 @@ class AgentRunner:
         if retry_message_id:
             if conversation is None:
                 raise InvalidInputError("retry_message_id requires conversation_id.")
-            message, image_identifier = await self.conversations.retry_text(actor, conversation.id, retry_message_id)
+            message, image_identifiers = await self.conversations.retry_text(actor, conversation.id, retry_message_id)
             audio_identifier = None  # its transcription is already the message
         elif audio_identifier:
             message = await self._transcribed(actor, message, audio_identifier)
@@ -311,7 +311,10 @@ class AgentRunner:
         context_snapshot = await self._account_snapshot(
             actor, overview, default_field_id, report_note, notes=notes, from_audio=bool(audio_identifier)
         )
-        new_content = await self._user_content(actor, message, image_identifier, context_snapshot)
+        image_identifiers = list(image_identifiers or [])
+        if len(image_identifiers) > 1:
+            context_snapshot += f"\n\nEste mensaje trae {len(image_identifiers)} fotos, en el orden en que se mandaron."
+        new_content = await self._user_content(actor, message, image_identifiers, context_snapshot)
 
         recent: list[tuple[str, str]] = []
         if conversation is not None and self.preflight.enabled:
@@ -322,7 +325,7 @@ class AgentRunner:
         if await self.sessions.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id) is None:
             await self.sessions.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
         _, assistant_message_id = await self.conversations.start_turn(
-            actor, conversation.id, message, image_identifier, retry_message_id=retry_message_id,
+            actor, conversation.id, message, image_identifiers, retry_message_id=retry_message_id,
             audio_identifier=audio_identifier,
         )
         ctx = TurnContext(
@@ -330,7 +333,8 @@ class AgentRunner:
             conversation_id=conversation.id,
             tz=self._tz_for(actor),
             default_field_id=default_field_id,
-            image_identifier=image_identifier,
+            image_identifier=image_identifiers[0] if image_identifiers else None,
+            image_identifiers=image_identifiers,
             audio_identifier=audio_identifier,
         )
         tools = build_tools(self.tool_deps, ctx)
@@ -347,7 +351,7 @@ class AgentRunner:
             )
         agent = LlmAgent(
             name="agroai_assistant",
-            model=self._model(api_key, heavy=bool(image_identifier)),
+            model=self._model(api_key, heavy=bool(image_identifiers)),
             instruction=lambda _ctx: instruction,
             tools=[*tools, specific_manuals_toolset()],
             generate_content_config=self.gemini.chat_generation_config(),
@@ -361,14 +365,14 @@ class AgentRunner:
         return PreparedTurn(
             actor=actor,
             message=message,
-            image_identifier=image_identifier,
+            image_identifiers=image_identifiers,
             conversation_id=conversation.id,
             is_new=conversation.title is None,
             content=new_content,
             ctx=ctx,
             runner=Runner(app=app, session_service=self.sessions),
             assistant_message_id=assistant_message_id,
-            model_name=(self.gemini.model_chain if image_identifier else self.gemini.chat_chain)[0],
+            model_name=(self.gemini.model_chain if image_identifiers else self.gemini.chat_chain)[0],
             snapshot=context_snapshot,
             preflight=preflight,
         )
@@ -600,13 +604,13 @@ class AgentRunner:
         message: str,
         conversation_id: Optional[UUID] = None,
         field_id: Optional[UUID] = None,
-        image_identifier: Optional[str] = None,
+        image_identifiers: Optional[list[str]] = None,
         report_id: Optional[UUID] = None,
         retry_message_id: Optional[UUID] = None,
         audio_identifier: Optional[str] = None,
     ) -> ChatResponse:
         turn = await self.prepare_turn(
-            actor, message, conversation_id, field_id, image_identifier, report_id, retry_message_id,
+            actor, message, conversation_id, field_id, image_identifiers, report_id, retry_message_id,
             audio_identifier=audio_identifier,
         )
         async for event in self.start_stream(turn):
