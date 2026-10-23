@@ -55,7 +55,7 @@ class DigestService:
         lots = await self.farm.list_lots(actor, statuses=list(ACTIVE_LOT_STATUSES))
 
         done = Counter(EVENT_WORDS.get(e.type, e.type) for e in events
-                       if e.outcome == "done" and e.type not in ("rain", "photo"))
+                       if e.outcome == "done" and e.type not in ("rain", "photo", "loss"))
         skipped = [
             {"what": EVENT_WORDS.get(e.type, e.type), "where": zones[e.zone_id].label if e.zone_id in zones else None,
              "reason": e.reason}

@@ -533,9 +533,15 @@ class FarmService:
                 reason=notes,
             ))
         today = utcnow().astimezone(ZoneInfo(actor.timezone) if actor.timezone else None).date()
+        zone_ids = original.zone_ids if zone_ids is None else zone_ids
+        if number is None:  # the next lot of that zone and season, so the resowing reads "L3", not as a copy
+            siblings = await self.repo.list_lots(
+                actor.account_id, field_id=original.field_id, zone_id=zone_ids[0] if zone_ids else None
+            )
+            number = max((lot.number or 0 for lot in siblings if lot.season == original.season), default=0) + 1
         new = await self.create_lot(actor, LotCreate(
             field_id=original.field_id, crop_master_id=original.crop_master_id,
-            zone_ids=original.zone_ids if zone_ids is None else zone_ids, season=original.season, number=number,
+            zone_ids=zone_ids, season=original.season, number=number,
             planting_date=planting_date or today, quantity=quantity, unit=unit or original.unit,
             status="planted", replaces_lot_id=original.id,
             notes=f"Resiembra de {original.label or 'lote anterior'}" + (f". {notes}" if notes else ""),

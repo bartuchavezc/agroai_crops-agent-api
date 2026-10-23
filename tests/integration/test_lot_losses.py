@@ -45,6 +45,7 @@ async def test_partial_loss_lowers_the_live_quantity_and_a_resowing_replaces_it(
     assert (resown["replaces_lot_id"], resown["zone_ids"], resown["quantity"], resown["unit"]) == (
         lot["id"], [zone["id"]], 40, "plantas"
     )
+    assert resown["label"] == "T26/27 · Cantero 1 · L2"  # the next lot of that zone and season
     log = (await client.get(f"{FARM}/log?lot_id={resown['id']}", headers=h)).json()
     assert [i["type"] for d in log["days"] for i in d["items"]] == ["sowing"]
 
