@@ -28,7 +28,9 @@ class LogItem(BaseModel):
     unit: Optional[str] = None
     zone_id: Optional[UUID] = None
     lot_ids: list[UUID] = Field(default_factory=list)
-    source: Optional[str] = None  # user | agent
+    source: Optional[str] = None  # user | agent | system
+    outcome: Optional[str] = None  # done | skipped (events)
+    reason: Optional[str] = None  # why it was skipped / what caused a loss
     image_identifier: Optional[str] = None
     data: dict[str, Any] = Field(default_factory=dict)
 
@@ -79,7 +81,7 @@ class LogService:
             LogItem(
                 kind="event", at=e.occurred_at, title=e.type, detail=e.notes, ref_id=e.id, type=e.type,
                 quantity=e.quantity, unit=e.unit, zone_id=e.zone_id, lot_ids=e.lot_ids, source=e.source,
-                image_identifier=e.image_identifier, data=e.data,
+                image_identifier=e.image_identifier, data=e.data, outcome=e.outcome, reason=e.reason,
             )
             for e in events
         ]

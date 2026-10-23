@@ -308,6 +308,47 @@ class FarmRepository:
             out[lot_id].append(zone_id)
         return out
 
+    async def lot_count_events(self, lot_ids: Iterable[UUID]) -> dict[UUID, list[FieldEvent]]:
+        """Each lot's losses and confirmed counts (an inspection with data.count), oldest first: what its live
+        quantity is computed from."""
+        ids = list(lot_ids)
+        if not ids:
+            return {}
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(EventLot.lot_id, FieldEvent)
+                    .join(FieldEvent, FieldEvent.id == EventLot.event_id)
+                    .where(
+                        EventLot.lot_id.in_(ids),
+                        FieldEvent.outcome == "done",
+                        or_(FieldEvent.type == "loss", FieldEvent.data.has_key("count")),
+                    )
+                    .order_by(FieldEvent.occurred_at, FieldEvent.created_at)
+                )
+            ).all()
+        out: dict[UUID, list[FieldEvent]] = {i: [] for i in ids}
+        for lot_id, event in rows:
+            out[lot_id].append(event)
+        return out
+
+    async def resowings_of(self, lot_ids: Iterable[UUID]) -> dict[UUID, list[UUID]]:
+        ids = list(lot_ids)
+        if not ids:
+            return {}
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(Lot.replaces_lot_id, Lot.id)
+                    .where(Lot.replaces_lot_id.in_(ids), Lot.deleted_at.is_(None))
+                    .order_by(Lot.created_at)
+                )
+            ).all()
+        out: dict[UUID, list[UUID]] = {i: [] for i in ids}
+        for replaced, lot_id in rows:
+            out[replaced].append(lot_id)
+        return out
+
     async def delete_lot(self, account_id: UUID, cycle_id: UUID) -> bool:
         return await self._soft_delete(Lot, cycle_id, account_id)
 
