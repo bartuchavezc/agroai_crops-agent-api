@@ -87,6 +87,24 @@ class OpenMeteoAdapter:
         data = await self._get(self.FORECAST_URL, params)
         return self._parse_hourly(data) if data else []
 
+    async def hours_around(self, latitude: float, longitude: float, when: date) -> list[OpenMeteoHour]:
+        """The hours of one local day: from the forecast endpoint (which keeps the last 92 days, with no archive lag)
+        or, further back, the archive."""
+        days_back = (date.today() - when).days
+        if days_back > 90:
+            return await self.historical_hourly(latitude, longitude, when, when)
+        params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "hourly": self._BASE_HOURLY_VARS,
+            "start_date": when.isoformat(),
+            "end_date": when.isoformat(),
+            "timezone": "auto",
+            "wind_speed_unit": "ms",
+        }
+        data = await self._get(self.FORECAST_URL, params)
+        return self._parse_hourly(data) if data else []
+
     async def recent_daily(self, latitude: float, longitude: float, days: int = 30) -> list[dict]:
         """The last `days` days (plus today), one record per day, oldest first: tmax/tmin/tmean, rain and FAO-56 ET0.
         One call to the forecast endpoint with `past_days`, which also covers the last few days the archive lags on."""

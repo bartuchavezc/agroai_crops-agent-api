@@ -65,7 +65,8 @@ async def test_a_loss_needs_one_lot_and_an_amount_and_a_skipped_entry_its_reason
         "field_id": field["id"], "zone_id": zone["id"], "type": "loss", "quantity": 3,
     })
     assert r.status_code == 400
-    r = await client.post(f"{FARM}/events", headers=h, json={"field_id": field["id"], "lot_id": lot["id"], "type": "loss"})
+    r = await client.post(f"{FARM}/events", headers=h,
+                          json={"field_id": field["id"], "lot_id": lot["id"], "type": "loss"})
     assert r.status_code == 400
 
     skipped = await client.post(f"{FARM}/events", headers=h, json={
@@ -85,7 +86,9 @@ async def test_a_loss_needs_one_lot_and_an_amount_and_a_skipped_entry_its_reason
     assert (item["outcome"], item["reason"]) == ("skipped", "llovió 18 mm")
 
 
-async def test_the_agent_resows_a_lot_and_logs_a_skipped_watering(client, signup, with_key, scripted_model):
+async def test_the_agent_resows_a_lot_and_logs_a_skipped_watering(
+    client, signup, with_key, scripted_model  # noqa: F811
+):
     user = await signup("losses-agent")
     await with_key(user)
     h = user["headers"]
@@ -99,7 +102,8 @@ async def test_the_agent_resows_a_lot_and_logs_a_skipped_watering(client, signup
         ]),
         ("text", "Listo: registré la pérdida, la resiembra y que hoy no se regó por la lluvia."),
     ]
-    r = await client.post("/api/v1/chat", headers=h, json={"message": "no germinaron 40, resembramos; no regué, llovió"})
+    r = await client.post("/api/v1/chat", headers=h,
+                          json={"message": "no germinaron 40, resembramos; no regué, llovió"})
     assert r.status_code == 200, r.text
     assert all(t["ok"] for t in r.json()["metadata"]["tool_calls"])
     lots = (await client.get(f"{FARM}/lots?field_id={field['id']}", headers=h)).json()

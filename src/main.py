@@ -18,6 +18,7 @@ from src.agent.providers.router import router as provider_credentials_router
 from src.agent.reasoning.router import layout_router
 from src.agent.reasoning.router import router as analyze_router
 from src.application.alerts.router import router as alerts_router
+from src.application.applications.router import router as applications_router
 from src.application.changes.router import router as changes_router
 from src.application.farm.router import router as farm_router
 from src.application.inventory.router import router as inventory_router
@@ -28,6 +29,7 @@ from src.application.notifications.router import router as notifications_router
 from src.application.reports.router import router as reports_router
 from src.application.satellite.router import router as satellite_router
 from src.application.storage.router import router as upload_router
+from src.application.supplies.router import router as supplies_router
 from src.application.tasks.router import router as tasks_router
 from src.auth.api.routes import router as auth_router
 from src.config.bootstrap import build_container
@@ -59,6 +61,8 @@ ROUTERS = [
     planning_router,
     tasks_router,
     changes_router,
+    applications_router,
+    supplies_router,
     satellite_router,
     admin_router,
 ]
@@ -81,6 +85,8 @@ WIRED_MODULES = [
     "src.application.planning.router",
     "src.application.tasks.router",
     "src.application.changes.router",
+    "src.application.applications.router",
+    "src.application.supplies.router",
     "src.application.satellite.router",
     "src.admin.router",
 ]

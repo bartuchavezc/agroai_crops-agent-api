@@ -77,6 +77,9 @@ class AgentContainer(containers.DeclarativeContainer):
         tasks=application.task_service,
         changes=application.change_set_service,
         snapshot=application.field_snapshot_service,
+        applications=application.application_service,
+        supplies=application.supply_service,
+        registry=application.product_registry_service,
     )
     runner = providers.Singleton(
         AgentRunner,

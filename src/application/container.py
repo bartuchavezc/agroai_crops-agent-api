@@ -1,6 +1,7 @@
 from dependency_injector import containers, providers
 
 from .alerts.field_rules import FieldAlertRulesService
+from .applications.service import ApplicationService
 from .alerts.forecast_alerts import ForecastAlertService
 from .alerts.rules_engine import RulesEngine
 from .alerts.service import AlertService
@@ -19,6 +20,7 @@ from .management.repository import ManagementRepository
 from .management.service import ManagementService
 from .notifications.service import NotificationService
 from .planning.progress import CycleProgressService
+from .products.service import ProductRegistryService
 from .planning.repository import PlanningRepository
 from .planning.service import PlanningService
 from .reports.repository import SQLAlchemyReportsRepository
@@ -32,6 +34,7 @@ from .soil_data.service import SoilContextService
 from .soil_data.soilgrids_repository import SoilGridsRepository
 from .storage.local_adapter import LocalFileRepository
 from .storage.service import StorageService
+from .supplies.service import SupplyService
 
 
 class ApplicationContainer(containers.DeclarativeContainer):
@@ -106,6 +109,16 @@ class ApplicationContainer(containers.DeclarativeContainer):
     management_repository = providers.Singleton(ManagementRepository, session_factory=db_session_factory)
     management_service = providers.Singleton(
         ManagementService, repository=management_repository, farm_service=farm_service
+    )
+
+    product_registry_service = providers.Singleton(ProductRegistryService, session_factory=db_session_factory)
+    supply_service = providers.Singleton(
+        SupplyService, session_factory=db_session_factory, registry=product_registry_service
+    )
+    application_service = providers.Singleton(
+        ApplicationService, session_factory=db_session_factory, farm_service=farm_service,
+        supply_service=supply_service, registry=product_registry_service, weather_service=weather_service,
+        management_service=management_service,
     )
 
     task_repository = providers.Singleton(TaskRepository, session_factory=db_session_factory)

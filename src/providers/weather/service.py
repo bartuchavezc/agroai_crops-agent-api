@@ -266,6 +266,23 @@ class WeatherService:
             await session.commit()
         return {"uv_index": closest.uv_index, "humidity": closest.humidity, "wind_speed": closest.wind_speed_10m}
 
+    async def conditions_at(self, latitude: float, longitude: float, when: datetime) -> Optional[dict]:
+        """Temperature, humidity and wind at the field in the hour of `when` (Open-Meteo, the model's estimate for
+        that point, not a station reading): kept with an application record so nobody has to type it."""
+        local = when.astimezone(self.tz)
+        hours = await self.open_meteo.hours_around(round_coord(latitude), round_coord(longitude), local.date())
+        if not hours:
+            return None
+        target = local.replace(tzinfo=None, minute=0, second=0, microsecond=0)
+        closest = min(hours, key=lambda h: abs(datetime.fromisoformat(h.time) - target))
+        return {
+            "time": closest.time,
+            "temperature_c": closest.temperature,
+            "humidity_pct": closest.humidity,
+            "wind_speed_ms": closest.wind_speed_10m,
+            "source": "open_meteo",
+        }
+
     async def recent_summary(self, latitude: float, longitude: float, days: int = 30) -> dict:
         """How the last `days` days went at the point (Open-Meteo): see `summarize_daily`. Empty when the provider
         has nothing. Kept in memory for a few hours per point: the past does not change and an agent turn may ask

@@ -442,6 +442,9 @@ class LotRead(ORMModel):
     )
     counted_at: Optional[datetime] = PField(default=None, description="When the live count was last confirmed")
     replaced_by_lot_ids: list[UUID] = PField(default_factory=list, description="Its resowings")
+    harvest_blocked_until: Optional[date] = PField(
+        default=None, description="Withholding period in force: no harvest before this day"
+    )
 
     @computed_field
     @property

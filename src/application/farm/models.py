@@ -175,6 +175,8 @@ class Lot(Base):
     origin_lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))  # its almácigo
     # A resowing: this lot replaces (part of) that one, whose losses are logged as `loss` events.
     replaces_lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
+    # No harvest before this day: the longest withholding period (carencia) of the applications in force on it.
+    harvest_blocked_until = Column(Date)
     plan_crop_id = Column(UUID(as_uuid=True), ForeignKey("plan_crops.id", ondelete="SET NULL"))  # planned by
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)

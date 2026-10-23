@@ -615,6 +615,8 @@ class FarmService:
                 data = data.model_copy(update={"zone_id": lots[0].zone_id})
         else:
             lot_ids = await self.reached_lots(actor, data.field_id, data.zone_id)
+        if data.type == "harvest" and data.outcome == "done":
+            data = await self._check_withholding(actor, data, lot_ids)
         counted = data.type == "loss" or data.data.get("count") is not None
         if counted:
             data = await self._counted_entry(actor, data, lot_ids)
@@ -644,6 +646,32 @@ class FarmService:
             if lot.alive_quantity == 0 and lot.status in GROWING_LOT_STATUSES + ("planned",):
                 await self.repo.update_lot(actor.account_id, lot.id, {"status": "failed"})
         return await self.get_event(actor, event.id)
+
+    async def _check_withholding(
+        self, actor: Actor, data: FieldEventCreate, lot_ids: list[UUID]
+    ) -> FieldEventCreate:
+        """A harvest within a withholding period (carencia) is refused, unless whoever logs it acknowledges it with a
+        reason (the label said less, it was harvested anyway) — then it is logged with that acknowledgement."""
+        when = data.occurred_at or utcnow()
+        day = when.astimezone(ZoneInfo(actor.timezone)).date() if actor.timezone else when.date()
+        blocked = [
+            lot for lot in [await self.get_lot(actor, i) for i in lot_ids]
+            if lot.harvest_blocked_until and day < lot.harvest_blocked_until
+        ]
+        if not blocked:
+            return data
+        ack = data.data.get("withholding_ack")
+        if not (isinstance(ack, str) and ack.strip()):
+            lots = ", ".join(
+                f"{lot.label or lot.id} (hasta el {lot.harvest_blocked_until:%d/%m/%Y})" for lot in blocked
+            )
+            raise InvalidInputError(
+                f"Withholding period in force, no harvest yet: {lots}. To log it anyway, give the reason in "
+                "data.withholding_ack."
+            )
+        return data.model_copy(update={"data": {
+            **data.data, "withholding_until": max(lot.harvest_blocked_until for lot in blocked).isoformat(),
+        }})
 
     async def _counted_entry(self, actor: Actor, data: FieldEventCreate, lot_ids: list[UUID]) -> FieldEventCreate:
         """A loss or a count is about ONE lot (its live quantity): a percent becomes a quantity of what is alive
