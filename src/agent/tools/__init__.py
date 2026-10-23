@@ -1,4 +1,5 @@
 from .analysis import analysis_tools
+from .applications import application_tools
 from .changes import change_tools
 from .context import ToolDeps, TurnContext
 from .farm import farm_manager_tools, farm_read_tools
@@ -27,6 +28,7 @@ def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         *soil_tools(deps, ctx),
         *analysis_tools(deps, ctx),
         *change_tools(deps, ctx),
+        *application_tools(deps, ctx),
     ]
     if ctx.actor.is_manager:
         tools += farm_manager_tools(deps, ctx)

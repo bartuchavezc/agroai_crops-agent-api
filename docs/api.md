@@ -192,3 +192,36 @@ Datos nuevos: `lots.plant_count`, `expected_yield_kg`, `expected_price` (por kg)
 Textos del back: los que genera el sistema (alertas, recordatorios, notificaciones) están en español neutro (sin
 voseo); donde el vocabulario difiere por país (por ejemplo almácigo/semillero) se adapta al crear el texto, y los
 nombres de cultivo salen en el idioma de la persona. Los textos ya guardados no se reescriben.
+
+
+## Registro auditable, insumos y asistente proactivo
+
+| Método | Ruta | |
+|---|---|---|
+| POST | `/farm-management/lots/{id}/losses` | `{quantity \| percent, cause?, notes?}`: entrada `loss`; baja la cantidad viva, no la sembrada. Si no queda nada, el lote pasa a `failed` |
+| POST | `/farm-management/lots/{id}/counts` | `{count, image_identifier?}`: un conteo confirmado reinicia la cantidad viva |
+| POST | `/farm-management/lots/{id}/resow` | `{quantity, lost_quantity \| lost_percent?, cause?, zone_ids?}` → `{original, resown}`: registra la pérdida y crea el lote que lo reemplaza (`replaces_lot_id`) con su siembra |
+| | eventos | `outcome` (`done` \| `skipped`, este con `reason` obligatorio), tipos `loss` y `rain`, `source` `system`. Una cosecha dentro de la carencia se rechaza salvo `data.withholding_ack` con el motivo |
+| | lotes | `alive_quantity`, `lost_quantity`, `counted_at`, `replaces_lot_id`, `replaced_by_lot_ids`, `harvest_blocked_until` |
+| GET / POST | `/applications` | Registros vigentes / un borrador `{field_id, zone_id?, lot_ids?, kind, applied_at, target, products[], operator_*, ...}` |
+| PUT / DELETE | `/applications/{id}` | Solo borradores |
+| POST | `/applications/{id}/confirm` | Escribe la bitácora, descuenta stock, fija `harvest_blocked_until` en los lotes |
+| POST | `/applications/{id}/corrections` | `{reason, ...cambios}`: versión nueva; stock y bitácora acompañan |
+| POST | `/applications/{id}/void` | `{reason}` (owner/tecnico): versión anulada; devuelve el stock |
+| GET | `/applications/{id}/history` | Todas las versiones |
+| GET | `/applications/export?format=pdf\|csv&field_id=&since=&until=` | Cuaderno de aplicaciones |
+| GET | `/applications/products`, `/applications/intervals` | Productos de la cuenta fuera del registro; carencias guardadas por producto y cultivo |
+| GET | `/supplies/registry?q=` | Búsqueda en el registro oficial del país (texto formal para copiar) |
+| GET / POST | `/supplies/items` | Insumos en stock / alta con el primer ingreso |
+| GET / POST | `/supplies/items/{id}/movements` | Libro de movimientos / ingreso o ajuste (con motivo, owner/tecnico) |
+| POST | `/upload/audio` | Nota de voz (webm, ogg, m4a, mp3, wav; 15 MB) → `audio_identifier` para `/chat` |
+| GET | `/upload/audio/{id}` | Escucharla |
+| GET / PUT | `/me/notification-preferences` | Mensajes por día, horario de silencio, resúmenes, push |
+| GET | `/push/public-key` | Clave VAPID para suscribir el navegador |
+| POST | `/push/subscriptions`, `/push/unsubscribe` | El `PushSubscription.toJSON()` del navegador / `{endpoint}` |
+| GET | `/digests`, `/digests/{id}`, `/digests/preview?kind=daily\|weekly` | Resúmenes (la vista previa no se guarda) |
+| GET | `/nudges/log` | Cada chequeo del asistente: señales, qué escribió y a quién o por qué calló (owner/tecnico) |
+| POST | `/nudges/check` | Pedirle que mire ahora (owner/tecnico) |
+
+Los mensajes de chat traen `audio_identifier` y `origin` (`turn`, `note`, `nudge`). Las notificaciones suman los tipos
+`digest`, `nudge` y `application` y la entidad `conversation`; las de cada entrada de la bitácora no van al teléfono.

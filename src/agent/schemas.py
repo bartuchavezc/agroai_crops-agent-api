@@ -72,6 +72,15 @@ class HarvestVerdictResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class PlantCountResult(BaseModel):
+    count: int = Field(ge=0, description="Best estimate of live plants of the crop in the photo")
+    count_low: int = Field(ge=0)
+    count_high: int = Field(ge=0)
+    counted_what: str = Field(description="What was counted, in Spanish")
+    notes: Optional[str] = Field(None, description="What limits the count or visible gaps, in Spanish")
+    confidence: float = Field(ge=0, le=1)
+
+
 class SatelliteImageAnalysis(BaseModel):
     visual_pattern: str = Field(
         description="What's actually visible in the color pattern (distribution, uniformity, patches) "

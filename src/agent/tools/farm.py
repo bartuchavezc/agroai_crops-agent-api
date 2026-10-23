@@ -162,11 +162,14 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def log_events(entries: list[dict], field: Optional[str] = None) -> dict:
-        """Register in the bitácora what was done or seen, several entries in ONE call ("regué los canteros 1, 2 y
-        3 y fertilicé el 2 con 50 ml de té de compost"). Each entry:
-        {type, zone?, zones?, lots?, occurred_at?, quantity?, unit?, notes?, attach_current_photo?}
+        """Register in the bitácora what was done, seen or deliberately NOT done, several entries in ONE call
+        ("regué los canteros 1, 2 y 3 y fertilicé el 2 con 50 ml de té de compost"). Each entry:
+        {type, zone?, zones?, lots?, occurred_at?, quantity?, unit?, notes?, outcome?, reason?, attach_current_photo?}
         - type: irrigation|fertilization|pest_control|sowing|transplant|harvest|inspection|observation|soil_prep|
           amendment|pruning|weeding|photo. inspection = a check-up (pest or disease seen, growth, state).
+          Losses go through record_lot_loss; rain is logged by the system from the weather data.
+        - outcome 'skipped' + reason: something the person decided NOT to do, and why ("no regué: llovió anoche").
+          Only when THEY said so: never log a skipped entry from your own assumption — ask instead.
         - zone ('cantero 3') or zones (['cantero 1', 'cantero 2']: one entry per zone): it reaches every lot
           growing there. lots: lot ids, when it was only some lots. Neither: the whole field.
         - Products and doses as free text in notes ("Caldo bordelés 20 g/l"), with quantity + unit when there is
@@ -192,11 +195,14 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                         unit=entry.get("unit"),
                         notes=entry.get("notes"),
                         image_identifier=ctx.image_identifier if entry.get("attach_current_photo") else None,
+                        outcome=entry.get("outcome") or "done",
+                        reason=entry.get("reason"),
                     ),
                 )
                 created.append({
                     "id": str(event.id), "type": event.type, "zone_id": event.zone_id and str(event.zone_id),
                     "lots_reached": len(event.lot_ids),
+                    **({"outcome": "skipped"} if event.outcome == "skipped" else {}),
                 })
         return {"logged": created, "field_name": target.name}
 
@@ -222,6 +228,52 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         )
         return {"days": compact(page.days), "more": page.next_before is not None}
 
+    @tool
+    async def record_lot_loss(
+        lot_id: str, quantity: Optional[float] = None, percent: Optional[float] = None, cause: Optional[str] = None,
+        notes: Optional[str] = None, occurred_at: Optional[str] = None,
+    ) -> dict:
+        """Log plants or seeds LOST in one lot ("se perdieron 30 plantines", "no germinó la mitad"): quantity in the
+        lot's unit or percent of what is alive. The lot keeps its sown quantity; its live quantity drops, and it
+        fails only when nothing is left. cause: no_germination|pest|disease|frost|heat|waterlogging|drought|animals|
+        other. If they resowed, use resow_lot instead (it logs the loss too)."""
+        lot = await deps.farm.get_lot(ctx.actor, UUID(lot_id))
+        event = await deps.farm.create_event(ctx.actor, FieldEventCreate(
+            field_id=lot.field_id, lot_ids=[lot.id], type="loss", quantity=quantity,
+            occurred_at=parse_when(occurred_at, ctx.tz), reason=notes,
+            data={k: v for k, v in {"percent": percent, "cause": cause}.items() if v is not None},
+        ))
+        after = await deps.farm.get_lot(ctx.actor, lot.id)
+        return {
+            "lost": event.quantity, "unit": event.unit, "lot": after.label,
+            "sown": after.quantity, "alive": after.alive_quantity, "status": after.status,
+        }
+
+    @tool
+    async def count_lot_plants(lot_id: str, count: Optional[float] = None, notes: Optional[str] = None) -> dict:
+        """Count what is alive in a lot. With `count`: the person's own count (or one they confirmed), saved; it
+        resets the live quantity. Without it and with a photo in this message: counts the plants in the photo and
+        returns a PROPOSAL — nothing is saved. Tell them the count and range, compare with what should be alive,
+        and ask before saving it (call again with count=...), or before logging the difference as a loss."""
+        lot = await deps.farm.get_lot(ctx.actor, UUID(lot_id))
+        if count is None:
+            if not ctx.image_identifier:
+                raise InvalidInputError("No count given and no photo in this message: ask for one or the other.")
+            crop = await deps.farm.get_crop_master(ctx.actor, lot.crop_master_id)
+            result = await deps.diagnosis.count_plants(
+                ctx.actor, ctx.image_identifier, crop_name=crop.name, expected=lot.alive_quantity
+            )
+            return {
+                "proposal": compact(result), "lot": lot.label, "expected_alive": lot.alive_quantity,
+                "saved": False,
+            }
+        await deps.farm.create_event(ctx.actor, FieldEventCreate(
+            field_id=lot.field_id, lot_ids=[lot.id], type="inspection", notes=notes, data={"count": count},
+            image_identifier=ctx.image_identifier,
+        ))
+        after = await deps.farm.get_lot(ctx.actor, lot.id)
+        return {"saved": True, "lot": after.label, "alive": after.alive_quantity, "sown": after.quantity}
+
     return [
         list_fields,
         get_farm_snapshot,
@@ -235,6 +287,8 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         get_harvest_verdict,
         get_log,
         log_events,
+        record_lot_loss,
+        count_lot_plants,
     ]
 
 
@@ -420,11 +474,16 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         zone: Optional[str] = None,
         season: Optional[str] = None,
         number: Optional[int] = None,
+        quantity: Optional[float] = None,
+        unit: Optional[str] = None,
     ) -> dict:
         """Update a lot: status (planned|seedbed|planted|growing|harvesting|harvested|failed), harvest dates
         (YYYY-MM-DD), notes, season ("26/27"), number, zone (move it to e.g. 'cantero 2'; 'ninguna' takes it out
-        of its zones)."""
+        of its zones). quantity + unit: ONLY to fix what was sown when it was typed wrong — plants lost go through
+        record_lot_loss, a resowing through resow_lot, a fresh count through count_lot_plants."""
         values = {
+            "quantity": quantity,
+            "unit": unit,
             "status": status,
             "actual_harvest_date": parse_date(actual_harvest_date),
             "expected_harvest_date": parse_date(expected_harvest_date),
@@ -443,6 +502,46 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         update = LotUpdate(**values)
         cycle = await deps.farm.update_lot(ctx.actor, UUID(lot_id), update)
         return {"updated_lot": compact(cycle)}
+
+    @tool
+    async def resow_lot(
+        lot_id: str,
+        quantity: Optional[float] = None,
+        unit: Optional[str] = None,
+        planting_date: Optional[str] = None,
+        zone: Optional[str] = None,
+        lost_quantity: Optional[float] = None,
+        lost_percent: Optional[float] = None,
+        cause: Optional[str] = None,
+        notes: Optional[str] = None,
+        seed_lot_id: Optional[str] = None,
+    ) -> dict:
+        """Resow (part of) a lot ("no germinaron 40 de las 120, resembramos 40"): logs the loss on the original if
+        given (lost_quantity or lost_percent, cause as in record_lot_loss) and starts a NEW lot that replaces it,
+        same crop and zones unless zone says otherwise, with its sowing in the bitácora. The original lot stays with
+        what is left of it (it fails only if nothing is). seed_lot_id: take `quantity` seeds from that inventory lot
+        (list_seed_inventory)."""
+        original = await deps.farm.get_lot(ctx.actor, UUID(lot_id))
+        zone_ids = None
+        if zone:
+            field_read = await deps.farm.get_field(ctx.actor, original.field_id)
+            zone_ids = [(await resolve_zone(deps, ctx, field_read, zone)).id]
+        before, new = await deps.farm.resow(
+            ctx.actor, original.id, quantity=quantity, unit=unit, planting_date=parse_date(planting_date),
+            zone_ids=zone_ids, lost_quantity=lost_quantity, lost_percent=lost_percent, cause=cause, notes=notes,
+        )
+        result = {
+            "original": {"lot": before.label, "sown": before.quantity, "alive": before.alive_quantity,
+                         "status": before.status},
+            "resown_lot": compact(new),
+        }
+        if seed_lot_id and quantity:
+            try:
+                await deps.inventory.consume_seed_lot(ctx.actor, UUID(seed_lot_id), quantity, new.unit)
+                result["seed_consumed"] = quantity
+            except Exception as e:  # noqa: BLE001 - the resowing is already logged; say what failed
+                result["seed_not_consumed"] = getattr(e, "message", str(e))
+        return result
 
     @tool
     async def create_zone(
@@ -486,6 +585,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         create_zone,
         create_lot,
         update_lot,
+        resow_lot,
         delete_field,
         delete_lot,
     ]

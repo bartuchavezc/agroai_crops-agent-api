@@ -35,6 +35,8 @@ class MessageRead(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     image_identifier: Optional[str] = None
+    audio_identifier: Optional[str] = None
+    origin: Literal["turn", "note", "nudge"] = "turn"
     sources: list[dict[str, Any]] = Field(default_factory=list)
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     attachments: list[dict[str, Any]] = Field(default_factory=list)

@@ -15,8 +15,12 @@ from src.shared.domain.actor import Actor
 from src.shared.utils.routing import route_with_and_without_slash as _both
 
 from .schemas import (
+    LotCountCreate,
     LotCreate,
+    LotLossCreate,
     LotRead,
+    LotResow,
+    LotResowRead,
     LotStatus,
     LotUpdate,
     CropMasterCreate,
@@ -311,6 +315,45 @@ async def update_lot(
     cycle_id: UUID, body: LotUpdate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
 ):
     return await farm.update_lot(actor, cycle_id, body)
+
+
+@router.post("/lots/{cycle_id}/losses", response_model=FieldEventRead, status_code=status.HTTP_201_CREATED,
+             summary="Log plants or seeds lost in a lot")
+@inject
+async def lot_loss(
+    cycle_id: UUID, body: LotLossCreate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
+):
+    """A `loss` entry on that lot: its sown quantity stays, its live quantity drops (a percent is of what is alive).
+    When nothing is left, the lot fails."""
+    lot = await farm.get_lot(actor, cycle_id)
+    return await farm.create_event(actor, FieldEventCreate(
+        field_id=lot.field_id, lot_ids=[lot.id], type="loss", quantity=body.quantity, occurred_at=body.occurred_at,
+        data={k: v for k, v in {"percent": body.percent, "cause": body.cause}.items() if v is not None},
+        reason=body.notes,
+    ))
+
+
+@router.post("/lots/{cycle_id}/counts", response_model=FieldEventRead, status_code=status.HTTP_201_CREATED,
+             summary="Record a count of what is alive in a lot")
+@inject
+async def lot_count(
+    cycle_id: UUID, body: LotCountCreate, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
+):
+    lot = await farm.get_lot(actor, cycle_id)
+    return await farm.create_event(actor, FieldEventCreate(
+        field_id=lot.field_id, lot_ids=[lot.id], type="inspection", occurred_at=body.occurred_at, notes=body.notes,
+        data={"count": body.count}, image_identifier=body.image_identifier,
+    ))
+
+
+@router.post("/lots/{cycle_id}/resow", response_model=LotResowRead, status_code=status.HTTP_201_CREATED,
+             summary="Resow (part of) a lot")
+@inject
+async def resow_lot(
+    cycle_id: UUID, body: LotResow, actor: Actor = Depends(get_actor), farm: FarmService = Depends(FARM)
+):
+    original, resown = await farm.resow(actor, cycle_id, **body.model_dump())
+    return LotResowRead(original=original, resown=resown)
 
 
 @router.delete("/lots/{cycle_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete Crop Cycle")

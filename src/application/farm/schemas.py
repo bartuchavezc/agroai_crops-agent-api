@@ -25,6 +25,13 @@ EventType = Literal[
     "pruning",
     "weeding",
     "photo",
+    "loss",
+    "rain",
+]
+EventOutcome = Literal["done", "skipped"]
+EventSource = Literal["user", "agent", "system"]
+LossCause = Literal[
+    "no_germination", "pest", "disease", "frost", "heat", "waterlogging", "drought", "animals", "other"
 ]
 
 
@@ -361,6 +368,7 @@ class LotCreate(BaseModel):
     notes: Optional[str] = None
     plan_id: Optional[UUID] = None
     origin_lot_id: Optional[UUID] = None
+    replaces_lot_id: Optional[UUID] = PField(default=None, description="A resowing: the lot it replaces")
     plan_crop_id: Optional[UUID] = None
 
     @model_validator(mode="after")
@@ -389,6 +397,7 @@ class LotUpdate(BaseModel):
     notes: Optional[str] = None
     plan_id: Optional[UUID] = None
     origin_lot_id: Optional[UUID] = None
+    replaces_lot_id: Optional[UUID] = PField(default=None, description="A resowing: the lot it replaces")
     plan_crop_id: Optional[UUID] = None
 
     @model_validator(mode="after")
@@ -421,17 +430,68 @@ class LotRead(ORMModel):
     notes: Optional[str] = None
     plan_id: Optional[UUID] = None
     origin_lot_id: Optional[UUID] = None
+    replaces_lot_id: Optional[UUID] = PField(default=None, description="A resowing: the lot it replaces")
     plan_crop_id: Optional[UUID] = None
     created_by: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
     label: Optional[str] = PField(default=None, description='"T26/27 · Cantero 2 · L2"')
+    lost_quantity: Optional[float] = PField(default=None, description="Summed from its loss events, in `unit`")
+    alive_quantity: Optional[float] = PField(
+        default=None, description="Sown (or last confirmed count) minus the losses since; `quantity` never changes"
+    )
+    counted_at: Optional[datetime] = PField(default=None, description="When the live count was last confirmed")
+    replaced_by_lot_ids: list[UUID] = PField(default_factory=list, description="Its resowings")
+    harvest_blocked_until: Optional[date] = PField(
+        default=None, description="Withholding period in force: no harvest before this day"
+    )
 
     @computed_field
     @property
     def zone_id(self) -> Optional[UUID]:
         """The zone that names the lot (the first one)."""
         return self.zone_ids[0] if self.zone_ids else None
+
+
+class LotLossCreate(BaseModel):
+    """Plants or seeds of a lot that were lost: a quantity (in the lot's unit) or a percent of what is alive."""
+    quantity: Optional[float] = PField(default=None, gt=0)
+    percent: Optional[float] = PField(default=None, gt=0, le=100)
+    cause: Optional[LossCause] = None
+    notes: Optional[str] = None
+    occurred_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _amount(self):
+        if (self.quantity is None) == (self.percent is None):
+            raise ValueError("Give either quantity or percent.")
+        return self
+
+
+class LotCountCreate(BaseModel):
+    """A count of what is alive in a lot (by eye or confirmed from a photo): it resets the live quantity."""
+    count: float = PField(ge=0)
+    notes: Optional[str] = None
+    image_identifier: Optional[str] = None
+    occurred_at: Optional[datetime] = None
+
+
+class LotResow(BaseModel):
+    """Resow (part of) a lot: the new lot replaces it. lost_*: the loss behind it, if not logged already."""
+    quantity: Optional[float] = PField(default=None, gt=0)
+    unit: Optional[str] = PField(default=None, max_length=30)
+    planting_date: Optional[date] = None
+    zone_ids: Optional[list[UUID]] = PField(default=None, description="Default: the zones of the lot it replaces")
+    number: Optional[int] = PField(default=None, ge=1, le=999)
+    lost_quantity: Optional[float] = PField(default=None, gt=0)
+    lost_percent: Optional[float] = PField(default=None, gt=0, le=100)
+    cause: Optional[LossCause] = None
+    notes: Optional[str] = None
+
+
+class LotResowRead(BaseModel):
+    original: "LotRead"
+    resown: "LotRead"
 
 
 # ---------- Field events ----------
@@ -451,6 +511,8 @@ class FieldEventCreate(BaseModel):
     notes: Optional[str] = None
     data: Dict[str, Any] = PField(default_factory=dict)
     image_identifier: Optional[str] = None
+    outcome: EventOutcome = PField(default="done", description="skipped: deliberately not done, with a reason")
+    reason: Optional[str] = PField(default=None, description="Why it was skipped; for a loss, its cause in words")
 
     @model_validator(mode="after")
     def _lots(self):
@@ -458,6 +520,8 @@ class FieldEventCreate(BaseModel):
             self.lot_ids = [self.lot_id, *self.lot_ids]
         self.lot_id = None
         self.lot_ids = list(dict.fromkeys(self.lot_ids))
+        if self.outcome == "skipped" and not (self.reason or "").strip():
+            raise ValueError("A skipped entry needs its reason (e.g. 'llovió 18 mm').")
         return self
 
 
@@ -469,6 +533,8 @@ class FieldEventUpdate(BaseModel):
     notes: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
     lot_ids: Optional[list[UUID]] = PField(default=None, description="Fix the lots it reached")
+    outcome: Optional[EventOutcome] = None
+    reason: Optional[str] = None
 
 
 class FieldEventRead(ORMModel):
@@ -485,7 +551,9 @@ class FieldEventRead(ORMModel):
     notes: Optional[str] = None
     data: Dict[str, Any] = PField(default_factory=dict)
     image_identifier: Optional[str] = None
-    source: Literal["user", "agent"]
+    source: EventSource
+    outcome: EventOutcome = "done"
+    reason: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -513,3 +581,6 @@ class FieldOverview(BaseModel):
     zones: list[FieldZoneRead] = []
     active_lots: list[ActiveLotSummary]
     last_event_at: Optional[datetime] = None
+
+
+LotResowRead.model_rebuild()

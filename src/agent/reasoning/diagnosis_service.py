@@ -30,7 +30,7 @@ from src.shared.utils.trace import set_trace_id
 
 from ..prompts.analysis import ANALYSIS_GROUNDING, DEEP_REFINE_INSTRUCTION
 from ..prompts.diagnosis import SYSTEM_INSTRUCTION
-from ..prompts.harvest import HARVEST_VERDICT_INSTRUCTION
+from ..prompts.harvest import HARVEST_VERDICT_INSTRUCTION, PLANT_COUNT_INSTRUCTION
 from ..prompts.knowledge import modules_for
 from ..prompts.periodic import (
     PERIODIC_SYSTEM_INSTRUCTION,
@@ -41,7 +41,7 @@ from ..prompts.periodic import (
 from ..prompts.soil import SOIL_SYSTEM_INSTRUCTION
 from ..prompts.voice import localize
 from ..providers.gemini import GeminiGateway
-from ..schemas import DiagnosisResult, HarvestVerdictResult, SoilRecognitionResult
+from ..schemas import DiagnosisResult, HarvestVerdictResult, PlantCountResult, SoilRecognitionResult
 from ..usage import TurnUsage
 from .analysis_context import AnalysisContext, AnalysisContextBuilder, to_json
 from .periodic_report import (
@@ -776,6 +776,23 @@ class DiagnosisService:
                 "needs_human_expert": result.needs_human_expert,
             },
         }
+
+    async def count_plants(
+        self, actor: Actor, image_identifier: str, crop_name: Optional[str] = None, expected: Optional[float] = None
+    ) -> PlantCountResult:
+        """How many live plants a photo shows, as a proposal for the person to confirm (nothing is saved)."""
+        image_bytes, mime_type = await self.storage.get_image_for_model(actor, image_identifier, self.max_image_side)
+        prompt = "Contá las plantas vivas de la foto."
+        if crop_name:
+            prompt += f" Cultivo: {crop_name}."
+        if expected is not None:
+            prompt += f" Se esperaban unas {expected:g} (no ajustes el conteo a ese número: contá lo que se ve)."
+        return await self.gemini.generate_structured(
+            actor.user_id,
+            contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt],
+            schema=PlantCountResult,
+            system_instruction=localize(PLANT_COUNT_INSTRUCTION, actor.country),
+        )
 
     async def harvest_verdict(
         self,

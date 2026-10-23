@@ -6,8 +6,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from src.shared.database import Base
 from src.shared.domain.base import utcnow
 
-NOTIFICATION_TYPES = ("report_diagnosis", "report_periodic", "report_soil", "event", "reminder")
-ENTITY_TYPES = ("report", "event", "reminder")
+NOTIFICATION_TYPES = (
+    "report_diagnosis", "report_periodic", "report_soil", "event", "reminder", "digest", "nudge", "application",
+)
+ENTITY_TYPES = ("report", "event", "reminder", "digest", "conversation", "application")
 
 
 class NotificationModel(Base):

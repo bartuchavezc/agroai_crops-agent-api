@@ -42,8 +42,14 @@ EVENT_TYPES = (
     "pruning",
     "weeding",
     "photo",
+    "loss",  # plants or seeds lost (didn't germinate, pest, frost...): lowers a lot's live count, never its sown one
+    "rain",  # rain measured at the field (source "system", from the weather data): what a skipped watering cites
 )
-EVENT_SOURCES = ("user", "agent")
+# What happened to an entry: done, or deliberately skipped with a reason ("no regué: llovió 18 mm"). A skipped
+# entry is a fact too — without it the log can't tell "not watered" from "nobody said".
+EVENT_OUTCOMES = ("done", "skipped")
+LOSS_CAUSES = ("no_germination", "pest", "disease", "frost", "heat", "waterlogging", "drought", "animals", "other")
+EVENT_SOURCES = ("user", "agent", "system")  # system: written by a job (rain from the weather data)
 # A zone groups the crops of a field that are grown (and tracked/photographed) together: "Cantero 3".
 ZONE_TYPES = ("cajon", "cantero", "invernadero", "hidroponia")
 ZONE_TYPE_LABELS = {"cajon": "Cajón", "cantero": "Cantero", "invernadero": "Invernadero", "hidroponia": "Hidroponía"}
@@ -167,6 +173,10 @@ class Lot(Base):
     notes = Column(Text)
     plan_id = Column(UUID(as_uuid=True), ForeignKey("crop_plans.id", ondelete="SET NULL", use_alter=True), index=True)
     origin_lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))  # its almácigo
+    # A resowing: this lot replaces (part of) that one, whose losses are logged as `loss` events.
+    replaces_lot_id = Column(UUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
+    # No harvest before this day: the longest withholding period (carencia) of the applications in force on it.
+    harvest_blocked_until = Column(Date)
     plan_crop_id = Column(UUID(as_uuid=True), ForeignKey("plan_crops.id", ondelete="SET NULL"))  # planned by
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
@@ -188,6 +198,7 @@ class FieldEvent(Base):
     __table_args__ = (
         CheckConstraint(f"type IN {EVENT_TYPES}", name="type_valid"),
         CheckConstraint(f"source IN {EVENT_SOURCES}", name="source_valid"),
+        CheckConstraint(f"outcome IN {EVENT_OUTCOMES}", name="outcome_valid"),
         Index("ix_field_events_account_occurred", "account_id", "occurred_at"),
         Index("ix_field_events_field_occurred", "field_id", "occurred_at"),
         Index("ix_field_events_zone_occurred", "zone_id", "occurred_at"),
@@ -206,6 +217,8 @@ class FieldEvent(Base):
     data = Column(JSONB, nullable=False, default=dict)
     image_identifier = Column(String(255))
     source = Column(String(10), nullable=False, default="user")
+    outcome = Column(String(10), nullable=False, default="done", server_default="done")
+    reason = Column(Text)  # why it was skipped; a loss's cause in words
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 

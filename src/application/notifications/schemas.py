@@ -4,8 +4,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-NotificationType = Literal["report_diagnosis", "report_periodic", "report_soil", "event", "reminder"]
-EntityType = Literal["report", "event", "reminder"]
+NotificationType = Literal[
+    "report_diagnosis", "report_periodic", "report_soil", "event", "reminder", "digest", "nudge", "application",
+]
+EntityType = Literal["report", "event", "reminder", "digest", "conversation", "application"]
 
 
 class Notification(BaseModel):

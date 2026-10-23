@@ -61,6 +61,9 @@ class ToolDeps:
     tasks: Any = None  # TaskService
     changes: Any = None  # ChangeSetService: previews and proposals
     snapshot: Any = None  # FieldSnapshotService: a field's current state in one read
+    applications: Any = None  # ApplicationService: the cuaderno de aplicaciones
+    supplies: Any = None  # SupplyService: inputs in stock
+    registry: Any = None  # ProductRegistryService: the official products registry
 
 
 @dataclass
@@ -70,6 +73,7 @@ class TurnContext:
     tz: ZoneInfo
     default_field_id: Optional[UUID] = None
     image_identifier: Optional[str] = None
+    audio_identifier: Optional[str] = None  # the voice message of this turn, kept as evidence
     sources: list[dict] = field(default_factory=list)
     attachments: list[dict] = field(default_factory=list)
 

@@ -240,3 +240,69 @@ async def get_image(
         media_type=metadata.get("content_type") or "image/jpeg",
         headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"},
     )
+
+
+# ---------- voice messages ----------
+
+MAX_AUDIO_BYTES = 15 * 1024 * 1024  # ~10 minutes of compressed speech; a voice note is usually under a minute
+AUDIO_TYPES = {
+    "audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/m4a": "m4a",
+    "audio/aac": "aac", "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/wav": "wav", "audio/x-wav": "wav",
+}
+
+
+class UploadAudioResponse(BaseModel):
+    audio_identifier: str
+    content_type: str
+    size: int
+
+
+def _audio_kind(data: bytes) -> Optional[str]:
+    """The container by its magic bytes: what the browsers' MediaRecorder and phones actually produce."""
+    if data[:4] == b"\x1aE\xdf\xa3":
+        return "webm"
+    if data[:4] == b"OggS":
+        return "ogg"
+    if data[4:8] == b"ftyp":
+        return "m4a"
+    if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return "wav"
+    if data[:3] == b"ID3" or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
+        return "mp3"
+    return None
+
+
+@router.post("/audio", response_model=UploadAudioResponse, summary="Upload a voice message",
+             description="A recorded voice note (webm/ogg/m4a/mp3/wav, up to 15 MB). Send its audio_identifier in "
+             "/chat: it is transcribed and kept as evidence of what was said.")
+@inject
+async def upload_audio(
+    audio_file: UploadFile = File(..., description="The recording"),
+    actor: Actor = Depends(get_actor),
+    storage_service=Depends(Provide["application.storage_service"]),
+):
+    data = await audio_file.read(MAX_AUDIO_BYTES + 1)
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="The audio is too long (15 MB max).")
+    declared = (audio_file.content_type or "").split(";")[0].strip().lower()
+    kind = _audio_kind(data) if len(data) >= 12 else None
+    if kind is None:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            detail="Unsupported audio. Use webm, ogg, m4a, mp3 or wav.")
+    content_type = declared if AUDIO_TYPES.get(declared) == kind else next(
+        t for t, k in AUDIO_TYPES.items() if k == kind
+    )
+    identifier = await storage_service.save_audio(actor, f"voice.{kind}", data, content_type)
+    return UploadAudioResponse(audio_identifier=identifier, content_type=content_type, size=len(data))
+
+
+@router.get("/audio/{audio_identifier}", summary="Play a voice message (same account only)")
+@inject
+async def get_audio(
+    audio_identifier: str,
+    actor: Actor = Depends(get_actor),
+    storage_service=Depends(Provide["application.storage_service"]),
+):
+    data, content_type = await storage_service.get_audio(actor, audio_identifier)
+    return Response(content=data, media_type=content_type,
+                    headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})

@@ -7,6 +7,7 @@ import math
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.exc import IntegrityError
 
@@ -17,7 +18,9 @@ from src.shared.utils.errors import InvalidInputError, NotFoundError, Permission
 from src.application.notifications.service import NotificationService
 from src.application.soil_data.service import SoilContextService
 
-from .models import ACTIVE_LOT_STATUSES, GROWING_LOT_STATUSES, CropMaster, Field, FieldEvent, FieldZone, Lot
+from .models import (
+    ACTIVE_LOT_STATUSES, GROWING_LOT_STATUSES, LOSS_CAUSES, CropMaster, Field, FieldEvent, FieldZone, Lot,
+)
 from .schemas import (
     ActiveLotSummary,
     LotCreate,
@@ -68,6 +71,26 @@ def _is_stale(updated_at: Optional[str]) -> bool:
     if not updated_at:
         return True
     return (utcnow() - datetime.fromisoformat(updated_at)).total_seconds() > LAYOUT_PHOTO_STALE_SECONDS
+
+
+def live_quantity(quantity: Optional[float], events) -> tuple[Optional[float], Optional[float], Optional[datetime]]:
+    """(lost, alive, counted_at) of a lot from its loss events and confirmed counts, oldest first. The sown
+    `quantity` is never rewritten: a count resets what is alive, losses after it come off. Without a sown quantity
+    nor a count there is nothing to subtract from: lost is still summed, alive is unknown."""
+    lost = 0.0
+    alive = quantity
+    counted_at = None
+    for event in events:
+        if event.type == "loss":
+            lost += event.quantity or 0.0
+            if alive is not None:
+                alive = max(alive - (event.quantity or 0.0), 0.0)
+        elif (event.data or {}).get("count") is not None:
+            alive = float(event.data["count"])
+            counted_at = event.occurred_at
+    if not events:
+        return None, quantity, None
+    return round(lost, 2), None if alive is None else round(alive, 2), counted_at
 
 
 def _only_cells(result: SunMap, cells: list[tuple[float, float, float]]) -> SunMap:
@@ -412,6 +435,8 @@ class FarmService:
         """ORM lots -> LotRead with their zones and label ("T26/27 · Cantero 2 · L2")."""
         lots = list(lots)
         zone_ids = await self.repo.lot_zone_ids(lot.id for lot in lots)
+        counts = await self.repo.lot_count_events(lot.id for lot in lots)
+        resowings = await self.repo.resowings_of(lot.id for lot in lots)
         labels = {}
         if any(zone_ids.values()):
             zones = await self.repo.list_zones(actor.account_id)
@@ -421,7 +446,11 @@ class FarmService:
             ids = zone_ids.get(lot.id, [])
             read = LotRead.model_validate(lot).model_copy(update={"zone_ids": ids})
             zone_names = " + ".join(labels[i] for i in ids if i in labels) or None
-            out.append(read.model_copy(update={"label": lot_label(lot.season, zone_names, lot.number)}))
+            lost, alive, counted_at = live_quantity(lot.quantity, counts.get(lot.id, []))
+            out.append(read.model_copy(update={
+                "label": lot_label(lot.season, zone_names, lot.number), "lost_quantity": lost,
+                "alive_quantity": alive, "counted_at": counted_at, "replaced_by_lot_ids": resowings.get(lot.id, []),
+            }))
         return out
 
     async def list_lots(
@@ -453,6 +482,10 @@ class FarmService:
         await self._check_zones_in_field(actor, data.zone_ids, data.field_id)
         if data.origin_lot_id:
             await self.get_lot(actor, data.origin_lot_id)
+        if data.replaces_lot_id:
+            replaced = await self.get_lot(actor, data.replaces_lot_id)
+            if replaced.field_id != data.field_id:
+                raise InvalidInputError("A resowing goes in the same field as the lot it replaces.")
         values = data.model_dump(exclude={"zone_ids", "zone_id"})
         lot = await self.repo.create_lot(
             Lot(account_id=actor.account_id, created_by=actor.user_id, **values), zone_ids=data.zone_ids
@@ -464,11 +497,62 @@ class FarmService:
         current = await self.get_lot(actor, lot_id)
         if data.zone_ids:
             await self._check_zones_in_field(actor, data.zone_ids, current.field_id)
+        if data.replaces_lot_id:
+            if data.replaces_lot_id == lot_id:
+                raise InvalidInputError("A lot can't replace itself.")
+            await self.get_lot(actor, data.replaces_lot_id)
         values = data.model_dump(exclude_unset=True, exclude={"zone_ids", "zone_id"})
         lot = await self.repo.update_lot(actor.account_id, lot_id, values, zone_ids=data.zone_ids)
         if lot is None:
             raise NotFoundError(f"Lot {lot_id} not found.")
         return await self.get_lot(actor, lot_id)
+
+    async def resow(
+        self,
+        actor: Actor,
+        lot_id: UUID,
+        quantity: Optional[float] = None,
+        unit: Optional[str] = None,
+        planting_date=None,
+        zone_ids: Optional[list[UUID]] = None,
+        lost_quantity: Optional[float] = None,
+        lost_percent: Optional[float] = None,
+        cause: Optional[str] = None,
+        notes: Optional[str] = None,
+        number: Optional[int] = None,
+    ) -> tuple[LotRead, LotRead]:
+        """Resow (part of) a lot: log what was lost on it, if it wasn't already, and start the new lot that replaces
+        it — same crop, field and zones unless told otherwise — with its sowing in the bitácora. The original keeps
+        its sown quantity; it only fails when nothing of it is left. Returns (original, new)."""
+        _require_manager(actor)
+        original = await self.get_lot(actor, lot_id)
+        if lost_quantity is not None or lost_percent is not None:
+            await self.create_event(actor, FieldEventCreate(
+                field_id=original.field_id, lot_ids=[original.id], type="loss", quantity=lost_quantity,
+                data={k: v for k, v in {"percent": lost_percent, "cause": cause}.items() if v is not None},
+                reason=notes,
+            ))
+        today = utcnow().astimezone(ZoneInfo(actor.timezone) if actor.timezone else None).date()
+        zone_ids = original.zone_ids if zone_ids is None else zone_ids
+        if number is None:  # the next lot of that zone and season, so the resowing reads "L3", not as a copy
+            siblings = await self.repo.list_lots(
+                actor.account_id, field_id=original.field_id, zone_id=zone_ids[0] if zone_ids else None
+            )
+            number = max((lot.number or 0 for lot in siblings if lot.season == original.season), default=0) + 1
+        new = await self.create_lot(actor, LotCreate(
+            field_id=original.field_id, crop_master_id=original.crop_master_id,
+            zone_ids=zone_ids, season=original.season, number=number,
+            planting_date=planting_date or today, quantity=quantity, unit=unit or original.unit,
+            status="planted", replaces_lot_id=original.id,
+            notes=f"Resiembra de {original.label or 'lote anterior'}" + (f". {notes}" if notes else ""),
+        ))
+        await self.create_event(actor, FieldEventCreate(
+            field_id=new.field_id, lot_ids=[new.id], type="sowing", quantity=quantity, unit=new.unit,
+            occurred_at=datetime.combine(new.planting_date, datetime.min.time(), tzinfo=utcnow().tzinfo)
+            if planting_date else None,
+            notes=f"Resiembra de {original.label or 'lote anterior'}",
+        ))
+        return await self.get_lot(actor, original.id), await self.get_lot(actor, new.id)
 
     async def delete_lot(self, actor: Actor, lot_id: UUID) -> None:
         _require_manager(actor)
@@ -537,13 +621,18 @@ class FarmService:
                 data = data.model_copy(update={"zone_id": lots[0].zone_id})
         else:
             lot_ids = await self.reached_lots(actor, data.field_id, data.zone_id)
+        if data.type == "harvest" and data.outcome == "done":
+            data = await self._check_withholding(actor, data, lot_ids)
+        counted = data.type == "loss" or data.data.get("count") is not None
+        if counted:
+            data = await self._counted_entry(actor, data, lot_ids)
         values = data.model_dump(exclude={"lot_ids", "lot_id"})
         values["occurred_at"] = values["occurred_at"] or utcnow()
         event = await self.repo.create_event(
             FieldEvent(
                 account_id=actor.account_id,
                 author_user_id=actor.user_id,
-                source="agent" if actor.via == "agent" else "user",
+                source=actor.via,
                 **values,
             ),
             lot_ids=lot_ids,
@@ -558,7 +647,65 @@ class FarmService:
             entity_id=event.id,
             field_id=data.field_id,
         )
+        if counted:
+            lot = await self.get_lot(actor, lot_ids[0])
+            if lot.alive_quantity == 0 and lot.status in GROWING_LOT_STATUSES + ("planned",):
+                await self.repo.update_lot(actor.account_id, lot.id, {"status": "failed"})
         return await self.get_event(actor, event.id)
+
+    async def _check_withholding(
+        self, actor: Actor, data: FieldEventCreate, lot_ids: list[UUID]
+    ) -> FieldEventCreate:
+        """A harvest within a withholding period (carencia) is refused, unless whoever logs it acknowledges it with a
+        reason (the label said less, it was harvested anyway) — then it is logged with that acknowledgement."""
+        when = data.occurred_at or utcnow()
+        day = when.astimezone(ZoneInfo(actor.timezone)).date() if actor.timezone else when.date()
+        blocked = [
+            lot for lot in [await self.get_lot(actor, i) for i in lot_ids]
+            if lot.harvest_blocked_until and day < lot.harvest_blocked_until
+        ]
+        if not blocked:
+            return data
+        ack = data.data.get("withholding_ack")
+        if not (isinstance(ack, str) and ack.strip()):
+            lots = ", ".join(
+                f"{lot.label or lot.id} (hasta el {lot.harvest_blocked_until:%d/%m/%Y})" for lot in blocked
+            )
+            raise InvalidInputError(
+                f"Withholding period in force, no harvest yet: {lots}. To log it anyway, give the reason in "
+                "data.withholding_ack."
+            )
+        return data.model_copy(update={"data": {
+            **data.data, "withholding_until": max(lot.harvest_blocked_until for lot in blocked).isoformat(),
+        }})
+
+    async def _counted_entry(self, actor: Actor, data: FieldEventCreate, lot_ids: list[UUID]) -> FieldEventCreate:
+        """A loss or a count is about ONE lot (its live quantity): a percent becomes a quantity of what is alive
+        now, in the lot's unit."""
+        if len(lot_ids) != 1:
+            raise InvalidInputError(
+                "A loss or a count is about one lot: say which one (several lots grow there)." if lot_ids
+                else "There is no lot growing there to record a loss or a count on."
+            )
+        lot = await self.get_lot(actor, lot_ids[0])
+        update: dict = {"unit": data.unit or lot.unit}
+        if data.type == "loss":
+            percent = data.data.get("percent")
+            if data.quantity is None and percent is None:
+                raise InvalidInputError("A loss needs how much was lost: a quantity or a percent.")
+            if data.quantity is None:
+                if lot.alive_quantity is None:
+                    raise InvalidInputError(
+                        "The lot has no sown quantity to take a percent of: give the quantity lost, or set the lot's "
+                        "quantity first."
+                    )
+                update["quantity"] = round(lot.alive_quantity * float(percent) / 100, 2)
+            cause = data.data.get("cause")
+            if cause is not None and cause not in LOSS_CAUSES:
+                raise InvalidInputError(f"Unknown loss cause '{cause}'. One of: {', '.join(LOSS_CAUSES)}.")
+        elif float(data.data["count"]) < 0:
+            raise InvalidInputError("A count can't be negative.")
+        return data.model_copy(update=update)
 
     async def _editable_event(self, actor: Actor, event_id: UUID) -> FieldEvent:
         event = await self.repo.get_event(actor.account_id, event_id)
