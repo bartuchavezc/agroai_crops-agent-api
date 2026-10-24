@@ -79,7 +79,8 @@ def application_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         if attach_current_photo:
             if not ctx.image_identifier:
                 raise InvalidInputError("There is no photo in this message to attach.")
-            evidence.append(Evidence(kind="photo", identifier=ctx.image_identifier, note="foto del turno"))
+            evidence += [Evidence(kind="photo", identifier=i, note="foto del turno")
+                         for i in ctx.image_identifiers or [ctx.image_identifier]]
         if ctx.audio_identifier:
             evidence.append(Evidence(kind="audio", identifier=ctx.audio_identifier, note="audio del turno"))
         return evidence

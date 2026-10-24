@@ -108,7 +108,7 @@ class ConversationService:
         actor: Actor,
         conversation_id: UUID,
         user_text: str,
-        image_identifier: Optional[str],
+        image_identifiers: list[str],
         retry_message_id: Optional[UUID] = None,
         audio_identifier: Optional[str] = None,
     ) -> tuple[UUID, UUID]:
@@ -132,7 +132,8 @@ class ConversationService:
                     conversation_id=conversation_id,
                     role="user",
                     content=user_text,
-                    image_identifier=image_identifier,
+                    image_identifier=image_identifiers[0] if image_identifiers else None,
+                    image_identifiers=list(image_identifiers),
                     audio_identifier=audio_identifier,
                     created_at=utcnow(),
                 )
@@ -175,12 +176,12 @@ class ConversationService:
             raise InvalidInputError("That message already has an answer.")
         return last_user
 
-    async def retry_text(self, actor: Actor, conversation_id: UUID, message_id: UUID) -> tuple[str, Optional[str]]:
-        """(text, image_identifier) of a failed user message that is about to be retried."""
+    async def retry_text(self, actor: Actor, conversation_id: UUID, message_id: UUID) -> tuple[str, list[str]]:
+        """(text, photos) of a failed user message that is about to be retried."""
         async with self.session_factory() as session:
             await self._owned(session, actor, conversation_id)
             msg = await self._failed_user_message(session, conversation_id, message_id)
-            return msg.content, msg.image_identifier
+            return msg.content, list(msg.image_identifiers or ([msg.image_identifier] if msg.image_identifier else []))
 
     async def finish_turn(
         self,

@@ -132,7 +132,9 @@ async def test_the_assistant_writes_first_within_the_persons_limits(
     staff = await add_member(owner, "staff")
     engine = container.agent.nudge_engine()
     members = (await engine.accounts())[uuid.UUID(owner["account"]["id"])]
-    now = datetime.now(timezone.utc).replace(hour=15, minute=0)  # 12:00 in Argentina: outside quiet hours
+    # 12:00 in Argentina (outside quiet hours), anchored on yesterday: the logs written now (real time) must fall
+    # inside the engine's recent window, whatever the hour the suite runs at
+    now = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=15, minute=0)
 
     signals = await engine.signals(Actor.from_user(members[0]), now + timedelta(days=3))
     assert any(s.kind == "no_news" and "Cantero 1" in s.text for s in signals)

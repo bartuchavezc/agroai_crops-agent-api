@@ -223,5 +223,6 @@ nombres de cultivo salen en el idioma de la persona. Los textos ya guardados no 
 | GET | `/nudges/log` | Cada chequeo del asistente: señales, qué escribió y a quién o por qué calló (owner/tecnico) |
 | POST | `/nudges/check` | Pedirle que mire ahora (owner/tecnico) |
 
-Los mensajes de chat traen `audio_identifier` y `origin` (`turn`, `note`, `nudge`). Las notificaciones suman los tipos
+`/chat` acepta hasta 4 fotos juntas en `image_identifiers` (`image_identifier` sigue valiendo para una). Los mensajes de
+chat traen `image_identifiers`, `audio_identifier` y `origin` (`turn`, `note`, `nudge`). Las notificaciones suman los tipos
 `digest`, `nudge` y `application` y la entidad `conversation`; las de cada entrada de la bitácora no van al teléfono.
