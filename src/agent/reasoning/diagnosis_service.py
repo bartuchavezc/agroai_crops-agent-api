@@ -40,7 +40,7 @@ from ..prompts.periodic import (
 )
 from ..prompts.soil import SOIL_SYSTEM_INSTRUCTION
 from ..prompts.voice import localize
-from ..providers.gemini import GeminiGateway
+from ..providers.gemini import GeminiGateway, patient_calls
 from ..schemas import DiagnosisResult, HarvestVerdictResult, PlantCountResult, SoilRecognitionResult
 from ..usage import TurnUsage
 from .analysis_context import AnalysisContext, AnalysisContextBuilder, to_json
@@ -61,8 +61,10 @@ logger = logging.getLogger(__name__)
 
 # An outer safety net on the whole fanned-out zone analysis (overview + one call per crop group + synthesis,
 # run one at a time — see zone_task_loop.py): generous, since this is now several sequential calls, each with
-# its own 2-attempt retry and 3-model fallback chain. A timeout here lands in analyze()'s existing
-# except-mark-ANALYSIS_FAILED path exactly like any other error, no new handling needed.
+# its own 2-attempt retry and 3-model fallback chain, plus the per-minute quota waits of a background job (see
+# gemini.py's patient_calls: usually well under a minute per call). It starts once the job's turn in its API
+# key's queue comes (GeminiGateway.serialized), not while it waits behind another analysis. A timeout here
+# lands in analyze()'s existing except-mark-ANALYSIS_FAILED path exactly like any other error.
 ZONE_ANALYSIS_TIMEOUT_SECONDS = 600
 
 
@@ -76,7 +78,10 @@ async def analyze_in_background(
     upload endpoints (`src/application/storage/router.py`) and the `/analyze` retry endpoint (`router.py`
     in this package) so both background the exact same way, instead of one reaching into the other."""
     try:
-        await diagnosis_service.analyze(actor, report_id, image_identifier, deep)
+        # Queued per API key, and nobody waits on the response: per-minute quotas are waited out, not failed on.
+        async with diagnosis_service.gemini.serialized(actor.user_id):
+            with patient_calls():
+                await diagnosis_service.analyze(actor, report_id, image_identifier, deep)
     except Exception:  # noqa: BLE001 - background task, nothing to return the error to
         logger.exception(f"Background analysis failed for report {report_id}")
 

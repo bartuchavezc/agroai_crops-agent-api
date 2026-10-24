@@ -2,10 +2,15 @@
 Gemini access with per-user API keys (BYOK). Nothing here ever reads GOOGLE_API_KEY from
 the environment: every client is built from the calling user's own key.
 """
+import asyncio
+import contextvars
 import hashlib
 import logging
+import random
+import re
 import time
-from typing import Any, Optional, Sequence, Type, TypeVar
+from contextlib import asynccontextmanager, contextmanager
+from typing import Any, Literal, Optional, Sequence, Type, TypeVar
 from uuid import UUID
 
 from google import genai
@@ -35,6 +40,59 @@ RETRY_OPTIONS = types.HttpRetryOptions(
 
 def _is_retryable(exc: BaseException) -> bool:
     return isinstance(exc, genai_errors.APIError) and getattr(exc, "code", None) in RETRYABLE_STATUS
+
+
+# Quota pacing without a token counter: the limits move with the model, the tier and the hour, so nothing here
+# guesses them. A 429 says itself which quota ran out and when to come back; a background job (a zone analysis
+# is several sequential calls) waits that long and tries the same model again, while an interactive call
+# (chat, an on-demand diagnosis) moves straight to the next model instead of making the user wait.
+_PATIENT = contextvars.ContextVar("gemini_patient", default=False)
+QUOTA_RETRIES = 3  # waits per model on a per-minute 429 before moving to the next model
+QUOTA_BACKOFF_BASE = 5.0  # seconds; doubled per attempt when the 429 doesn't say how long to wait
+QUOTA_MAX_WAIT = 60.0  # a per-minute window never needs longer
+
+QuotaKind = Literal["minute", "day"]
+
+
+@contextmanager
+def patient_calls():
+    """Inside it (a background job, nobody waiting on the response), a per-minute 429 is waited out instead of
+    skipped."""
+    token = _PATIENT.set(True)
+    try:
+        yield
+    finally:
+        _PATIENT.reset(token)
+
+
+def quota_info(exc: BaseException) -> tuple[Optional[QuotaKind], Optional[float]]:
+    """For a 429: which quota ran out ("day" = requests per day, else per-minute requests or tokens; None when
+    the error doesn't say) and the `retryDelay` Gemini suggests, in seconds. (None, None) for anything else."""
+    if not isinstance(exc, genai_errors.APIError) or getattr(exc, "code", None) != 429:
+        return None, None
+    body = exc.details if isinstance(exc.details, dict) else {}
+    kind: Optional[QuotaKind] = None
+    delay: Optional[float] = None
+    for detail in (body.get("error") or {}).get("details") or []:
+        if not isinstance(detail, dict):
+            continue
+        for violation in detail.get("violations") or []:
+            quota_id = str(violation.get("quotaId", ""))
+            if "PerDay" in quota_id:
+                kind = "day"
+            elif "PerMinute" in quota_id and kind is None:
+                kind = "minute"
+        match = re.fullmatch(r"([\d.]+)s", str(detail.get("retryDelay", "")))
+        if match:
+            delay = float(match.group(1))
+    return kind, delay
+
+
+def backoff_delay(attempt: int, suggested: Optional[float]) -> float:
+    """Gemini's own `retryDelay` when it gave one, else exponential (5, 10, 20, ... s); jittered so queued jobs
+    don't all come back at once, and never past a minute."""
+    base = suggested if suggested is not None else QUOTA_BACKOFF_BASE * 2**attempt
+    return min(QUOTA_MAX_WAIT, base * random.uniform(1.0, 1.2))
 
 
 def build_client(api_key: str) -> genai.Client:
@@ -106,6 +164,7 @@ class GeminiGateway:
         self.chat_thinking_level = (config.get("chat_thinking_level") or "").strip().lower()
         self.chat_temperature = config.get("chat_temperature")
         self._clients: dict[UUID, tuple[str, genai.Client]] = {}
+        self._queues: dict[str, asyncio.Lock] = {}
 
     @property
     def model_chain(self) -> list[str]:
@@ -137,18 +196,10 @@ class GeminiGateway:
         last_exc: BaseException | None = None
         for model in models:
             started = time.monotonic()
-            try:
-                response = await client.aio.models.generate_content(model=model, **kwargs)
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                elapsed = time.monotonic() - started
-                if not _is_retryable(exc):
-                    logger.warning(f"Gemini call model={model} failed in {elapsed:.1f}s ({type(exc).__name__}): {exc}")
+            response, last_exc = await self._try_model(client, model, **kwargs)
+            if response is None:
+                if not _is_retryable(last_exc):
                     break
-                logger.warning(
-                    f"Gemini call model={model} failed in {elapsed:.1f}s "
-                    f"({getattr(exc, 'code', type(exc).__name__)}); trying next"
-                )
                 continue
             usage = response.usage_metadata
             logger.info(
@@ -160,6 +211,49 @@ class GeminiGateway:
             )
             return response
         raise translate_provider_error(last_exc) from None
+
+    async def _try_model(self, client: genai.Client, model: str, **kwargs):
+        """One model of the chain: `(response, None)`, or `(None, error)` to move on. In a background job
+        (`patient_calls`) a per-minute 429 is waited out — Gemini's `retryDelay`, else exponential backoff — up to
+        QUOTA_RETRIES times; a per-day 429 moves on at once, since waiting can't bring that quota back today."""
+        attempt = 0
+        while True:
+            started = time.monotonic()
+            try:
+                return await client.aio.models.generate_content(model=model, **kwargs), None
+            except Exception as exc:  # noqa: BLE001
+                elapsed = time.monotonic() - started
+                if not _is_retryable(exc):
+                    logger.warning(f"Gemini call model={model} failed in {elapsed:.1f}s ({type(exc).__name__}): {exc}")
+                    return None, exc
+                kind, suggested = quota_info(exc)
+                if getattr(exc, "code", None) == 429 and kind != "day" and _PATIENT.get() and attempt < QUOTA_RETRIES:
+                    wait = backoff_delay(attempt, suggested)
+                    logger.warning(
+                        f"Gemini call model={model} hit the {kind or 'unknown'} quota in {elapsed:.1f}s; "
+                        f"waiting {wait:.0f}s (retry {attempt + 1}/{QUOTA_RETRIES})"
+                    )
+                    await asyncio.sleep(wait)
+                    attempt += 1
+                    continue
+                reason = f"{kind} quota" if kind else getattr(exc, "code", type(exc).__name__)
+                logger.warning(f"Gemini call model={model} failed in {elapsed:.1f}s ({reason}); trying next")
+                return None, exc
+
+    @asynccontextmanager
+    async def serialized(self, user_id: UUID):
+        """One background analysis at a time per API key: several uploads in a row (a guided walk's zones) queue
+        here instead of spending the key's per-minute quota all at once. In-process, which is enough while the
+        API runs as a single uvicorn worker. Keyed by the key itself, so users sharing one share the queue."""
+        try:
+            key = hashlib.sha256((await self.api_key_for(user_id)).encode()).hexdigest()
+        except Exception:  # noqa: BLE001 - no usable key: the analysis fails on its own, with the right error
+            key = str(user_id)
+        lock = self._queues.setdefault(key, asyncio.Lock())
+        if lock.locked():
+            logger.info(f"Analysis for user {user_id} queued behind another one on the same API key")
+        async with lock:
+            yield
 
     async def api_key_for(self, user_id: UUID) -> str:
         return await self.credentials.get_api_key(user_id)
