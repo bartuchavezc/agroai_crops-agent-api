@@ -28,10 +28,11 @@ class ReportModel(Base):
     account_id = Column(PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     field_id = Column(PGUUID(as_uuid=True), ForeignKey("fields.id", ondelete="SET NULL"))
     lot_id = Column(PGUUID(as_uuid=True), ForeignKey("lots.id", ondelete="SET NULL"))
-    # Zone tracking: one report covers every active crop of the zone (lot_ids), from 1-4 photos.
+    # Zone tracking: one report covers every active crop of the zone (lot_ids), from 1-3 photos.
     zone_id = Column(PGUUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
     lot_ids = Column(JSONB, nullable=False, default=list, server_default="[]")
     image_identifiers = Column(JSONB, nullable=False, default=list, server_default="[]")
+    photo_roles = Column(JSONB, nullable=False, default=list, server_default="[]")  # what each photo shows
     notes = Column(Text)  # the user's own observations at submission time, fed to the model as context
     reason = Column(Text)  # why it was taken ("motivo"): routine check, spots on leaves, before harvest...
     created_by = Column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
@@ -54,6 +55,7 @@ class SQLAlchemyReportsRepository:
     async def create(self, account_id: UUID, created_by: Optional[UUID], data: ReportCreate) -> Report:
         values = data.model_dump()
         values["lot_ids"] = [str(c) for c in data.lot_ids]  # JSONB
+        values["photo_roles"] = [r.model_dump(mode="json") for r in data.photo_roles]
         model = ReportModel(account_id=account_id, created_by=created_by, **values)
         async with self.session_factory() as session:
             session.add(model)

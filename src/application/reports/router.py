@@ -70,6 +70,10 @@ async def update_report(
 
 @router.delete("/{report_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete Report")
 @inject
-async def delete_report(report_id: UUID, actor: Actor = Depends(get_actor), reports: ReportsService = Depends(REPORTS)):
-    await reports.delete_report(actor, report_id)
+async def delete_report(
+    report_id: UUID, actor: Actor = Depends(get_actor), discard=Depends(Provide["application.report_discard_service"]),
+):
+    """Also undoes what its analysis wrote about follow-ups (the entries it logged, the follow-ups it opened that
+    nobody touched since) and deletes its photos."""
+    await discard.discard(actor, report_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

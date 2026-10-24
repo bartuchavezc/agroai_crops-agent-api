@@ -39,8 +39,9 @@ logger = logging.getLogger(__name__)
 
 WEATHER_TIMEOUT_SECONDS = 8
 _HEADER_FIELDS = (
-    "kind", "applied_at", "target", "method", "equipment", "area_m2", "water_volume_l", "operator_user_id",
-    "operator_name", "prescribed_by", "prescription_number", "transcript", "notes", "field_id", "zone_id",
+    "kind", "applied_at", "target", "followup_id", "method", "equipment", "area_m2", "water_volume_l",
+    "operator_user_id", "operator_name", "prescribed_by", "prescription_number", "transcript", "notes", "field_id",
+    "zone_id",
 )
 _PRODUCT_FIELDS = (
     "kind", "name", "registry_number", "company", "active_ingredients", "formulation", "registry_verified", "dose",
@@ -275,6 +276,7 @@ class ApplicationService:
         self, actor: Actor, data: ApplicationCreate, source: Optional[str] = None
     ) -> ApplicationRead:
         lot_ids = await self._scope(actor, data.field_id, data.zone_id, data.lot_ids)
+        await self.farm._check_followup_in_field(actor, data.followup_id, data.field_id)
         crops = await self._crop_names(actor, lot_ids)
         async with self.session_factory() as session:
             app = Application(
@@ -309,6 +311,8 @@ class ApplicationService:
         self, session: AsyncSession, actor: Actor, app: Application, data: ApplicationDraftUpdate
     ) -> None:
         values = data.model_dump(exclude_unset=True, exclude={"products", "lot_ids", "evidence", "reason"})
+        if values.get("followup_id"):
+            await self.farm._check_followup_in_field(actor, values["followup_id"], app.field_id)
         for key, value in values.items():
             setattr(app, key, value)
         if data.evidence is not None:
@@ -425,7 +429,7 @@ class ApplicationService:
             event = await self.farm.create_event(actor, FieldEventCreate(
                 field_id=app.field_id, zone_id=app.zone_id, lot_ids=list(app.lot_ids or []),
                 type=_EVENT_TYPE[app.kind], occurred_at=app.applied_at, notes=self._event_notes(app, products),
-                data={"application_record_id": str(app.record_id)},
+                data={"application_record_id": str(app.record_id)}, followup_id=app.followup_id,
             ))
             try:
                 app.weather = await self._weather_at(actor, app.field_id, app.applied_at)
@@ -486,13 +490,27 @@ class ApplicationService:
             await self._effects(session, actor, new, products, 1, f"Corrección v{new.version}")
             await self._learn(session, actor, new, products)
             event_values = {"occurred_at": new.applied_at, "notes": self._event_notes(new, products),
-                            "type": _EVENT_TYPE[new.kind], "zone_id": new.zone_id}
+                            "type": _EVENT_TYPE[new.kind], "zone_id": new.zone_id, "followup_id": new.followup_id}
             await session.commit()
             read = (await self._reads(session, actor, [new]))[0]
         if read.field_event_id:  # after the commit: its row is referenced by the versions just written
             await self.farm.repo.update_event(actor.account_id, read.field_event_id, event_values,
                                               lot_ids=list(read.lot_ids))
         await self.refresh_withholding(actor, list(set(before_lots) | set(read.lot_ids)))
+        return read
+
+    async def link_followup(self, actor: Actor, application_id: UUID, followup_id: Optional[UUID]) -> ApplicationRead:
+        """Which follow-up the record treats — on a draft or a confirmed one alike, without a new version: it is
+        context, not what was applied. A confirmed one's bitácora entry joins (or leaves) that follow-up's history."""
+        async with self.session_factory() as session:
+            app = await self._current(session, actor, application_id)
+            self._check_author(actor, app)
+            await self.farm._check_followup_in_field(actor, followup_id, app.field_id)
+            app.followup_id = followup_id
+            await session.commit()
+            read = (await self._reads(session, actor, [app]))[0]
+        if read.field_event_id:
+            await self.farm.repo.update_event(actor.account_id, read.field_event_id, {"followup_id": followup_id})
         return read
 
     async def void(self, actor: Actor, application_id: UUID, reason: str) -> ApplicationRead:

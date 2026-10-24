@@ -496,6 +496,13 @@ class LotResowRead(BaseModel):
 
 # ---------- Field events ----------
 
+class EventEvidence(BaseModel):
+    """What backs a bitácora entry: a photo, the analysis (report) that saw it, a voice note, a document."""
+    kind: Literal["photo", "report", "audio", "document"]
+    identifier: str = PField(max_length=255, description="The image / audio identifier, or the report id")
+    note: Optional[str] = PField(default=None, max_length=255, description='e.g. "antes (24/10)"')
+
+
 class FieldEventCreate(BaseModel):
     """An entry of the bitácora. Where it happened: a zone (it reaches every lot growing there), specific lots, or
     neither (the whole field). Products and doses go as free text in notes (+ quantity / unit)."""
@@ -513,6 +520,8 @@ class FieldEventCreate(BaseModel):
     image_identifier: Optional[str] = None
     outcome: EventOutcome = PField(default="done", description="skipped: deliberately not done, with a reason")
     reason: Optional[str] = PField(default=None, description="Why it was skipped; for a loss, its cause in words")
+    followup_id: Optional[UUID] = PField(default=None, description="The problem being followed it is about")
+    evidence: list[EventEvidence] = PField(default_factory=list)
 
     @model_validator(mode="after")
     def _lots(self):
@@ -535,6 +544,8 @@ class FieldEventUpdate(BaseModel):
     lot_ids: Optional[list[UUID]] = PField(default=None, description="Fix the lots it reached")
     outcome: Optional[EventOutcome] = None
     reason: Optional[str] = None
+    followup_id: Optional[UUID] = PField(default=None, description="Link it to a follow-up (e.g. a treatment)")
+    evidence: Optional[list[EventEvidence]] = None
 
 
 class FieldEventRead(ORMModel):
@@ -554,6 +565,8 @@ class FieldEventRead(ORMModel):
     source: EventSource
     outcome: EventOutcome = "done"
     reason: Optional[str] = None
+    followup_id: Optional[UUID] = None
+    evidence: list[EventEvidence] = PField(default_factory=list)
     created_at: datetime
     updated_at: Optional[datetime] = None
 

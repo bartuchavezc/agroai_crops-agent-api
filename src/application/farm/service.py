@@ -19,7 +19,7 @@ from src.application.notifications.service import NotificationService
 from src.application.soil_data.service import SoilContextService
 
 from .models import (
-    ACTIVE_LOT_STATUSES, GROWING_LOT_STATUSES, LOSS_CAUSES, CropMaster, Field, FieldEvent, FieldZone, Lot,
+    ACTIVE_LOT_STATUSES, GROWING_LOT_STATUSES, LOSS_CAUSES, CropMaster, Field, FieldEvent, FieldZone, FollowUp, Lot,
 )
 from .schemas import (
     ActiveLotSummary,
@@ -579,6 +579,7 @@ class FarmService:
         limit: int = 50,
         zone_id: Optional[UUID] = None,
         before: Optional[datetime] = None,
+        followup_id: Optional[UUID] = None,
     ) -> list[FieldEventRead]:
         items = await self.repo.list_events(
             actor.account_id,
@@ -590,6 +591,7 @@ class FarmService:
             limit=min(max(limit, 1), 500),
             zone_id=zone_id,
             before=before,
+            followup_id=followup_id,
         )
         return await self.event_reads(items)
 
@@ -611,9 +613,17 @@ class FarmService:
                                          zone_id=zone_id)
         return [lot.id for lot in lots]
 
+    async def _check_followup_in_field(self, actor: Actor, followup_id: Optional[UUID], field_id: UUID) -> None:
+        if followup_id is None:
+            return
+        followup = await self.repo._get(FollowUp, followup_id, actor.account_id)
+        if followup is None or followup.field_id != field_id:
+            raise InvalidInputError("That follow-up does not belong to this field.")
+
     async def create_event(self, actor: Actor, data: FieldEventCreate) -> FieldEventRead:
         await self.get_field(actor, data.field_id)
         await self._check_zone_in_field(actor, data.zone_id, data.field_id)
+        await self._check_followup_in_field(actor, data.followup_id, data.field_id)
         if data.lot_ids:
             lots = await self._lots_in_field(actor, data.lot_ids, data.field_id)
             lot_ids = data.lot_ids
@@ -627,6 +637,7 @@ class FarmService:
         if counted:
             data = await self._counted_entry(actor, data, lot_ids)
         values = data.model_dump(exclude={"lot_ids", "lot_id"})
+        values["evidence"] = [e.model_dump() for e in data.evidence]
         values["occurred_at"] = values["occurred_at"] or utcnow()
         event = await self.repo.create_event(
             FieldEvent(
@@ -719,9 +730,11 @@ class FarmService:
         event = await self._editable_event(actor, event_id)
         if data.lot_ids:
             await self._lots_in_field(actor, data.lot_ids, event.field_id)
-        await self.repo.update_event(
-            actor.account_id, event_id, data.model_dump(exclude_unset=True, exclude={"lot_ids"}), lot_ids=data.lot_ids
-        )
+        await self._check_followup_in_field(actor, data.followup_id, event.field_id)
+        values = data.model_dump(exclude_unset=True, exclude={"lot_ids"})
+        if data.evidence is not None:
+            values["evidence"] = [e.model_dump() for e in data.evidence]
+        await self.repo.update_event(actor.account_id, event_id, values, lot_ids=data.lot_ids)
         return await self.get_event(actor, event_id)
 
     async def delete_event(self, actor: Actor, event_id: UUID) -> None:

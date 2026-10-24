@@ -49,6 +49,7 @@ class ApplicationBase(BaseModel):
     kind: ApplicationKind = "phyto"
     applied_at: Optional[datetime] = None
     target: Optional[str] = None
+    followup_id: Optional[UUID] = Field(default=None, description="The follow-up (seguimiento) it treats, if any")
     method: Optional[str] = Field(default=None, max_length=60)
     equipment: Optional[str] = Field(default=None, max_length=255)
     area_m2: Optional[float] = Field(default=None, gt=0)
@@ -76,6 +77,7 @@ class ApplicationDraftUpdate(BaseModel):
     kind: Optional[ApplicationKind] = None
     applied_at: Optional[datetime] = None
     target: Optional[str] = None
+    followup_id: Optional[UUID] = None
     method: Optional[str] = Field(default=None, max_length=60)
     equipment: Optional[str] = Field(default=None, max_length=255)
     area_m2: Optional[float] = Field(default=None, gt=0)
@@ -99,6 +101,11 @@ class ApplicationCorrection(ApplicationDraftUpdate):
 
 class ApplicationVoid(BaseModel):
     reason: str = Field(min_length=3)
+
+
+class ApplicationFollowUpLink(BaseModel):
+    """Which follow-up a record treats (null: none). Not part of the record's content, so no new version."""
+    followup_id: Optional[UUID] = None
 
 
 class ApplicationRead(ApplicationBase):

@@ -25,6 +25,7 @@ def _summary(app) -> dict:
     return compact({
         "id": str(app.id), "record_id": str(app.record_id), "version": app.version, "status": app.status,
         "applied_at": app.applied_at, "lots": app.lot_labels, "target": app.target,
+        "followup_id": app.followup_id and str(app.followup_id),
         "products": [
             {"name": p.name, "registry_number": p.registry_number, "registered": p.registry_verified,
              "dose": p.dose, "dose_unit": p.dose_unit, "total": p.total_quantity, "total_unit": p.total_unit,
@@ -59,6 +60,19 @@ def application_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             return {"operator_user_id": UUID(operator)}
         except ValueError:
             return {"operator_name": operator.strip()}
+
+    async def _open_followups_here(app) -> list[dict]:
+        """The open follow-ups where it was applied, when it isn't linked to one: the agent asks whether it was
+        for one of them (the treatment then joins that follow-up's history)."""
+        if app.followup_id or deps.followups is None:
+            return []
+        lots = {str(i) for i in app.lot_ids}
+        return [
+            {"followup_id": str(f.id), "title": f.title, "since": f.created_at.date()}
+            for f in await deps.followups.list_followups(ctx.actor, field_id=app.field_id, status="abierto")
+            if (app.zone_id and f.zone_id == app.zone_id) or lots & {str(i) for i in f.lot_ids}
+            or not (app.zone_id or lots)
+        ]
 
     def _evidence(attach_current_photo: bool) -> list[Evidence]:
         evidence = []
@@ -95,6 +109,7 @@ def application_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         lots: Optional[list[str]] = None,
         applied_at: Optional[str] = None,
         target: Optional[str] = None,
+        followup_id: Optional[str] = None,
         operator: Optional[str] = None,
         kind: str = "phyto",
         method: Optional[str] = None,
@@ -117,6 +132,9 @@ def application_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         - where: lots (ids), or zone ('cantero 2': every lot growing there), or neither (the whole field).
         - applied_at: ISO date/time (default now). operator: 'yo' (the person writing), a member id or a name.
         - kind: phyto | fertilization | biological | other. transcript: what they dictated, word for word, if audio.
+        - target: what it was for (the pest, disease or reason). followup_id: the open follow-up (seguimiento) it
+          treats, from list_followups — the treatment then joins that problem's history. If the result lists
+          open_followups_here and the target matches one, link it (update_application_draft) or ask which.
         Then show the person a SHORT summary (products and doses, lots, date, who, withholding and harvest date,
         what is missing) and ask them to confirm; call confirm_application only after their yes."""
         target_field = await resolve_field(deps, ctx, field)
@@ -124,11 +142,13 @@ def application_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         draft = await deps.applications.create_draft(ctx.actor, ApplicationCreate(
             field_id=target_field.id, zone_id=zone_id, lot_ids=[UUID(str(lot)) for lot in lots or []],
             applied_at=parse_when(applied_at, ctx.tz) or utcnow(), target=target, kind=kind, method=method,
+            followup_id=UUID(followup_id) if followup_id else None,
             area_m2=area_m2, water_volume_l=water_volume_l, prescribed_by=prescribed_by, transcript=transcript,
             notes=notes, evidence=_evidence(attach_current_photo), products=_products(products) or [],
             **_operator(operator),
         ), source="agent")
-        return {"draft": _summary(draft), "next": "Show the summary and ask the person to confirm it."}
+        return compact({"draft": _summary(draft), "open_followups_here": await _open_followups_here(draft),
+                        "next": "Show the summary and ask the person to confirm it."})
 
     @tool
     async def update_application_draft(
@@ -136,6 +156,7 @@ def application_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         products: Optional[list[dict]] = None,
         applied_at: Optional[str] = None,
         target: Optional[str] = None,
+        followup_id: Optional[str] = None,
         operator: Optional[str] = None,
         lots: Optional[list[str]] = None,
         method: Optional[str] = None,
@@ -151,6 +172,8 @@ def application_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                   "prescribed_by": prescribed_by, "notes": notes, "applied_at": parse_when(applied_at, ctx.tz),
                   "products": _products(products), **_operator(operator)}
         values = {k: v for k, v in values.items() if v is not None}
+        if followup_id:
+            values["followup_id"] = UUID(followup_id)
         if lots is not None:
             values["lot_ids"] = [UUID(str(lot)) for lot in lots]
         if attach_current_photo:
@@ -166,6 +189,16 @@ def application_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         From then on it is never edited: changes are corrections with a reason."""
         confirmed = await deps.applications.confirm(ctx.actor, UUID(application_id))
         return {"confirmed": _summary(confirmed)}
+
+    @tool
+    async def link_application_to_followup(application_id: str, followup_id: Optional[str] = None) -> dict:
+        """Say which follow-up (seguimiento) an application treats — a draft or an already confirmed one, without a
+        correction: it's context, not what was applied ("lo del jabón potásico era para el pulgón"). Its bitácora
+        entry joins that problem's history. followup_id empty: unlink."""
+        linked = await deps.applications.link_followup(
+            ctx.actor, UUID(application_id), UUID(followup_id) if followup_id else None
+        )
+        return {"application": _summary(linked)}
 
     @tool
     async def correct_application(
@@ -236,5 +269,5 @@ def application_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     return [
         find_product, record_application, update_application_draft, confirm_application, correct_application,
-        list_applications, list_supplies, receive_supply,
+        link_application_to_followup, list_applications, list_supplies, receive_supply,
     ]

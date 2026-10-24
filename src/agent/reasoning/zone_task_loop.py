@@ -21,7 +21,7 @@ from typing import Any, Awaitable, Callable, Literal
 
 logger = logging.getLogger(__name__)
 
-TaskKind = Literal["overview", "group", "synthesis", "recheck"]
+TaskKind = Literal["overview", "group", "synthesis", "recheck", "followup"]
 TaskStatus = Literal["pending", "done", "failed"]
 
 # A group result concerning enough to look at again on its own, with no other groups' fichas competing for

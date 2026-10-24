@@ -4,12 +4,13 @@ Two report types share this service:
 - "diagnosis": disease/pest/nutrition focused, single photo, no cycle history (DiagnosisResult).
 - "periodic": routine tracking (health/growth/stress/harvest/objectives/risks), grounded in the crop
   cycle's timeline and event log (PeriodicReportResult). A periodic report of a zone (cajón, cantero,
-  invernadero, hidroponía) covers every active crop of the zone at once, from 1-4 photos
+  invernadero, hidroponía) covers every active crop of the zone at once, from 1-3 photos
   (ZonePeriodicReportResult, stored as llm_structured_zone).
 """
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from typing import Optional
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from google.genai import types
 
 from src.application.alerts.rules_engine import RulesEngine
 from src.application.farm.service import FarmService
+from src.application.followups.schemas import FollowUpCreate
 from src.application.notifications.service import NotificationService
 from src.application.reports.schemas import Report, ReportUpdate
 from src.application.reports.service import ReportsService
@@ -33,6 +35,7 @@ from ..prompts.diagnosis import SYSTEM_INSTRUCTION
 from ..prompts.harvest import HARVEST_VERDICT_INSTRUCTION, PLANT_COUNT_INSTRUCTION
 from ..prompts.knowledge import modules_for
 from ..prompts.periodic import (
+    FOLLOWUP_SYSTEM_INSTRUCTION,
     PERIODIC_SYSTEM_INSTRUCTION,
     ZONE_GROUP_SYSTEM_INSTRUCTION,
     ZONE_OVERVIEW_SYSTEM_INSTRUCTION,
@@ -40,11 +43,12 @@ from ..prompts.periodic import (
 )
 from ..prompts.soil import SOIL_SYSTEM_INSTRUCTION
 from ..prompts.voice import localize
-from ..providers.gemini import GeminiGateway
+from ..providers.gemini import GeminiGateway, patient_calls
 from ..schemas import DiagnosisResult, HarvestVerdictResult, PlantCountResult, SoilRecognitionResult
 from ..usage import TurnUsage
 from .analysis_context import AnalysisContext, AnalysisContextBuilder, to_json
 from .periodic_report import (
+    FollowUpPassResult,
     PeriodicReportResult,
     ZoneGroupAssessment,
     ZoneOverviewResult,
@@ -54,14 +58,30 @@ from .periodic_report import (
     format_event_history,
 )
 from .zone_grouping import CropGroup, group_cycles, merge_zone_result
+from .zone_followups import (
+    EVOLUTION_LABEL,
+    OPEN_SEVERITIES,
+    PREVIOUS_PHOTO_SIDE,
+    FollowUpInput,
+    evaluation_notes,
+    followup_input,
+    followup_pass_contents,
+    issue_photo,
+    new_issues,
+    open_followup_lines,
+    proposes_close,
+)
+from .zone_photos import followup_photos, group_parts, overview_parts, photo_count, zone_photos
 from .zone_task_loop import ZoneTask, run_zone_tasks
 
 logger = logging.getLogger(__name__)
 
 # An outer safety net on the whole fanned-out zone analysis (overview + one call per crop group + synthesis,
 # run one at a time — see zone_task_loop.py): generous, since this is now several sequential calls, each with
-# its own 2-attempt retry and 3-model fallback chain. A timeout here lands in analyze()'s existing
-# except-mark-ANALYSIS_FAILED path exactly like any other error, no new handling needed.
+# its own 2-attempt retry and 3-model fallback chain, plus the per-minute quota waits of a background job (see
+# gemini.py's patient_calls: usually well under a minute per call). It starts once the job's turn in its API
+# key's queue comes (GeminiGateway.serialized), not while it waits behind another analysis. A timeout here
+# lands in analyze()'s existing except-mark-ANALYSIS_FAILED path exactly like any other error.
 ZONE_ANALYSIS_TIMEOUT_SECONDS = 600
 
 
@@ -75,7 +95,10 @@ async def analyze_in_background(
     upload endpoints (`src/application/storage/router.py`) and the `/analyze` retry endpoint (`router.py`
     in this package) so both background the exact same way, instead of one reaching into the other."""
     try:
-        await diagnosis_service.analyze(actor, report_id, image_identifier, deep)
+        # Queued per API key, and nobody waits on the response: per-minute quotas are waited out, not failed on.
+        async with diagnosis_service.gemini.serialized(actor.user_id):
+            with patient_calls():
+                await diagnosis_service.analyze(actor, report_id, image_identifier, deep)
     except Exception:  # noqa: BLE001 - background task, nothing to return the error to
         logger.exception(f"Background analysis failed for report {report_id}")
 
@@ -96,8 +119,10 @@ class DiagnosisService:
         max_image_side: int = 1536,
         deep_default: bool = True,
         field_rules=None,
+        followup_service=None,
     ):
         self.gemini = gemini
+        self.followups = followup_service  # FollowUpService: what the zone analysis follows and writes down
         self.storage = storage_service
         self.reports = reports_service
         self.farm = farm_service
@@ -506,11 +531,12 @@ class DiagnosisService:
         self, actor: Actor, parts: list, zone_lines: list[str], cycle_pairs: list[tuple[str, str]],
         notes_lines: list[str], usage_sink: Optional[TurnUsage] = None,
     ) -> ZoneOverviewResult:
-        """The only pass that sees every photo without being narrowed to one crop group — no fichas, cheap."""
+        """The whole-zone read, not narrowed to one crop group — no fichas, cheap. `parts` are the general shots
+        (every photo when the report has no photo roles: see zone_photos.py)."""
         registered = ", ".join(dict.fromkeys(name for _, name in cycle_pairs)) or "(ninguno)"
         lines = [*zone_lines, f"Cultivos registrados en esta zona: {registered}", *notes_lines]
         prompt = (
-            f"Mirá las {len(parts)} foto/s de la zona completa y dame una lectura visual de conjunto.\n\n"
+            f"Mirá las {photo_count(parts)} foto/s de la zona completa y dame una lectura visual de conjunto.\n\n"
             "Contexto:\n" + "\n".join(f"- {line}" for line in lines)
         )
         return await self.gemini.generate_structured(
@@ -564,6 +590,11 @@ class DiagnosisService:
                 r: ZoneGroupAssessment = t.result
                 extra = f" Recomendaciones: {'; '.join(r.group_recommendations)}." if r.group_recommendations else ""
                 group_lines.append(f"Grupo {names}: riesgo {r.group_risk_severity}. {r.group_notes}{extra}")
+            if t.kind == "followup" and t.status == "done":
+                group_lines += [
+                    f"Seguimiento id={e.followup_id}: {EVOLUTION_LABEL[e.evolution]}. {e.evidence}"
+                    for e in t.result.evaluations
+                ]
         lines = [*zone_lines, *overview_lines, *group_lines, *notes_lines]
         prompt = (
             "Con la lectura de conjunto y la evaluación de cada grupo de cultivos de abajo, cerrá el "
@@ -574,6 +605,122 @@ class DiagnosisService:
             system_instruction=localize(ZONE_SYNTHESIS_SYSTEM_INSTRUCTION, actor.country), thinking_level="medium",
             usage_sink=usage_sink,
         )
+
+    async def _open_followups(self, actor: Actor, zone_id) -> list:
+        if self.followups is None:
+            return []
+        return await self.followups.list_followups(actor, zone_id=zone_id, status="abierto")
+
+    async def _followup_inputs(
+        self, actor: Actor, photos: list, open_followups: list, current_images: set[str]
+    ) -> list[FollowUpInput]:
+        """The open follow-ups photographed this time, each with its history and its ANTES photo loaded (at a
+        lower resolution: it is only the reference). A follow-up whose last photo can't be loaded is compared
+        against its history alone."""
+        by_id = {str(f.id): f for f in open_followups}
+        inputs = []
+        for followup_id, shots in followup_photos(photos).items():
+            followup = by_id.get(followup_id)
+            if followup is None:
+                continue
+            detail = await self.followups.get(actor, followup.id)
+            item = followup_input(followup, shots, detail.events, current_images)
+            if item.previous_photo:
+                try:
+                    data, mime = await self.storage.get_image_for_model(
+                        actor, item.previous_photo, PREVIOUS_PHOTO_SIDE
+                    )
+                    item.previous_part = types.Part.from_bytes(data=data, mime_type=mime)
+                except Exception:  # noqa: BLE001 - compare against the history instead
+                    logger.warning(f"Follow-up {followup_id}: previous photo {item.previous_photo} not loadable")
+            inputs.append(item)
+        return inputs
+
+    async def _apply_followups(
+        self, actor: Actor, report: Report, image_ids: list[str], cycle_ids: list[str], open_followups: list,
+        inputs: list[FollowUpInput], evaluations: list, issues: list,
+    ) -> dict:
+        """Writes down what the analysis found about follow-ups — each evaluation and each new problem become
+        bitácora entries with their evidence, by the agent — and what it proposes the person do. Never fails the
+        analysis: what couldn't be written is logged and left out. Idempotent per report (a retry of the same
+        report doesn't write twice)."""
+        found: dict = {"evaluations": [], "opened": [], "suggested_actions": []}
+        if self.followups is None:
+            return found
+        agent = replace(actor, via="agent")
+        by_id = {str(i.followup.id): i for i in inputs}
+        for evaluation in evaluations:
+            item = by_id.get(evaluation.followup_id)
+            if item is None:
+                continue
+            followup = item.followup
+            new_photos = [image_ids[p.number - 1] for p in item.photos]
+            entry = {
+                "followup_id": evaluation.followup_id, "title": followup.title, "evolution": evaluation.evolution,
+                "evidence": evaluation.evidence, "confidence": evaluation.confidence,
+                "photo": new_photos[0] if new_photos else None, "previous_photo": item.previous_photo,
+                "previous_at": item.previous_at.isoformat() if item.previous_at else None,
+            }
+            already = any(
+                ev.kind == "report" and ev.identifier == str(report.id) for e in item.history for ev in e.evidence
+            )
+            if not already:
+                evidence = [{"kind": "photo", "identifier": i} for i in new_photos]
+                if item.previous_photo:
+                    evidence.append({
+                        "kind": "photo", "identifier": item.previous_photo,
+                        "note": f"antes ({item.previous_at.date().isoformat()})" if item.previous_at else "antes",
+                    })
+                try:
+                    await self.followups.write_entry(
+                        agent, followup, evaluation_notes(followup, evaluation),
+                        {"followup_action": "evaluated", "evolution": evaluation.evolution,
+                         "confidence": evaluation.confidence},
+                        evidence, report.id,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(f"Could not log the evaluation of follow-up {followup.id}")
+            found["evaluations"].append(entry)
+            if proposes_close(evaluation, item.previous_evaluations):
+                found["suggested_actions"].append({
+                    "type": "close_followup", "followup_id": evaluation.followup_id, "title": followup.title,
+                    "reason": "No se vio en dos seguimientos seguidos.",
+                })
+            elif evaluation.evolution == "peor":
+                found["suggested_actions"].append({
+                    "type": "treat_followup", "followup_id": evaluation.followup_id, "title": followup.title,
+                    "reason": evaluation.evidence,
+                })
+
+        followed = {str(f.id) for f in open_followups}
+        opened_by_report = {
+            f.title.strip().lower(): f
+            for f in await self.followups.list_followups(actor, zone_id=report.zone_id)
+            if f.origin_report_id == report.id
+        }
+        for issue in new_issues(issues, followed, set(cycle_ids)):
+            photo = issue_photo(issue, image_ids)
+            if issue.severity not in OPEN_SEVERITIES:
+                found["suggested_actions"].append({
+                    "type": "open_followup", "title": issue.title, "kind": issue.kind, "severity": issue.severity,
+                    "lot_ids": issue.lot_ids, "photo_hint": issue.photo_hint, "notes": issue.what_was_seen,
+                    "photo": photo,
+                })
+                continue
+            existing = opened_by_report.get(issue.title.strip().lower())
+            try:
+                followup = existing or await self.followups.create(agent, FollowUpCreate(
+                    field_id=report.field_id, zone_id=report.zone_id, lot_ids=issue.lot_ids, title=issue.title,
+                    kind=issue.kind, severity=issue.severity, photo_hint=issue.photo_hint,
+                    notes=issue.what_was_seen, origin_report_id=report.id,
+                    evidence=[{"kind": "photo", "identifier": photo}] if photo else [],
+                ))
+            except Exception:  # noqa: BLE001
+                logger.exception(f"Could not open a follow-up for {issue.title!r}")
+                continue
+            found["opened"].append({"followup_id": str(followup.id), "title": followup.title,
+                                    "severity": followup.severity})
+        return found
 
     async def _analyze_zone(self, actor: Actor, report: Report, deep: Optional[bool] = None) -> dict:
         """Daily tracking of a whole zone, fanned out: one whole-photo overview, one Gemini call per crop
@@ -618,8 +765,16 @@ class DiagnosisService:
         loaded_by_task: dict[str, list[str]] = {}
         usage = TurnUsage()
 
+        crop_by_cycle = dict(cycle_pairs)
+        photos = zone_photos(parts, report.photo_roles)
+        open_followups = await self._open_followups(actor, zone.id)
+        zone_lines += open_followup_lines(open_followups)
+        followup_inputs = await self._followup_inputs(actor, photos, open_followups, set(image_ids))
+
         tasks: list[ZoneTask] = [ZoneTask(id="overview", kind="overview")]
         tasks += [ZoneTask(id=f"group:{g.id}", kind="group", payload={"group": g}) for g in groups]
+        if followup_inputs:
+            tasks.append(ZoneTask(id="followup", kind="followup"))
         tasks.append(ZoneTask(id="synthesis", kind="synthesis"))
 
         logger.info(
@@ -630,15 +785,22 @@ class DiagnosisService:
         async def execute(task: ZoneTask):
             if task.kind == "overview":
                 return await self._zone_overview_pass(
-                    actor, parts, zone_lines, cycle_pairs, notes_lines, usage_sink=usage
+                    actor, overview_parts(photos, crop_by_cycle), zone_lines, cycle_pairs, notes_lines, usage_sink=usage
                 )
             if task.kind in ("group", "recheck"):
+                group = task.payload["group"]
                 result, loaded = await self._zone_group_pass(
-                    actor, parts, task.payload["group"], cycle_lines, zone_lines, field_data_lines, knowledge,
-                    notes_lines, recheck=task.kind == "recheck", usage_sink=usage,
+                    actor, group_parts(photos, group.cycle_ids, crop_by_cycle), group, cycle_lines, zone_lines,
+                    field_data_lines, knowledge, notes_lines, recheck=task.kind == "recheck", usage_sink=usage,
                 )
                 loaded_by_task[task.id] = loaded
                 return result
+            if task.kind == "followup":
+                return await self.gemini.generate_structured(
+                    actor.user_id, contents=followup_pass_contents(followup_inputs), schema=FollowUpPassResult,
+                    system_instruction=localize(FOLLOWUP_SYSTEM_INSTRUCTION, actor.country), thinking_level="medium",
+                    usage_sink=usage,
+                )
             return await self._zone_synthesis_pass(actor, tasks, zone_lines, notes_lines, usage_sink=usage)
 
         started = time.monotonic()
@@ -670,6 +832,14 @@ class DiagnosisService:
         )
         result = merge_zone_result(cycle_ids, resolved_groups, overview_result, synthesis_task.result)
         research = {"references": sorted({name for names in loaded_by_task.values() for name in names}), "deep": False}
+        # Discarded while it was being analyzed (the zone done again): write nothing down for it.
+        await self.reports.get_report(actor, report.id)
+        followup_task = next((t for t in tasks if t.kind == "followup" and t.status == "done"), None)
+        followups_found = await self._apply_followups(
+            actor, report, image_ids, cycle_ids, open_followups, followup_inputs,
+            followup_task.result.evaluations if followup_task else [],
+            [issue for g in resolved_groups for issue in g.issues],
+        )
 
         logger.info(
             f"Zone analysis done report={report.id} elapsed={elapsed:.1f}s failed_tasks={failed_ids} "
@@ -691,6 +861,7 @@ class DiagnosisService:
                     "weather": weather,
                     "research": research,
                     "analyzed_image_identifiers": image_ids,
+                    "followups": followups_found,
                     "model": self.gemini.model,
                 },
             ),

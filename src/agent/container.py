@@ -53,6 +53,7 @@ class AgentContainer(containers.DeclarativeContainer):
         max_image_side=config.gemini.max_image_side,
         deep_default=config.agent.analysis_deep,
         field_rules=application.field_alert_rules_service,
+        followup_service=application.followup_service,
     )
 
     tool_deps = providers.Singleton(
@@ -67,6 +68,7 @@ class AgentContainer(containers.DeclarativeContainer):
         gemini=gemini,
         search=search_provider,
         diagnosis=diagnosis_service,
+        followups=application.followup_service,
         irrigation=application.irrigation_service,
         inventory=application.inventory_service,
         management=application.management_service,

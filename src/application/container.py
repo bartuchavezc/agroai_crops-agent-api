@@ -19,6 +19,8 @@ from .irrigation.service import EvapotranspirationService
 from .management.repository import ManagementRepository
 from .management.service import ManagementService
 from .notifications.service import NotificationService
+from .followups.service import FollowUpService
+from .reports.discard import ReportDiscardService
 from .planning.progress import CycleProgressService
 from .proactive.digests import DigestService
 from .proactive.push import PushService
@@ -122,6 +124,15 @@ class ApplicationContainer(containers.DeclarativeContainer):
         ApplicationService, session_factory=db_session_factory, farm_service=farm_service,
         supply_service=supply_service, registry=product_registry_service, weather_service=weather_service,
         management_service=management_service,
+    )
+
+    followup_service = providers.Singleton(
+        FollowUpService, session_factory=db_session_factory, farm_service=farm_service,
+        reports_service=reports_service, timezone_name=config.app.timezone,
+    )
+    report_discard_service = providers.Singleton(
+        ReportDiscardService, reports_service=reports_service, followup_service=followup_service,
+        storage_service=storage_service,
     )
 
     task_repository = providers.Singleton(TaskRepository, session_factory=db_session_factory)

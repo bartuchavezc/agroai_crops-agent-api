@@ -7,11 +7,11 @@ from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from src.agent.reasoning.diagnosis_service import analyze_in_background
 from src.application.farm.models import ACTIVE_LOT_STATUSES
-from src.application.reports.schemas import ReportCreate
+from src.application.reports.schemas import MAX_ZONE_PHOTOS, PhotoRole, ReportCreate
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 from src.shared.utils import get_logger
@@ -154,28 +154,67 @@ async def upload_crop_image(
     )
 
 
-MAX_ZONE_PHOTOS = 4
+_PHOTO_ROLES = TypeAdapter(List[PhotoRole])
+
+
+def parse_photo_roles(
+    raw: Optional[str], photo_count: int, active_lot_ids: set[UUID], open_followup_ids: set[UUID] = frozenset()
+) -> List[PhotoRole]:
+    """The optional `photo_roles` form field: a JSON list, one entry per photo in upload order. Absent = every
+    photo is analyzed as before (each pass sees them all)."""
+    if not raw:
+        return []
+    try:
+        roles = _PHOTO_ROLES.validate_json(raw)
+    except ValidationError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="photo_roles is not a valid list of roles."
+        ) from None
+    if len(roles) != photo_count:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="photo_roles needs exactly one entry per photo."
+        )
+    if any(r.lot_id and r.lot_id not in active_lot_ids for r in roles):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="A photo role names a lot that is not active in this zone."
+        )
+    if any(r.followup_id and (r.role != "seguimiento" or r.followup_id not in open_followup_ids) for r in roles):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A follow-up photo must have role 'seguimiento' and name an open follow-up of this zone.",
+        )
+    return roles
 
 
 @router.post(
     "/zone-tracking",
     response_model=UploadImageResponse,
-    summary="Daily tracking of a zone (1-4 photos)",
-    description="Upload 1-4 photos of a cajón / cantero / invernadero / hidroponía and create one periodic report "
+    summary="Daily tracking of a zone (1-3 photos)",
+    description="Upload 1-3 photos of a cajón / cantero / invernadero / hidroponía and create one periodic report "
     "covering every active crop of the zone. It is analyzed in the background (poll GET /reports/{report_id}).",
 )
 @inject
 async def upload_zone_tracking(
     background_tasks: BackgroundTasks,
     zone_id: UUID = Form(...),
-    image_files: List[UploadFile] = File(..., description="1-4 photos of the zone"),
+    image_files: List[UploadFile] = File(..., description="1-3 photos of the zone"),
     notes: Optional[str] = Form(None, max_length=2000, description="The user's own observations, if any"),
     reason: Optional[str] = Form(None, max_length=500, description='Why the photo was taken ("motivo")'),
+    photo_roles: Optional[str] = Form(
+        None,
+        description='JSON list, one per photo: {"role": "general"|"detalle"|"seguimiento", "lot_id"?, "hint"?, '
+        '"followup_id"?}',
+    ),
+    replaces_report_id: Optional[UUID] = Form(
+        None, description="The zone done again: that earlier tracking report is discarded, with what it left"
+    ),
     actor: Actor = Depends(get_actor),
     farm_service=Depends(Provide["application.farm_service"]),
     storage_service=Depends(Provide["application.storage_service"]),
     reports_service=Depends(Provide["application.reports_service"]),
     diagnosis_service=Depends(Provide["agent.diagnosis_service"]),
+    followup_service=Depends(Provide["application.followup_service"]),
+    discard=Depends(Provide["application.report_discard_service"]),
 ):
     if not 1 <= len(image_files) <= MAX_ZONE_PHOTOS:
         raise HTTPException(
@@ -191,6 +230,16 @@ async def upload_zone_tracking(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"{zone.label} has no active lots to track. Assign its crops to the zone first.",
         )
+    open_followups = (
+        await followup_service.list_followups(actor, zone_id=zone.id, status="abierto") if photo_roles else []
+    )
+    if replaces_report_id:
+        replaced = await reports_service.deletable(actor, replaces_report_id)
+        if replaced.zone_id != zone.id or replaced.report_type != "periodic":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="It can only replace a tracking report of this zone."
+            )
+    roles = parse_photo_roles(photo_roles, len(image_files), {c.id for c in cycles}, {f.id for f in open_followups})
     photos = [await receive_photo(f) for f in image_files]  # validate all before storing any
     identifiers = [
         await storage_service.save_image(actor, stored_name(f.filename), data, "image/jpeg")
@@ -204,12 +253,15 @@ async def upload_zone_tracking(
             field_id=zone.field_id,
             zone_id=zone.id,
             lot_ids=[c.id for c in cycles],
+            photo_roles=roles,
             report_type="periodic",
             notes=(notes or "").strip() or None,
             reason=(reason or "").strip() or None,
         ),
     )
     logger.info(f"{len(identifiers)} zone photo(s) uploaded for zone {zone.id}, account {actor.account_id}")
+    if replaces_report_id:  # once the new one is safely stored, and before it is analyzed against the old one
+        await discard.discard(actor, replaces_report_id)
     background_tasks.add_task(analyze_in_background, diagnosis_service, actor, report.id)
     return UploadImageResponse(
         report_id=report.id,
