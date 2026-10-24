@@ -1,7 +1,7 @@
 """report photo roles: what each zone-tracking photo shows
 
 Revision ID: a1c2e3f4b5d6
-Revises: d3e4f5a6b7c8
+Revises: e4f5a6b7c8d9
 Create Date: 2026-10-24 12:00:00
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = 'a1c2e3f4b5d6'
-down_revision: Union[str, None] = 'd3e4f5a6b7c8'
+down_revision: Union[str, None] = 'e4f5a6b7c8d9'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
