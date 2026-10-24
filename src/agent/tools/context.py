@@ -72,7 +72,8 @@ class TurnContext:
     conversation_id: UUID
     tz: ZoneInfo
     default_field_id: Optional[UUID] = None
-    image_identifier: Optional[str] = None
+    image_identifier: Optional[str] = None  # the first photo of the turn (tools that take one)
+    image_identifiers: list[str] = field(default_factory=list)  # every photo of the turn
     audio_identifier: Optional[str] = None  # the voice message of this turn, kept as evidence
     sources: list[dict] = field(default_factory=list)
     attachments: list[dict] = field(default_factory=list)

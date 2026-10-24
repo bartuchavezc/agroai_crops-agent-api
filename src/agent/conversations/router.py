@@ -34,10 +34,16 @@ class ChatContext(BaseModel):
     report_id: Optional[UUID] = None
 
 
+MAX_PHOTOS = 4
+
+
 class ChatRequest(BaseModel):
     message: str = Field("", max_length=4000, description="May be empty when an audio carries the message")
     conversation_id: Optional[UUID] = None
-    image_identifier: Optional[str] = Field(None, description="From POST /upload/image")
+    image_identifier: Optional[str] = Field(None, description="From POST /upload/image (one photo)")
+    image_identifiers: list[str] = Field(
+        default_factory=list, max_length=4, description="Up to 4 photos from POST /upload/image, sent together"
+    )
     audio_identifier: Optional[str] = Field(
         None, description="From POST /upload/audio: transcribed into the message and kept as evidence"
     )
@@ -46,10 +52,14 @@ class ChatRequest(BaseModel):
         None, description="Resend this failed user message (the last one of the conversation) instead of `message`"
     )
 
+    def photos(self) -> list[str]:
+        first = [self.image_identifier] if self.image_identifier else []
+        return list(dict.fromkeys([*first, *self.image_identifiers]))[:MAX_PHOTOS]
+
     @model_validator(mode="after")
     def _something_to_say(self):
-        if not (self.message.strip() or self.audio_identifier or self.retry_message_id):
-            raise ValueError("Send a message, an audio or a retry_message_id.")
+        if not (self.message.strip() or self.audio_identifier or self.retry_message_id or self.photos()):
+            raise ValueError("Send a message, photos, an audio or a retry_message_id.")
         return self
 
 
@@ -62,7 +72,7 @@ async def chat(body: ChatRequest, actor: Actor = Depends(get_actor), runner: Age
         body.message,
         conversation_id=body.conversation_id,
         field_id=body.context.field_id,
-        image_identifier=body.image_identifier,
+        image_identifiers=body.photos(),
         audio_identifier=body.audio_identifier,
         report_id=body.context.report_id,
         retry_message_id=body.retry_message_id,
@@ -83,7 +93,7 @@ async def chat_stream(body: ChatRequest, actor: Actor = Depends(get_actor), runn
         body.message,
         conversation_id=body.conversation_id,
         field_id=body.context.field_id,
-        image_identifier=body.image_identifier,
+        image_identifiers=body.photos(),
         audio_identifier=body.audio_identifier,
         report_id=body.context.report_id,
         retry_message_id=body.retry_message_id,
