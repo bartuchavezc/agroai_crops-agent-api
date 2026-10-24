@@ -17,10 +17,10 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 # What a close-up should show, by where the lot is in its cycle.
 _DETAIL_HINTS = {
     "planned": "el sustrato o los almácigos donde se va a sembrar",
-    "seedbed": "los plantines: hojas nuevas y color",
+    "seedbed": "los plantines, hojas nuevas y color",
     "planted": "los brotes y las hojas nuevas",
-    "growing": "los brotes y las hojas nuevas, de cerca",
-    "harvesting": "lo que se cosecha (frutos, hojas o raíces), de cerca",
+    "growing": "los brotes y las hojas nuevas",
+    "harvesting": "lo que se cosecha (frutos, hojas o raíces)",
 }
 
 
@@ -51,8 +51,8 @@ def zone_capture(
         followed = {lot_id for f in taken for lot_id in f.lot_ids}
         lot = next((lot for lot in lots if lot.id not in followed), lots[0])
         what = _DETAIL_HINTS.get(lot.status, "los brotes y las hojas nuevas")
-        steps.append(CaptureStep(role="detalle", required=False, hint=f"Acercate al {lot.crop_name}: {what}",
-                                 lot_id=lot.id))
+        hint = f"Primer plano de {lot.crop_name.lower()}: {what}"
+        steps.append(CaptureStep(role="detalle", required=False, hint=hint, lot_id=lot.id))
     return CaptureZone(
         zone_id=zone.id, label=zone.label, crops=crops, steps=steps, deferred_followups=len(queued) - len(taken)
     )

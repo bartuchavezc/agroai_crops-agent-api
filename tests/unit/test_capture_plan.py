@@ -32,7 +32,8 @@ def test_a_zone_without_followups_asks_for_a_general_shot_and_a_close_up():
     plan = zone_capture(zone, [tomato, _lot(zone, "Lechuga")], [])
     assert [(s.role, s.required) for s in plan.steps] == [("general", True), ("detalle", False)]
     assert "Tomate, Lechuga" in plan.steps[0].hint
-    assert plan.steps[1].lot_id == tomato.id and "Tomate" in plan.steps[1].hint
+    assert plan.steps[1].lot_id == tomato.id
+    assert plan.steps[1].hint == "Primer plano de tomate: los brotes y las hojas nuevas"
 
 
 def test_followups_take_the_slots_most_severe_and_longest_without_a_photo_first():
