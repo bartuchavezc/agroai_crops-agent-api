@@ -1,6 +1,6 @@
 """
 Zones (cajón / cantero / invernadero / hidroponía): numbered per field, crops/events belong to them, and the
-daily tracking report is taken per zone from 1-4 photos and assesses every active crop of the zone.
+daily tracking report is taken per zone from 1-3 photos and assesses every active crop of the zone.
 """
 import base64
 from unittest.mock import AsyncMock, patch
@@ -278,7 +278,7 @@ async def test_zone_retry_via_analyze_endpoint_is_backgrounded(client, signup, c
     assert report["status"] == "ANALYSIS_COMPLETED"
 
 
-async def test_zone_tracking_needs_active_crops_and_1_to_4_photos(client, signup):
+async def test_zone_tracking_needs_active_crops_and_1_to_3_photos(client, signup):
     user = await signup("zone-tracking-bad")
     h = user["headers"]
     field = await _field(client, h)
@@ -290,9 +290,75 @@ async def test_zone_tracking_needs_active_crops_and_1_to_4_photos(client, signup
 
     await _cycle(client, h, field["id"], "tomate", zone_id=zone["id"])
     too_many = await client.post(
-        "/api/v1/upload/zone-tracking", headers=h, data={"zone_id": zone["id"]}, files=[photo] * 5
+        "/api/v1/upload/zone-tracking", headers=h, data={"zone_id": zone["id"]}, files=[photo] * 4
     )
     assert too_many.status_code == 400
+
+
+async def test_zone_tracking_photo_roles_route_each_photo_to_the_passes_that_need_it(client, signup, container):
+    import json
+
+    user = await signup("zone-photo-roles")
+    h = user["headers"]
+    field = await _field(client, h)
+    zone = (await client.post(f"{FARM}/fields/{field['id']}/zones", headers=h, json={"type": "cajon"})).json()
+    tomato = await _cycle(client, h, field["id"], "tomate", zone_id=zone["id"])
+    lettuce = await _cycle(client, h, field["id"], "lechuga", zone_id=zone["id"])
+    other = await _cycle(client, h, field["id"], "acelga")  # same field, not in the zone
+    photos = [("image_files", (f"{n}.png", _TINY_PNG, "image/png")) for n in "abc"]
+    roles = [
+        {"role": "general"},
+        {"role": "detalle", "lot_id": tomato["id"], "hint": "brotes nuevos"},
+        {"role": "seguimiento", "lot_id": lettuce["id"]},
+    ]
+
+    async def _upload(photo_roles, files=photos):
+        return await client.post(
+            "/api/v1/upload/zone-tracking", headers=h, data={"zone_id": zone["id"], "photo_roles": photo_roles},
+            files=files,
+        )
+
+    assert (await _upload(json.dumps(roles[:2]))).status_code == 400  # one role per photo
+    assert (await _upload(json.dumps([*roles[:2], {"role": "otra"}]))).status_code == 400
+    assert (await _upload(json.dumps([*roles[:2], {"role": "detalle", "lot_id": other["id"]}]))).status_code == 400
+
+    gateway = container.agent.gemini()
+
+    def _respond(_user_id, *, contents, schema, **_kwargs):
+        if schema is ZoneOverviewResult:
+            return _overview_result()
+        if schema is ZoneSynthesisResult:
+            return _synthesis_result()
+        return _group_result([(tomato, "Tomate")] if tomato["id"] in contents[-1] else [(lettuce, "Lechuga")])
+
+    fake = AsyncMock(side_effect=_respond)
+    with patch.object(gateway, "generate_structured", fake):
+        up = await _upload(json.dumps(roles))
+    assert up.status_code == 200, up.text
+    report = (await client.get(f"/api/v1/reports/{up.json()['report_id']}", headers=h)).json()
+    assert report["status"] == "ANALYSIS_COMPLETED"
+    assert [r["role"] for r in report["photo_roles"]] == ["general", "detalle", "seguimiento"]
+    assert report["photo_roles"][1] == {"role": "detalle", "lot_id": tomato["id"], "hint": "brotes nuevos"}
+
+    def _images(call):
+        return [p for p in call.kwargs["contents"] if not isinstance(p, str)]
+
+    def _labels(call):
+        return [p for p in call.kwargs["contents"][:-1] if isinstance(p, str)]
+
+    calls = fake.call_args_list
+    overview = next(c for c in calls if c.kwargs["schema"] is ZoneOverviewResult)
+    groups = [c for c in calls if c.kwargs["schema"] is ZoneGroupAssessment]
+    tomato_call = next(c for c in groups if tomato["id"] in c.kwargs["contents"][-1])
+    lettuce_call = next(c for c in groups if lettuce["id"] in c.kwargs["contents"][-1])
+
+    # 5 images in all instead of 9 (3 photos x 3 calls): the overview only the general shot, each group
+    # the general shot and its own close-up, each labeled.
+    assert len(_images(overview)) == 1 and _labels(overview) == ["Foto 1: vista general de la zona."]
+    assert len(_images(tomato_call)) == 2 and len(_images(lettuce_call)) == 2
+    assert any("Foto 2: primer plano de Tomate" in label and "brotes nuevos" in label for label in _labels(tomato_call))
+    assert not any("Foto 3" in label for label in _labels(tomato_call))
+    assert any("Foto 3: foto de seguimiento" in label for label in _labels(lettuce_call))
 
 
 async def test_agent_creates_zone_and_plants_in_it(client, signup, with_key, scripted_model):  # noqa: F811

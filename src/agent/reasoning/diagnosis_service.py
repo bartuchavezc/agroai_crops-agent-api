@@ -4,7 +4,7 @@ Two report types share this service:
 - "diagnosis": disease/pest/nutrition focused, single photo, no cycle history (DiagnosisResult).
 - "periodic": routine tracking (health/growth/stress/harvest/objectives/risks), grounded in the crop
   cycle's timeline and event log (PeriodicReportResult). A periodic report of a zone (cajón, cantero,
-  invernadero, hidroponía) covers every active crop of the zone at once, from 1-4 photos
+  invernadero, hidroponía) covers every active crop of the zone at once, from 1-3 photos
   (ZonePeriodicReportResult, stored as llm_structured_zone).
 """
 import asyncio
@@ -54,6 +54,7 @@ from .periodic_report import (
     format_event_history,
 )
 from .zone_grouping import CropGroup, group_cycles, merge_zone_result
+from .zone_photos import group_parts, overview_parts, photo_count, zone_photos
 from .zone_task_loop import ZoneTask, run_zone_tasks
 
 logger = logging.getLogger(__name__)
@@ -506,11 +507,12 @@ class DiagnosisService:
         self, actor: Actor, parts: list, zone_lines: list[str], cycle_pairs: list[tuple[str, str]],
         notes_lines: list[str], usage_sink: Optional[TurnUsage] = None,
     ) -> ZoneOverviewResult:
-        """The only pass that sees every photo without being narrowed to one crop group — no fichas, cheap."""
+        """The whole-zone read, not narrowed to one crop group — no fichas, cheap. `parts` are the general shots
+        (every photo when the report has no photo roles: see zone_photos.py)."""
         registered = ", ".join(dict.fromkeys(name for _, name in cycle_pairs)) or "(ninguno)"
         lines = [*zone_lines, f"Cultivos registrados en esta zona: {registered}", *notes_lines]
         prompt = (
-            f"Mirá las {len(parts)} foto/s de la zona completa y dame una lectura visual de conjunto.\n\n"
+            f"Mirá las {photo_count(parts)} foto/s de la zona completa y dame una lectura visual de conjunto.\n\n"
             "Contexto:\n" + "\n".join(f"- {line}" for line in lines)
         )
         return await self.gemini.generate_structured(
@@ -618,6 +620,9 @@ class DiagnosisService:
         loaded_by_task: dict[str, list[str]] = {}
         usage = TurnUsage()
 
+        crop_by_cycle = dict(cycle_pairs)
+        photos = zone_photos(parts, report.photo_roles)
+
         tasks: list[ZoneTask] = [ZoneTask(id="overview", kind="overview")]
         tasks += [ZoneTask(id=f"group:{g.id}", kind="group", payload={"group": g}) for g in groups]
         tasks.append(ZoneTask(id="synthesis", kind="synthesis"))
@@ -630,12 +635,13 @@ class DiagnosisService:
         async def execute(task: ZoneTask):
             if task.kind == "overview":
                 return await self._zone_overview_pass(
-                    actor, parts, zone_lines, cycle_pairs, notes_lines, usage_sink=usage
+                    actor, overview_parts(photos, crop_by_cycle), zone_lines, cycle_pairs, notes_lines, usage_sink=usage
                 )
             if task.kind in ("group", "recheck"):
+                group = task.payload["group"]
                 result, loaded = await self._zone_group_pass(
-                    actor, parts, task.payload["group"], cycle_lines, zone_lines, field_data_lines, knowledge,
-                    notes_lines, recheck=task.kind == "recheck", usage_sink=usage,
+                    actor, group_parts(photos, group.cycle_ids, crop_by_cycle), group, cycle_lines, zone_lines,
+                    field_data_lines, knowledge, notes_lines, recheck=task.kind == "recheck", usage_sink=usage,
                 )
                 loaded_by_task[task.id] = loaded
                 return result
