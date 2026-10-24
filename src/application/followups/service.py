@@ -19,7 +19,8 @@ from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
 from src.shared.utils.errors import InvalidInputError, NotFoundError, PermissionDeniedError
 
-from .schemas import FollowUpClose, FollowUpCreate, FollowUpDetail, FollowUpRead, FollowUpUpdate
+from .capture_plan import capture_plan
+from .schemas import CapturePlan, FollowUpClose, FollowUpCreate, FollowUpDetail, FollowUpRead, FollowUpUpdate
 
 # `data.followup_action` of the entries a follow-up writes: what each one was in its life.
 OPENED, EVALUATED, RESOLVED, DISMISSED = "opened", "evaluated", "resolved", "dismissed"
@@ -191,3 +192,13 @@ class FollowUpService:
             row.status, row.closed_at = data.status, utcnow()
             await session.commit()
         return await self.get(actor, followup_id)
+
+    # ---------- guided walk ----------
+
+    async def capture_plan(self, actor: Actor, field_id: UUID) -> CapturePlan:
+        """What a guided walk of this field asks for, zone by zone (see capture_plan.py)."""
+        zones = await self.farm.list_zones(actor, field_id)
+        overview = next((o for o in await self.farm.overview(actor) if o.field.id == field_id), None)
+        lots = overview.active_lots if overview else []
+        followups = await self.list_followups(actor, field_id=field_id, status="abierto")
+        return capture_plan(field_id, zones, lots, followups)

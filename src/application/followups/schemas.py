@@ -70,3 +70,38 @@ class FollowUpRead(BaseModel):
 
 class FollowUpDetail(FollowUpRead):
     events: list[FieldEventRead] = Field(default_factory=list, description="Its bitácora entries, newest first")
+
+
+# ---------- capture plan: what a guided walk asks for, zone by zone ----------
+
+class CaptureStep(BaseModel):
+    role: Literal["general", "detalle", "seguimiento"]
+    required: bool
+    hint: str = Field(description="What to frame, said to the person")
+    lot_id: Optional[UUID] = None
+    followup_id: Optional[UUID] = None
+    title: Optional[str] = Field(default=None, description="The follow-up's problem")
+    severity: Optional[Severity] = None
+    since: Optional[datetime] = Field(default=None, description="When the follow-up was opened")
+    previous_photo: Optional[str] = Field(default=None, description="Its last photo, to frame the new one alike")
+    previous_at: Optional[datetime] = None
+
+
+class CaptureCrop(BaseModel):
+    lot_id: UUID
+    name: str
+    status: str
+
+
+class CaptureZone(BaseModel):
+    zone_id: UUID
+    label: str
+    crops: list[CaptureCrop]
+    steps: list[CaptureStep] = Field(description="At most `CapturePlan.max_photos`, in order")
+    deferred_followups: int = Field(0, description="Open follow-ups that didn't fit this time (next walk first)")
+
+
+class CapturePlan(BaseModel):
+    field_id: UUID
+    max_photos: int
+    zones: list[CaptureZone] = Field(description="The zones with active crops, in walking order")

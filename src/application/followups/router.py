@@ -7,7 +7,15 @@ from fastapi import APIRouter, Depends, status
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 
-from .schemas import FollowUpClose, FollowUpCreate, FollowUpDetail, FollowUpRead, FollowUpStatus, FollowUpUpdate
+from .schemas import (
+    CapturePlan,
+    FollowUpClose,
+    FollowUpCreate,
+    FollowUpDetail,
+    FollowUpRead,
+    FollowUpStatus,
+    FollowUpUpdate,
+)
 from .service import FollowUpService
 
 router = APIRouter(prefix="/farm-management", tags=["Follow-ups"])
@@ -65,3 +73,14 @@ async def close_followup(
     followups: FollowUpService = Depends(FOLLOWUPS),
 ):
     return await followups.close(actor, followup_id, body)
+
+
+@router.get(
+    "/fields/{field_id}/capture-plan", response_model=CapturePlan,
+    summary="Guided walk: which photos to take in each zone (general, open follow-ups, a close-up)",
+)
+@inject
+async def capture_plan(
+    field_id: UUID, actor: Actor = Depends(get_actor), followups: FollowUpService = Depends(FOLLOWUPS)
+):
+    return await followups.capture_plan(actor, field_id)

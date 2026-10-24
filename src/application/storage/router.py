@@ -11,7 +11,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from src.agent.reasoning.diagnosis_service import analyze_in_background
 from src.application.farm.models import ACTIVE_LOT_STATUSES
-from src.application.reports.schemas import PhotoRole, ReportCreate
+from src.application.reports.schemas import MAX_ZONE_PHOTOS, PhotoRole, ReportCreate
 from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 from src.shared.utils import get_logger
@@ -154,7 +154,6 @@ async def upload_crop_image(
     )
 
 
-MAX_ZONE_PHOTOS = 3
 _PHOTO_ROLES = TypeAdapter(List[PhotoRole])
 
 

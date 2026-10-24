@@ -237,3 +237,29 @@ async def test_a_followup_photo_must_name_an_open_followup_of_the_zone(client, s
             files=[("image_files", ("a.png", _TINY_PNG, "image/png"))],
         )
         assert bad.status_code == 400
+
+
+async def test_capture_plan_of_a_field(client, signup):
+    user = await signup("capture-plan")
+    h = user["headers"]
+    field = await _field(client, h)
+    first, empty = await _zone(client, h, field["id"], "cajon"), await _zone(client, h, field["id"], "cajon")
+    tomato = await _cycle(client, h, field["id"], "tomate", zone_id=first["id"])
+    aphids = (await client.post(f"{FARM}/followups", headers=h, json={
+        "field_id": field["id"], "lot_ids": [tomato["id"]], "title": "Pulgón en tomate", "severity": "high",
+        "photo_hint": "envés de las hojas", "evidence": [{"kind": "photo", "identifier": "a1.jpg"}],
+    })).json()
+
+    plan = await client.get(f"{FARM}/fields/{field['id']}/capture-plan", headers=h)
+    assert plan.status_code == 200, plan.text
+    plan = plan.json()
+    assert plan["max_photos"] == 3 and [z["label"] for z in plan["zones"]] == ["Cajón 1"]  # Cajón 2 has no crops
+    assert empty["id"] not in {z["zone_id"] for z in plan["zones"]}
+    general, followup, detail = plan["zones"][0]["steps"]
+    assert general["role"] == "general" and detail["role"] == "detalle"
+    assert followup["followup_id"] == aphids["id"] and followup["previous_photo"] == "a1.jpg"
+    assert followup["hint"] == "envés de las hojas" and followup["lot_id"] == tomato["id"]
+
+    stranger = await signup("capture-plan-stranger")
+    assert (await client.get(f"{FARM}/fields/{field['id']}/capture-plan", headers=stranger["headers"])).status_code \
+        in (403, 404)

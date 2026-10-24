@@ -5,6 +5,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 ReportType = Literal["diagnosis", "periodic", "soil"]
+# Photos per zone-tracking upload: every one goes into several model calls, so a guided walk plans this many.
+MAX_ZONE_PHOTOS = 3
 PhotoRoleName = Literal["general", "detalle", "seguimiento"]
 
 
