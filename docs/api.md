@@ -226,3 +226,46 @@ nombres de cultivo salen en el idioma de la persona. Los textos ya guardados no 
 `/chat` acepta hasta 4 fotos juntas en `image_identifiers` (`image_identifier` sigue valiendo para una). Los mensajes de
 chat traen `image_identifiers`, `audio_identifier` y `origin` (`turn`, `note`, `nudge`). Las notificaciones suman los tipos
 `digest`, `nudge` y `application` y la entidad `conversation`; las de cada entrada de la bitácora no van al teléfono.
+
+## Red Km 0: el mercado (`/market`)
+
+Los huerteros de la red venden a cocinas cercanas (restaurantes, verdulerías, hoteles). Las tablas viven en su propio
+schema de Postgres, `market`. **Nada sembrado se publica solo**: el productor publica un lote a propósito y la
+publicación sigue a su lote — un lote `planned` no se puede publicar; uno `failed`, `harvested` o borrado deja de
+venderse (`on_sale: false` con `hidden_reason`); una carencia vigente (`harvest_blocked_until`) no la oculta pero corre su
+fecha al día siguiente y la vuelve preventa. Los compradores **no tienen cuenta**: el pedido lleva nombre y email, y
+devuelve una vez un `token` que, con el `code`, permite seguirlo. El pedido se divide por productor (`order part`).
+
+Planes del productor: Free (20 % de comisión) o Pro (8 % + suscripción mensual; con ventas del mes sobre el umbral, la
+cuota del mes siguiente va a mitad). La comisión se fija al hacerse el pedido. Logística consolidada con costo fijo,
+bonificada desde un subtotal. Todo configurable en `market` (`MARKET_*`).
+
+Públicos (sin token):
+
+| Método | Ruta | Notas |
+|---|---|---|
+| GET | `/market/public/catalog?lat=&lng=&radius_km=` | `producers` (punto aproximado a ~500 m, `distance_km`, `sealed`, `traceability_pct`: lotes publicados con algo en la bitácora en los últimos 14 días), `listings` (`availability` `now`\|`from`\|`presale`; `stock_kg` solo en `now`), `delivery` (próxima entrega consolidada), `currency`, `logistics_fee`, `free_logistics_from` |
+| POST | `/market/public/orders` | `{buyer: {name, email, phone?, kind, address}, items: [{listing_id, kg}], recurring}` → `201` con `code`, `token`, partes y totales. `now` descuenta stock; una preventa reserva contra la capacidad semanal y corre la entrega a la primera fecha disponible. Todo o nada: `400` si algo dejó de estar disponible o falta stock. Notifica a cada productor (`type: market_order`) |
+| GET | `/market/public/orders/{code}?token=` | Estado para el comprador: `recibido`, `en_preparacion`, `en_camino`, `entregado`, `cancelado`. Las partes rechazadas no suman al total |
+
+Productor (bearer):
+
+| Método | Ruta | Permisos |
+|---|---|---|
+| GET / PUT | `/market/me` | El perfil de venta (`null` si todavía no vende). PUT `{field_id, display_name, barrio?}`: el campo necesita coordenadas. owner/tecnico |
+| PUT | `/market/me/plan` | `{plan: free\|pro}`. Solo owner |
+| GET | `/market/dashboard` | Ventas concretadas del mes, a cobrar el viernes, pedidos activos, kg y cajones, el retiro del día (o el próximo), filas de ventas y `plan_month` (comisión, suscripción, neto y cuánto costaría el otro plan) |
+| GET | `/market/lots` | Lotes de la cuenta con `publishable` y `listed` |
+| GET / POST | `/market/listings` | POST `{lot_id, title?, category, price_per_kg?, weekly_capacity_kg, weeks, stock_kg, available_from?}`: título, precio y fecha salen del lote si faltan. owner/tecnico |
+| PUT / DELETE | `/market/listings/{id}` | Cualquier rol actualiza `stock_kg`; lo demás (precio, `status: paused`) owner/tecnico. DELETE la cierra |
+| GET | `/market/orders?scope=active\|done` | Cada parte con `items`, `boxes` (cajones de 5 kg con su código de etiqueta y `packed`), bruto, comisión y neto |
+| POST | `/market/orders/{id}/accept` \| `/reject` `{reason}` | owner/tecnico. Rechazar devuelve el stock |
+| PUT | `/market/orders/{id}/packed` | `{packed: [códigos]}`: cualquier rol |
+| POST | `/market/orders/{id}/ready` | Con todos los cajones armados → `listo` |
+
+Operadores de la red (`PLATFORM_ADMIN_EMAILS`, 404 para el resto): `GET /market/admin/producers`,
+`PUT /market/admin/producers/{id}/seal {seal_until}`, `GET|POST /market/admin/routes` (`{route_date, name, driver_name,
+hub_name?, hub_eta?, deliveries_from?, stops: [{producer_id, eta}]}`) y `POST /market/admin/order-parts/{id}/deliver`
+(retirado y entregado: cuenta como venta y marca la parada).
+
+El front público del mercado (`agroai_market_km0`) necesita su origen en `CORS_ORIGINS`.

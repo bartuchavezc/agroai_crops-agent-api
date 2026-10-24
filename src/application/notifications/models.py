@@ -8,8 +8,9 @@ from src.shared.domain.base import utcnow
 
 NOTIFICATION_TYPES = (
     "report_diagnosis", "report_periodic", "report_soil", "event", "reminder", "digest", "nudge", "application",
+    "market_order",
 )
-ENTITY_TYPES = ("report", "event", "reminder", "digest", "conversation", "application")
+ENTITY_TYPES = ("report", "event", "reminder", "digest", "conversation", "application", "market_order")
 
 
 class NotificationModel(Base):

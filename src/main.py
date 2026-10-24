@@ -25,6 +25,7 @@ from src.application.followups.router import router as followups_router
 from src.application.inventory.router import router as inventory_router
 from src.application.irrigation.router import router as irrigation_router
 from src.application.management.router import router as management_router
+from src.application.market.router import router as market_router
 from src.application.planning.router import router as planning_router
 from src.application.proactive.router import router as proactive_router
 from src.application.notifications.router import router as notifications_router
@@ -68,6 +69,7 @@ ROUTERS = [
     supplies_router,
     proactive_router,
     satellite_router,
+    market_router,
     admin_router,
 ]
 WIRED_MODULES = [
@@ -94,6 +96,7 @@ WIRED_MODULES = [
     "src.application.supplies.router",
     "src.application.proactive.router",
     "src.application.satellite.router",
+    "src.application.market.router",
     "src.admin.router",
 ]
 

@@ -18,6 +18,7 @@ from .inventory.service import InventoryService
 from .irrigation.service import EvapotranspirationService
 from .management.repository import ManagementRepository
 from .management.service import ManagementService
+from .market.service import MarketService
 from .notifications.service import NotificationService
 from .followups.service import FollowUpService
 from .reports.discard import ReportDiscardService
@@ -207,4 +208,9 @@ class ApplicationContainer(containers.DeclarativeContainer):
         storage_service=storage_service,
         alert_service=alert_service,
         rules_engine=rules_engine,
+    )
+
+    market_service = providers.Singleton(
+        MarketService, session_factory=db_session_factory, farm_service=farm_service,
+        notification_service=notification_service, config=config.market, timezone_name=config.app.timezone,
     )

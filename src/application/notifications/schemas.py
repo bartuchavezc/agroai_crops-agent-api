@@ -6,8 +6,9 @@ from pydantic import BaseModel, Field
 
 NotificationType = Literal[
     "report_diagnosis", "report_periodic", "report_soil", "event", "reminder", "digest", "nudge", "application",
+    "market_order",
 ]
-EntityType = Literal["report", "event", "reminder", "digest", "conversation", "application"]
+EntityType = Literal["report", "event", "reminder", "digest", "conversation", "application", "market_order"]
 
 
 class Notification(BaseModel):

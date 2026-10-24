@@ -130,6 +130,22 @@ DEFAULT_CONFIG = {
         "weekly_digest_weekday": 6,  # Sunday (Monday = 0)
         "nudge_windows": ["08:00", "17:30"],  # local times the assistant weighs whether to say something
     },
+    "market": {
+        # Red Km 0 (src/application/market). Money is in the network's currency; the producer keeps the rest.
+        "currency": "ARS",
+        "free_fee_rate": 0.20,
+        "pro_fee_rate": 0.08,
+        "pro_subscription": 15.0,  # a month
+        "pro_bonus_threshold": 200.0,  # a month's sales past this halve next month's subscription
+        "logistics_fee": 9.0,  # an order's consolidated delivery, free from free_logistics_from
+        "free_logistics_from": 200.0,
+        "delivery_weekday": 3,  # Thursday (Monday = 0): the consolidated delivery
+        "delivery_window": "7 a 9 h",
+        "cutoff_days": 1,  # an order needs this many days before its delivery
+        "pickup_days_before": 1,  # the producers' pickup, before the delivery
+        "settlement_weekday": 4,  # Friday: producers get paid
+        "public_point_grid": 0.005,  # degrees (~500 m): farms are shown on this grid, not at their exact place
+    },
 }
 
 
@@ -239,6 +255,11 @@ def _apply_env_overrides(config: dict) -> None:
     satellite["min_valid_fraction"] = float(env("SATELLITE_MIN_VALID_FRACTION", satellite["min_valid_fraction"]))
     satellite["s1_enabled"] = _env_bool("SATELLITE_S1_ENABLED", satellite["s1_enabled"])
     satellite["s1_orbit_direction"] = env("SATELLITE_S1_ORBIT_DIRECTION", satellite["s1_orbit_direction"]).upper()
+
+    market = config["market"]
+    market["currency"] = env("MARKET_CURRENCY", market["currency"])
+    for key in ("free_fee_rate", "pro_fee_rate", "pro_subscription", "logistics_fee", "free_logistics_from"):
+        market[key] = float(env(f"MARKET_{key.upper()}", market[key]))
 
     proactive = config["proactive"]
     proactive["vapid_public_key"] = env("VAPID_PUBLIC_KEY", proactive["vapid_public_key"])

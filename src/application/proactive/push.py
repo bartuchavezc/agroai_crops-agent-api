@@ -214,6 +214,6 @@ class PushService:
         paths = {
             "conversation": f"/chat?c={entity_id}", "digest": f"/resumenes?d={entity_id}",
             "report": f"/reportes/{entity_id}", "event": f"/eventos/{entity_id}", "reminder": "/recordatorios",
-            "application": f"/aplicaciones/{entity_id}",
+            "application": f"/aplicaciones/{entity_id}", "market_order": f"/mercado?pedido={entity_id}",
         }
         return f"{self.base_url}{paths.get(entity_type, '/inicio')}"
