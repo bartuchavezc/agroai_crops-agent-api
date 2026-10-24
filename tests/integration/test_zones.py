@@ -338,7 +338,9 @@ async def test_zone_tracking_photo_roles_route_each_photo_to_the_passes_that_nee
     report = (await client.get(f"/api/v1/reports/{up.json()['report_id']}", headers=h)).json()
     assert report["status"] == "ANALYSIS_COMPLETED"
     assert [r["role"] for r in report["photo_roles"]] == ["general", "detalle", "seguimiento"]
-    assert report["photo_roles"][1] == {"role": "detalle", "lot_id": tomato["id"], "hint": "brotes nuevos"}
+    assert report["photo_roles"][1] == {
+        "role": "detalle", "lot_id": tomato["id"], "hint": "brotes nuevos", "followup_id": None,
+    }
 
     def _images(call):
         return [p for p in call.kwargs["contents"] if not isinstance(p, str)]

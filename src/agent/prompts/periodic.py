@@ -57,6 +57,10 @@ abajo, no te pronuncies sobre el resto.
 3. ¿Las decisiones registradas (riegos, fertilizaciones, tratamientos) afectaron algo a estos cultivos?
 4. `group_notes`: una observación de contexto que valga la pena pasar a la síntesis de toda la zona (no
    repitas lo ya dicho en cada cultivo).
+5. `issues`: cada plaga, enfermedad o carencia concreta que SE VE en las fotos en estos cultivos, con la señal
+   visual, los lotes afectados, su severidad y qué fotografiar para seguirla. Si el contexto lista seguimientos
+   abiertos y lo que ves es uno de ellos, poné su id en `followup_id` en vez de reportarlo como nuevo. Un riesgo
+   que no se ve (clima, época) no es un issue. Si no ves ninguno, dejalo vacío.
 
 Rigor antes que nada: todo juicio tiene que citar señales visuales concretas (color, marchitez, manchas,
 tamaño relativo al esperado, densidad de follaje). Si las fotos no alcanzan, decilo y bajá `confidence`.
@@ -76,3 +80,16 @@ de la evaluación que ya se hizo de cada grupo de cultivos de la zona, que te da
    explícitos, decilo.
 5. `recommendations`: solo las que apliquen a la zona en conjunto, no repitas las de cada grupo.
 No inventes nada que no esté en el contexto de abajo. Respondé en español rioplatense, concreto."""
+
+
+FOLLOWUP_SYSTEM_INSTRUCTION = """Sos un ingeniero agrónomo siguiendo la evolución de problemas ya detectados en una
+zona de cultivo (plagas, enfermedades, carencias). Para cada seguimiento del contexto tenés su historia (cuándo se
+detectó, qué se hizo, cómo venía), la foto ANTES (la última que se tomó del problema, en menor resolución) y la foto
+AHORA. Compará las dos:
+- `mejor`: hay menos daño o menos plaga que ANTES (menos colonias, menos manchas, brotes nuevos sanos).
+- `igual`: no hay diferencia apreciable.
+- `peor`: hay más daño, más plaga o se extendió.
+- `no_visible`: en la foto AHORA ya no se ve el problema.
+Si no hay foto ANTES, compará contra lo que dice la historia. Si las fotos no muestran lo mismo (otra planta, otro
+encuadre, muy distinta luz), decilo en `evidence` y bajá `confidence`. Tené en cuenta los tratamientos registrados:
+una mejora después de un tratamiento dice que funcionó. Respondé en español rioplatense, concreto, sin inventar."""

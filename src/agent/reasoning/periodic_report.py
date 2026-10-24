@@ -119,6 +119,22 @@ class ZoneOverviewResult(BaseModel):
     )
 
 
+class ZoneIssue(BaseModel):
+    """A concrete problem seen in the photos (a pest, a disease, a deficiency): what opens a follow-up."""
+
+    title: str = Field(description='Corto y concreto, problema + cultivo: "Pulgón en tomate"')
+    kind: Literal["pest", "disease", "deficiency", "other"]
+    severity: Literal["low", "medium", "high", "critical"]
+    lot_ids: list[str] = Field(default_factory=list, description="Los lot_id afectados, tal cual el contexto")
+    what_was_seen: str = Field(description="La señal visual concreta que lo muestra")
+    photo_number: Optional[int] = Field(None, description="El número de la foto donde mejor se ve, si están numeradas")
+    photo_hint: str = Field(description='Qué fotografiar para seguirlo la próxima vez: "envés de las hojas de arriba"')
+    followup_id: Optional[str] = Field(
+        None, description="Si es uno de los seguimientos abiertos listados en el contexto, su id tal cual; si es "
+        "nuevo, null"
+    )
+
+
 class ZoneGroupAssessment(BaseModel):
     """One group's worth of crops (same ficha técnica, or none), evaluated with only its own reference
     material and cycle context — not the whole zone's."""
@@ -129,8 +145,26 @@ class ZoneGroupAssessment(BaseModel):
     group_recommendations: list[str] = Field(default_factory=list, description="Para los cultivos de este grupo")
     group_notes: str = Field(description="Lo que vale la pena pasar a la síntesis de la zona: una observación "
                               "de contexto, no repitas lo ya dicho en cada cultivo")
+    issues: list[ZoneIssue] = Field(
+        default_factory=list, description="Plagas, enfermedades o carencias concretas que se VEN en las fotos"
+    )
     confidence: float = Field(ge=0, le=1)
     needs_human_expert: bool
+
+
+class FollowUpEvaluation(BaseModel):
+    followup_id: str = Field(description="El id del seguimiento tal cual el contexto")
+    evolution: Literal["mejor", "igual", "peor", "no_visible"] = Field(
+        description="AHORA comparado con ANTES; no_visible = en la foto nueva ya no se ve el problema"
+    )
+    evidence: str = Field(description="La diferencia visual concreta entre ANTES y AHORA que lo justifica")
+    confidence: float = Field(ge=0, le=1)
+
+
+class FollowUpPassResult(BaseModel):
+    """The follow-up pass: each problem being watched, its new photo against its last one."""
+
+    evaluations: list[FollowUpEvaluation] = Field(description="Una por cada seguimiento del contexto")
 
 
 class ZoneSynthesisResult(BaseModel):

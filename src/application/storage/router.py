@@ -158,7 +158,9 @@ MAX_ZONE_PHOTOS = 3
 _PHOTO_ROLES = TypeAdapter(List[PhotoRole])
 
 
-def parse_photo_roles(raw: Optional[str], photo_count: int, active_lot_ids: set[UUID]) -> List[PhotoRole]:
+def parse_photo_roles(
+    raw: Optional[str], photo_count: int, active_lot_ids: set[UUID], open_followup_ids: set[UUID] = frozenset()
+) -> List[PhotoRole]:
     """The optional `photo_roles` form field: a JSON list, one entry per photo in upload order. Absent = every
     photo is analyzed as before (each pass sees them all)."""
     if not raw:
@@ -176,6 +178,11 @@ def parse_photo_roles(raw: Optional[str], photo_count: int, active_lot_ids: set[
     if any(r.lot_id and r.lot_id not in active_lot_ids for r in roles):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="A photo role names a lot that is not active in this zone."
+        )
+    if any(r.followup_id and (r.role != "seguimiento" or r.followup_id not in open_followup_ids) for r in roles):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A follow-up photo must have role 'seguimiento' and name an open follow-up of this zone.",
         )
     return roles
 
@@ -203,6 +210,7 @@ async def upload_zone_tracking(
     storage_service=Depends(Provide["application.storage_service"]),
     reports_service=Depends(Provide["application.reports_service"]),
     diagnosis_service=Depends(Provide["agent.diagnosis_service"]),
+    followup_service=Depends(Provide["application.followup_service"]),
 ):
     if not 1 <= len(image_files) <= MAX_ZONE_PHOTOS:
         raise HTTPException(
@@ -218,7 +226,10 @@ async def upload_zone_tracking(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"{zone.label} has no active lots to track. Assign its crops to the zone first.",
         )
-    roles = parse_photo_roles(photo_roles, len(image_files), {c.id for c in cycles})
+    open_followups = (
+        await followup_service.list_followups(actor, zone_id=zone.id, status="abierto") if photo_roles else []
+    )
+    roles = parse_photo_roles(photo_roles, len(image_files), {c.id for c in cycles}, {f.id for f in open_followups})
     photos = [await receive_photo(f) for f in image_files]  # validate all before storing any
     identifiers = [
         await storage_service.save_image(actor, stored_name(f.filename), data, "image/jpeg")

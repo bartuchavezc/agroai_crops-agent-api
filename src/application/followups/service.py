@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.application.farm.models import FieldEvent, FollowUp
-from src.application.farm.schemas import FieldEventCreate, FieldEventRead
+from src.application.farm.schemas import EventEvidence, FieldEventCreate, FieldEventRead
 from src.application.farm.service import FarmService
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
@@ -144,9 +144,9 @@ class FollowUpService:
     ) -> FieldEventRead:
         """A bitácora entry about this follow-up, on its zone and lots: an `inspection` (a check-up: seen,
         evaluated, resolved). The analysis it came from, if any, is added to its evidence."""
-        evidence = list(evidence)
+        evidence = [EventEvidence.model_validate(e) for e in evidence]
         if report_id and not any(e.kind == "report" and e.identifier == str(report_id) for e in evidence):
-            evidence.append({"kind": "report", "identifier": str(report_id)})
+            evidence.append(EventEvidence(kind="report", identifier=str(report_id)))
         return await self.farm.create_event(actor, FieldEventCreate(
             field_id=followup.field_id,
             zone_id=followup.zone_id,

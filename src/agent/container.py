@@ -53,6 +53,7 @@ class AgentContainer(containers.DeclarativeContainer):
         max_image_side=config.gemini.max_image_side,
         deep_default=config.agent.analysis_deep,
         field_rules=application.field_alert_rules_service,
+        followup_service=application.followup_service,
     )
 
     tool_deps = providers.Singleton(

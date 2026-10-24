@@ -15,6 +15,7 @@ class PhotoRole(BaseModel):
     role: PhotoRoleName
     lot_id: Optional[UUID] = Field(None, description="The lot a close-up / follow-up photo is of; none = the zone")
     hint: Optional[str] = Field(None, max_length=200, description='What was asked for ("envés de las hojas")')
+    followup_id: Optional[UUID] = Field(None, description="A follow-up photo: the problem it follows")
 
 
 class ReportCreate(BaseModel):
