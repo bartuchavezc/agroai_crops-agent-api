@@ -394,8 +394,11 @@ class FarmRepository:
         limit: int = 50,
         zone_id: Optional[UUID] = None,
         before: Optional[datetime] = None,
+        followup_id: Optional[UUID] = None,
     ) -> Sequence[FieldEvent]:
         stmt = select(FieldEvent).where(FieldEvent.account_id == account_id)
+        if followup_id:
+            stmt = stmt.where(FieldEvent.followup_id == followup_id)
         if field_id:
             stmt = stmt.where(FieldEvent.field_id == field_id)
         if zone_id:

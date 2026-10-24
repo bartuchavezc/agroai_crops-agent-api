@@ -48,6 +48,12 @@ EVENT_TYPES = (
 # What happened to an entry: done, or deliberately skipped with a reason ("no regué: llovió 18 mm"). A skipped
 # entry is a fact too — without it the log can't tell "not watered" from "nobody said".
 EVENT_OUTCOMES = ("done", "skipped")
+# A follow-up (seguimiento) is a problem being watched — "pulgón en tomate" — that groups the bitácora entries about
+# it: detected, treated, better, resolved. It holds no history of its own: its timeline is those entries
+# (field_events.followup_id), each with its evidence (photos, the analysis that saw it).
+FOLLOWUP_KINDS = ("pest", "disease", "deficiency", "other")
+FOLLOWUP_STATUSES = ("abierto", "resuelto", "descartado")
+FOLLOWUP_SEVERITIES = ("low", "medium", "high", "critical")
 LOSS_CAUSES = ("no_germination", "pest", "disease", "frost", "heat", "waterlogging", "drought", "animals", "other")
 EVENT_SOURCES = ("user", "agent", "system")  # system: written by a job (rain from the weather data)
 # A zone groups the crops of a field that are grown (and tracked/photographed) together: "Cantero 3".
@@ -219,6 +225,41 @@ class FieldEvent(Base):
     source = Column(String(10), nullable=False, default="user")
     outcome = Column(String(10), nullable=False, default="done", server_default="done")
     reason = Column(Text)  # why it was skipped; a loss's cause in words
+    # The problem this entry is about (seen, treated, better...), and what backs it: [{kind, identifier, note}],
+    # kind photo / report / audio / document — e.g. the photo and the analysis that saw the pest.
+    followup_id = Column(UUID(as_uuid=True), ForeignKey("followups.id", ondelete="SET NULL"), index=True)
+    evidence = Column(JSONB, nullable=False, default=list, server_default="[]")
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class FollowUp(Base):
+    """A problem being watched in a zone or on some lots. Opened by the zone analysis (or a person) when something is
+    seen, closed by a person — the analysis only proposes it. Its history is in the bitácora (FieldEvent.followup_id).
+    """
+    __tablename__ = "followups"
+    __table_args__ = (
+        CheckConstraint(f"kind IN {FOLLOWUP_KINDS}", name="kind_valid"),
+        CheckConstraint(f"status IN {FOLLOWUP_STATUSES}", name="status_valid"),
+        CheckConstraint(f"severity IN {FOLLOWUP_SEVERITIES}", name="severity_valid"),
+        CheckConstraint(f"source IN {EVENT_SOURCES}", name="source_valid"),
+        Index("ix_followups_field_status", "field_id", "status"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), nullable=False)
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("field_zones.id", ondelete="SET NULL"))
+    lot_ids = Column(JSONB, nullable=False, default=list, server_default="[]")  # the lots affected
+    title = Column(String(255), nullable=False)  # "Pulgón en tomate"
+    kind = Column(String(20), nullable=False, default="other")
+    severity = Column(String(10), nullable=False, default="medium")
+    photo_hint = Column(Text)  # what to photograph to follow it: "envés de las hojas de arriba"
+    status = Column(String(12), nullable=False, default="abierto")
+    source = Column(String(10), nullable=False, default="user")
+    origin_report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id", ondelete="SET NULL"))
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    closed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 

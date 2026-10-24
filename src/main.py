@@ -21,6 +21,7 @@ from src.application.alerts.router import router as alerts_router
 from src.application.applications.router import router as applications_router
 from src.application.changes.router import router as changes_router
 from src.application.farm.router import router as farm_router
+from src.application.followups.router import router as followups_router
 from src.application.inventory.router import router as inventory_router
 from src.application.irrigation.router import router as irrigation_router
 from src.application.management.router import router as management_router
@@ -48,6 +49,7 @@ ROUTERS = [
     provider_credentials_router,
     layout_router,  # before farm_router: /fields/layout/extract must not be shadowed by /fields/{field_id}
     farm_router,
+    followups_router,
     reports_router,
     alerts_router,
     notifications_router,
@@ -77,6 +79,7 @@ WIRED_MODULES = [
     "src.agent.reasoning.router",
     "src.application.alerts.router",
     "src.application.farm.router",
+    "src.application.followups.router",
     "src.application.notifications.router",
     "src.application.reports.router",
     "src.application.storage.router",

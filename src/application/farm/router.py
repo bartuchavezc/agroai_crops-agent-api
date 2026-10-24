@@ -375,13 +375,14 @@ async def list_events(
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
     before: Optional[datetime] = Query(None, description="Page back in time: only events older than this instant"),
+    followup_id: Optional[UUID] = Query(None, description="Only the entries about this follow-up"),
     limit: int = Query(50, ge=1, le=500),
     actor: Actor = Depends(get_actor),
     farm: FarmService = Depends(FARM),
 ):
     return await farm.list_events(
         actor, field_id=field_id, lot_id=lot_id, event_type=type, since=since, until=until, limit=limit,
-        zone_id=zone_id, before=before,
+        zone_id=zone_id, before=before, followup_id=followup_id,
     )
 
 
