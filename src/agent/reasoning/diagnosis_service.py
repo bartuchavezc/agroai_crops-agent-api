@@ -832,6 +832,8 @@ class DiagnosisService:
         )
         result = merge_zone_result(cycle_ids, resolved_groups, overview_result, synthesis_task.result)
         research = {"references": sorted({name for names in loaded_by_task.values() for name in names}), "deep": False}
+        # Discarded while it was being analyzed (the zone done again): write nothing down for it.
+        await self.reports.get_report(actor, report.id)
         followup_task = next((t for t in tasks if t.kind == "followup" and t.status == "done"), None)
         followups_found = await self._apply_followups(
             actor, report, image_ids, cycle_ids, open_followups, followup_inputs,

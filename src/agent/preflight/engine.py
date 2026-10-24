@@ -20,7 +20,7 @@ READ_ONLY_TOOLS = frozenset({
     "get_harvest_totals", "list_active_alerts", "get_latest_periodic_report", "list_reminders",
     "get_field_soil_context", "get_field_sun_exposure", "recall_facts",
     "get_current_weather", "get_forecast", "get_recent_weather_summary", "get_solar_radiation_context",
-    "get_irrigation_recommendation", "get_zone_satellite_status", "web_search",
+    "get_irrigation_recommendation", "get_zone_satellite_status", "web_search", "list_followups", "get_followup",
 })
 # The satellite tool also runs a Gemini vision call on the map when asked for the image: not as a side trip.
 FORCED_ARGS: dict[str, dict[str, Any]] = {"get_zone_satellite_status": {"include_image": False}}

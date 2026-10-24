@@ -2,6 +2,8 @@
 Follow-ups (seguimientos): a problem being watched, whose history is the bitácora entries about it — opened
 ("Se detectó"), treated, evaluated, closed — each with its evidence.
 """
+from uuid import uuid4
+
 from .test_zones import FARM, _cycle, _field
 
 
@@ -263,3 +265,88 @@ async def test_capture_plan_of_a_field(client, signup):
     stranger = await signup("capture-plan-stranger")
     assert (await client.get(f"{FARM}/fields/{field['id']}/capture-plan", headers=stranger["headers"])).status_code \
         in (403, 404)
+
+
+async def test_redoing_a_zone_discards_the_earlier_tracking_and_what_it_left(client, signup, container):
+    """His brother loaded the wrong photos for Cajón 2: doing it again replaces that analysis — its follow-up
+    entries, the follow-ups it opened, its photos — and the capture plan says the zone was done today."""
+    import json
+    from unittest.mock import AsyncMock, patch
+
+    from src.agent.reasoning.periodic_report import (
+        FollowUpEvaluation,
+        FollowUpPassResult,
+        ZoneIssue,
+        ZoneOverviewResult,
+        ZoneSynthesisResult,
+    )
+
+    from .test_zones import _TINY_PNG, _group_result, _overview_result, _synthesis_result
+
+    user = await signup("followups-redo")
+    h = user["headers"]
+    field = await _field(client, h)
+    zone, other = await _zone(client, h, field["id"], "cajon"), await _zone(client, h, field["id"], "cajon")
+    tomato = await _cycle(client, h, field["id"], "tomate", zone_id=zone["id"])
+    await _cycle(client, h, field["id"], "lechuga", zone_id=other["id"])
+    watched = (await client.post(f"{FARM}/followups", headers=h, json={
+        "field_id": field["id"], "zone_id": zone["id"], "title": "Oídio", "kind": "disease"})).json()
+    gateway = container.agent.gemini()
+
+    def _analysis(issue_title):
+        def _respond(_user_id, *, contents, schema, **_kwargs):
+            if schema is ZoneOverviewResult:
+                return _overview_result()
+            if schema is ZoneSynthesisResult:
+                return _synthesis_result()
+            if schema is FollowUpPassResult:
+                return FollowUpPassResult(evaluations=[FollowUpEvaluation(
+                    followup_id=watched["id"], evolution="peor", evidence="más manchas", confidence=0.8)])
+            return _group_result([(tomato, "Tomate")]).model_copy(update={"issues": [ZoneIssue(
+                title=issue_title, kind="pest", severity="high", lot_ids=[tomato["id"]], what_was_seen="x",
+                photo_hint="y")]})
+        return AsyncMock(side_effect=_respond)
+
+    roles = json.dumps([{"role": "general"}, {"role": "seguimiento", "followup_id": watched["id"]}])
+
+    async def _upload(issue_title, **extra):
+        with patch.object(gateway, "generate_structured", _analysis(issue_title)):
+            up = await client.post("/api/v1/upload/zone-tracking", headers=h, data={
+                "zone_id": zone["id"], "photo_roles": roles, **extra,
+            }, files=[("image_files", (f"{i}.png", _TINY_PNG, "image/png")) for i in range(2)])
+        assert up.status_code == 200, up.text
+        return (await client.get(f"/api/v1/reports/{up.json()['report_id']}", headers=h)).json()
+
+    wrong = await _upload("Trips")
+    plan = (await client.get(f"{FARM}/fields/{field['id']}/capture-plan", headers=h)).json()
+    today = {z["zone_id"]: z["today"] for z in plan["zones"]}
+    assert today[zone["id"]]["report_id"] == wrong["id"] and today[zone["id"]]["photos"] == 2
+    assert today[other["id"]] is None
+    trips = wrong["raw_analysis_data"]["followups"]["opened"][0]["followup_id"]
+    assert (await client.get(f"{FARM}/followups/{watched['id']}", headers=h)).json()["entries"] == 2
+
+    # Only a tracking report of this zone can be replaced.
+    other_report = await client.post("/api/v1/upload/zone-tracking", headers=h, data={
+        "zone_id": zone["id"], "replaces_report_id": str(uuid4()),
+    }, files=[("image_files", ("a.png", _TINY_PNG, "image/png"))])
+    assert other_report.status_code == 404
+
+    redo = await _upload("Pulgón", replaces_report_id=wrong["id"])
+    assert (await client.get(f"/api/v1/reports/{wrong['id']}", headers=h)).status_code == 404
+    for photo in wrong["image_identifiers"]:
+        assert (await client.get(f"/api/v1/upload/image/{photo}", headers=h)).status_code == 404
+    assert (await client.get(f"{FARM}/followups/{trips}", headers=h)).status_code == 404  # opened by the wrong one
+    timeline = (await client.get(f"{FARM}/followups/{watched['id']}", headers=h)).json()["events"]
+    assert [e["data"].get("followup_action") for e in timeline] == ["evaluated", "opened"]  # the redo's only
+    assert {ev["identifier"] for ev in timeline[0]["evidence"] if ev["kind"] == "report"} == {redo["id"]}
+    plan = (await client.get(f"{FARM}/fields/{field['id']}/capture-plan", headers=h)).json()
+    assert {z["zone_id"]: z["today"] for z in plan["zones"]}[zone["id"]]["report_id"] == redo["id"]
+
+    # Deleting a report also cleans up — but a follow-up someone already added to stays.
+    pulgon = redo["raw_analysis_data"]["followups"]["opened"][0]["followup_id"]
+    await client.post(f"{FARM}/events", headers=h, json={
+        "field_id": field["id"], "zone_id": zone["id"], "type": "pest_control", "followup_id": pulgon})
+    assert (await client.delete(f"/api/v1/reports/{redo['id']}", headers=h)).status_code == 204
+    kept = (await client.get(f"{FARM}/followups/{pulgon}", headers=h)).json()
+    assert [e["type"] for e in kept["events"]] == ["pest_control"]
+    assert (await client.get(f"{FARM}/followups/{watched['id']}", headers=h)).json()["entries"] == 1

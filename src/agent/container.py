@@ -68,6 +68,7 @@ class AgentContainer(containers.DeclarativeContainer):
         gemini=gemini,
         search=search_provider,
         diagnosis=diagnosis_service,
+        followups=application.followup_service,
         irrigation=application.irrigation_service,
         inventory=application.inventory_service,
         management=application.management_service,

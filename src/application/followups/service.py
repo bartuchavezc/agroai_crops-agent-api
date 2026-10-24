@@ -8,8 +8,9 @@ zone's and lots' bitácora like any other entry. Opening and closing each write 
 from datetime import datetime
 from typing import Optional, Sequence
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.application.farm.models import FieldEvent, FollowUp
@@ -42,9 +43,14 @@ def summarize(followup: FollowUp, events: Sequence[FieldEventRead]) -> dict:
 
 
 class FollowUpService:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession], farm_service: FarmService):
+    def __init__(
+        self, session_factory: async_sessionmaker[AsyncSession], farm_service: FarmService, reports_service=None,
+        timezone_name: str = "America/Argentina/Buenos_Aires",
+    ):
         self.session_factory = session_factory
         self.farm = farm_service
+        self.reports = reports_service  # ReportsService: the zones already tracked today, for the capture plan
+        self.timezone_name = timezone_name
 
     # ---------- reads ----------
 
@@ -141,10 +147,10 @@ class FollowUpService:
 
     async def write_entry(
         self, actor: Actor, followup: FollowUp | FollowUpRead, notes: str, data: dict, evidence=(),
-        report_id: Optional[UUID] = None, occurred_at: Optional[datetime] = None,
+        report_id: Optional[UUID] = None, occurred_at: Optional[datetime] = None, event_type: str = "inspection",
     ) -> FieldEventRead:
         """A bitácora entry about this follow-up, on its zone and lots: an `inspection` (a check-up: seen,
-        evaluated, resolved). The analysis it came from, if any, is added to its evidence."""
+        evaluated, resolved) unless said otherwise. The analysis it came from, if any, is added to its evidence."""
         evidence = [EventEvidence.model_validate(e) for e in evidence]
         if report_id and not any(e.kind == "report" and e.identifier == str(report_id) for e in evidence):
             evidence.append(EventEvidence(kind="report", identifier=str(report_id)))
@@ -152,7 +158,7 @@ class FollowUpService:
             field_id=followup.field_id,
             zone_id=followup.zone_id,
             lot_ids=[UUID(str(i)) for i in followup.lot_ids],
-            type="inspection",
+            type=event_type,
             occurred_at=occurred_at,
             notes=notes,
             data=data,
@@ -193,6 +199,28 @@ class FollowUpService:
             await session.commit()
         return await self.get(actor, followup_id)
 
+    async def forget_report(self, actor: Actor, report_id: UUID) -> None:
+        """Undo what a zone analysis wrote about follow-ups, when its report is discarded (wrong photos, the zone
+        done again): the entries the agent logged from it, and the follow-ups it opened that nobody added anything
+        to since. What a person did from it (closing one it proposed) stays: that was their call."""
+        evidence = [{"kind": "report", "identifier": str(report_id)}]
+        async with self.session_factory() as session:
+            await session.execute(delete(FieldEvent).where(
+                FieldEvent.account_id == actor.account_id, FieldEvent.source == "agent",
+                FieldEvent.followup_id.is_not(None), FieldEvent.evidence.contains(evidence),
+            ))
+            opened = (await session.execute(select(FollowUp).where(
+                FollowUp.account_id == actor.account_id, FollowUp.origin_report_id == report_id,
+                FollowUp.source == "agent",
+            ))).scalars().all()
+            for followup in opened:
+                entries = await session.scalar(
+                    select(func.count()).select_from(FieldEvent).where(FieldEvent.followup_id == followup.id)
+                )
+                if not entries:
+                    await session.delete(followup)
+            await session.commit()
+
     # ---------- guided walk ----------
 
     async def capture_plan(self, actor: Actor, field_id: UUID) -> CapturePlan:
@@ -201,4 +229,17 @@ class FollowUpService:
         overview = next((o for o in await self.farm.overview(actor) if o.field.id == field_id), None)
         lots = overview.active_lots if overview else []
         followups = await self.list_followups(actor, field_id=field_id, status="abierto")
-        return capture_plan(field_id, zones, lots, followups)
+        return capture_plan(field_id, zones, lots, followups, await self._tracked_today(actor, field_id))
+
+    async def _tracked_today(self, actor: Actor, field_id: UUID) -> dict:
+        """Zone id -> its newest tracking report of today, in the person's local day."""
+        if self.reports is None:
+            return {}
+        tz = ZoneInfo(actor.timezone or self.timezone_name)
+        midnight = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        reports = await self.reports.list_reports(actor, field_id=field_id, report_type="periodic", since=midnight)
+        out: dict = {}
+        for report in sorted(reports, key=lambda r: r.created_at):
+            if report.zone_id:
+                out[report.zone_id] = report
+        return out

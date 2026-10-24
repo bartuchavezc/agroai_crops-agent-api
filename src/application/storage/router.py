@@ -202,7 +202,11 @@ async def upload_zone_tracking(
     reason: Optional[str] = Form(None, max_length=500, description='Why the photo was taken ("motivo")'),
     photo_roles: Optional[str] = Form(
         None,
-        description='JSON list, one per photo: {"role": "general"|"detalle"|"seguimiento", "lot_id"?, "hint"?}',
+        description='JSON list, one per photo: {"role": "general"|"detalle"|"seguimiento", "lot_id"?, "hint"?, '
+        '"followup_id"?}',
+    ),
+    replaces_report_id: Optional[UUID] = Form(
+        None, description="The zone done again: that earlier tracking report is discarded, with what it left"
     ),
     actor: Actor = Depends(get_actor),
     farm_service=Depends(Provide["application.farm_service"]),
@@ -210,6 +214,7 @@ async def upload_zone_tracking(
     reports_service=Depends(Provide["application.reports_service"]),
     diagnosis_service=Depends(Provide["agent.diagnosis_service"]),
     followup_service=Depends(Provide["application.followup_service"]),
+    discard=Depends(Provide["application.report_discard_service"]),
 ):
     if not 1 <= len(image_files) <= MAX_ZONE_PHOTOS:
         raise HTTPException(
@@ -228,6 +233,12 @@ async def upload_zone_tracking(
     open_followups = (
         await followup_service.list_followups(actor, zone_id=zone.id, status="abierto") if photo_roles else []
     )
+    if replaces_report_id:
+        replaced = await reports_service.deletable(actor, replaces_report_id)
+        if replaced.zone_id != zone.id or replaced.report_type != "periodic":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="It can only replace a tracking report of this zone."
+            )
     roles = parse_photo_roles(photo_roles, len(image_files), {c.id for c in cycles}, {f.id for f in open_followups})
     photos = [await receive_photo(f) for f in image_files]  # validate all before storing any
     identifiers = [
@@ -249,6 +260,8 @@ async def upload_zone_tracking(
         ),
     )
     logger.info(f"{len(identifiers)} zone photo(s) uploaded for zone {zone.id}, account {actor.account_id}")
+    if replaces_report_id:  # once the new one is safely stored, and before it is analyzed against the old one
+        await discard.discard(actor, replaces_report_id)
     background_tasks.add_task(analyze_in_background, diagnosis_service, actor, report.id)
     return UploadImageResponse(
         report_id=report.id,

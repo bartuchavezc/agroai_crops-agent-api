@@ -10,7 +10,7 @@ from typing import Iterable
 from src.application.farm.schemas import ActiveLotSummary, FieldZoneRead
 from src.application.reports.schemas import MAX_ZONE_PHOTOS
 
-from .schemas import CaptureCrop, CapturePlan, CaptureStep, CaptureZone, FollowUpRead
+from .schemas import CaptureCrop, CapturePlan, CaptureStep, CaptureToday, CaptureZone, FollowUpRead
 
 _SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -60,13 +60,21 @@ def zone_capture(
 
 def capture_plan(
     field_id, zones: list[FieldZoneRead], lots: list[ActiveLotSummary], followups: list[FollowUpRead],
+    today: dict | None = None,
 ) -> CapturePlan:
     """Zones in their own order (type, then number: how they're numbered on the ground), only those with an
-    active crop — the upload refuses the others."""
+    active crop — the upload refuses the others. `today`: zone id -> its tracking report sent today (newest)."""
     plan = []
     for zone in zones:
         in_zone = [lot for lot in lots if zone.id in (lot.zone_ids or [lot.zone_id])]
         if not in_zone:
             continue
-        plan.append(zone_capture(zone, in_zone, [f for f in followups if f.zone_id == zone.id]))
+        item = zone_capture(zone, in_zone, [f for f in followups if f.zone_id == zone.id])
+        report = (today or {}).get(zone.id)
+        if report is not None:
+            photos = len(report.image_identifiers or ([report.image_identifier] if report.image_identifier else []))
+            item.today = CaptureToday(
+                report_id=report.id, created_at=report.created_at, status=report.status, photos=photos
+            )
+        plan.append(item)
     return CapturePlan(field_id=field_id, max_photos=MAX_ZONE_PHOTOS, zones=plan)

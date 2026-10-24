@@ -164,7 +164,8 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     async def log_events(entries: list[dict], field: Optional[str] = None) -> dict:
         """Register in the bitácora what was done, seen or deliberately NOT done, several entries in ONE call
         ("regué los canteros 1, 2 y 3 y fertilicé el 2 con 50 ml de té de compost"). Each entry:
-        {type, zone?, zones?, lots?, occurred_at?, quantity?, unit?, notes?, outcome?, reason?, attach_current_photo?}
+        {type, zone?, zones?, lots?, occurred_at?, quantity?, unit?, notes?, outcome?, reason?, attach_current_photo?,
+        followup_id?}
         - type: irrigation|fertilization|pest_control|sowing|transplant|harvest|inspection|observation|soil_prep|
           amendment|pruning|weeding|photo. inspection = a check-up (pest or disease seen, growth, state).
           Losses go through record_lot_loss; rain is logged by the system from the weather data.
@@ -174,7 +175,8 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
           growing there. lots: lot ids, when it was only some lots. Neither: the whole field.
         - Products and doses as free text in notes ("Caldo bordelés 20 g/l"), with quantity + unit when there is
           an amount (10 'litros', 2 'kg'). occurred_at: ISO date/time (default now).
-        - attach_current_photo: link the photo sent in this message."""
+        - attach_current_photo: link the photo sent in this message.
+        - followup_id: the problem being followed it is about (list_followups): it joins that follow-up's history."""
         target = await resolve_field(deps, ctx, field)
         created = []
         for entry in entries:
@@ -197,6 +199,7 @@ def farm_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                         image_identifier=ctx.image_identifier if entry.get("attach_current_photo") else None,
                         outcome=entry.get("outcome") or "done",
                         reason=entry.get("reason"),
+                        followup_id=UUID(str(entry["followup_id"])) if entry.get("followup_id") else None,
                     ),
                 )
                 created.append({

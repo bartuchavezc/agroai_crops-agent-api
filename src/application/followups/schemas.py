@@ -93,10 +93,19 @@ class CaptureCrop(BaseModel):
     status: str
 
 
+class CaptureToday(BaseModel):
+    """The zone's tracking already sent today (local day): the walk skips it unless the person redoes it."""
+    report_id: UUID
+    created_at: datetime
+    status: str
+    photos: int
+
+
 class CaptureZone(BaseModel):
     zone_id: UUID
     label: str
     crops: list[CaptureCrop]
+    today: Optional[CaptureToday] = Field(default=None, description="Its tracking already sent today, if any")
     steps: list[CaptureStep] = Field(description="At most `CapturePlan.max_photos`, in order")
     deferred_followups: int = Field(0, description="Open follow-ups that didn't fit this time (next walk first)")
 

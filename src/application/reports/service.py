@@ -72,9 +72,14 @@ class ReportsService:
             raise NotFoundError(f"Report {report_id} not found.")
         return report
 
-    async def delete_report(self, actor: Actor, report_id: UUID) -> None:
+    async def deletable(self, actor: Actor, report_id: UUID) -> Report:
+        """The report, if this person may delete it (a manager, or whoever created it)."""
         report = await self.get_report(actor, report_id)
         if not actor.is_manager and report.created_by != actor.user_id:
             raise PermissionDeniedError("You can only delete reports you created.")
+        return report
+
+    async def delete_report(self, actor: Actor, report_id: UUID) -> None:
+        await self.deletable(actor, report_id)
         if not await self.repo.delete(actor.account_id, report_id):
             raise NotFoundError(f"Report {report_id} not found.")

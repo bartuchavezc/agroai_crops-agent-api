@@ -53,6 +53,8 @@ class Application(Base):
     kind = Column(String(20), nullable=False, default="phyto")
     applied_at = Column(DateTime(timezone=True))
     target = Column(Text)  # the pest, disease or reason it was applied for
+    # The problem being followed it treats ("pulgón en tomate"): its bitácora entry joins that follow-up's history.
+    followup_id = Column(UUID(as_uuid=True), ForeignKey("followups.id", ondelete="SET NULL"))
     method = Column(String(60))  # mochila, pulverizadora, fertirriego, al voleo...
     equipment = Column(String(255))
     area_m2 = Column(Float)

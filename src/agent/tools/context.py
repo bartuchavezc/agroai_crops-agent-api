@@ -64,6 +64,7 @@ class ToolDeps:
     applications: Any = None  # ApplicationService: the cuaderno de aplicaciones
     supplies: Any = None  # SupplyService: inputs in stock
     registry: Any = None  # ProductRegistryService: the official products registry
+    followups: Any = None  # FollowUpService: problems being followed (seguimientos)
 
 
 @dataclass

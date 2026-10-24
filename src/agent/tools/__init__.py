@@ -3,6 +3,7 @@ from .applications import application_tools
 from .changes import change_tools
 from .context import ToolDeps, TurnContext
 from .farm import farm_manager_tools, farm_read_tools
+from .followups import followup_tools
 from .inventory import inventory_manager_tools, inventory_read_tools
 from .irrigation import irrigation_tools
 from .knowledge import alert_tools, memory_tools, report_tools, search_tools, weather_tools
@@ -29,6 +30,7 @@ def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         *analysis_tools(deps, ctx),
         *change_tools(deps, ctx),
         *application_tools(deps, ctx),
+        *followup_tools(deps, ctx),
     ]
     if ctx.actor.is_manager:
         tools += farm_manager_tools(deps, ctx)

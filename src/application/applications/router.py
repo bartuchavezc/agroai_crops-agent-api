@@ -14,6 +14,7 @@ from .schemas import (
     ApplicationCorrection,
     ApplicationCreate,
     ApplicationDraftUpdate,
+    ApplicationFollowUpLink,
     ApplicationRead,
     ApplicationStatus,
     ApplicationVoid,
@@ -137,6 +138,16 @@ async def correct_application(
     applications: ApplicationService = Depends(APPLICATIONS),
 ):
     return await applications.correct(actor, application_id, body)
+
+
+@router.put("/{application_id}/followup", response_model=ApplicationRead,
+            summary="Which follow-up (seguimiento) it treats: drafts and confirmed records alike, no new version")
+@inject
+async def link_application_followup(
+    application_id: UUID, body: ApplicationFollowUpLink, actor: Actor = Depends(get_actor),
+    applications: ApplicationService = Depends(APPLICATIONS),
+):
+    return await applications.link_followup(actor, application_id, body.followup_id)
 
 
 @router.post("/{application_id}/void", response_model=ApplicationRead,
