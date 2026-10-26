@@ -22,6 +22,7 @@ import src.application.changes.models  # noqa: F401,E402
 import src.application.farm.models  # noqa: F401,E402
 import src.application.inventory.models  # noqa: F401,E402
 import src.application.management.models  # noqa: F401,E402
+import src.application.market.models  # noqa: F401,E402
 import src.application.notifications.models  # noqa: F401,E402
 import src.application.planning.models  # noqa: F401,E402
 import src.application.proactive.models  # noqa: F401,E402
@@ -45,7 +46,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://agroai:agroa
 
 def include_name(name, type_, parent_names):
     if type_ == "schema":
-        return name in (None, "public")
+        return name in (None, "public", "market")
     if type_ == "index" and name and name.endswith("_time_idx"):
         return False  # created automatically by create_hypertable
     return True
@@ -56,6 +57,7 @@ def do_run_migrations(connection):
         connection=connection,
         target_metadata=target_metadata,
         include_name=include_name,
+        include_schemas=True,
         compare_type=True,
     )
     with context.begin_transaction():
