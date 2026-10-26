@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.auth.domain.models import MANAGER_ROLES, User
+from src.auth.domain.models import User
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
 
@@ -85,14 +85,13 @@ class PushService:
             devices = (await session.execute(
                 select(func.count()).select_from(PushSubscription).where(PushSubscription.user_id == actor.user_id)
             )).scalar_one()
-        manager = actor.role in MANAGER_ROLES
         if prefs is None:
-            return PreferencesRead(daily_digest=manager, weekly_digest=manager, push_devices=devices)
+            return PreferencesRead(daily_digest=True, weekly_digest=True, push_devices=devices)
         return PreferencesRead(
             nudges_enabled=prefs.nudges_enabled, max_nudges_per_day=prefs.max_nudges_per_day,
             quiet_start=prefs.quiet_start, quiet_end=prefs.quiet_end,
-            daily_digest=manager if prefs.daily_digest is None else prefs.daily_digest,
-            weekly_digest=manager if prefs.weekly_digest is None else prefs.weekly_digest,
+            daily_digest=True if prefs.daily_digest is None else prefs.daily_digest,
+            weekly_digest=True if prefs.weekly_digest is None else prefs.weekly_digest,
             push_enabled=prefs.push_enabled, push_devices=devices,
         )
 
@@ -108,7 +107,7 @@ class PushService:
         return await self.preferences(actor)
 
     async def digest_recipients(self, account_id: UUID, kind: str) -> list[UUID]:
-        """Who gets a daily/weekly summary: owner and tecnico unless they turned it off, staff only if they asked."""
+        """Who gets a daily/weekly summary: everyone in the account, unless they turned it off."""
         async with self.session_factory() as session:
             rows = (await session.execute(
                 select(User, NotificationPreferences)
@@ -118,7 +117,7 @@ class PushService:
         out = []
         for user, prefs in rows:
             chosen = getattr(prefs, f"{kind}_digest", None) if prefs is not None else None
-            if (user.role in MANAGER_ROLES) if chosen is None else chosen:
+            if chosen is None or chosen:
                 out.append(user.id)
         return out
 

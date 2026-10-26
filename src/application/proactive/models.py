@@ -16,15 +16,17 @@ NUDGE_OUTCOMES = ("sent", "silent", "budget", "quiet_hours", "failed")
 
 
 class Digest(Base):
-    """A summary of a day or a week of an account: facts and gaps, never made-up scores."""
+    """A summary of a day or a week of one field, written by the agent from the records, the analyses and the
+    weather: facts, gaps and questions, never made-up scores. `data` keeps the facts it was written from."""
     __tablename__ = "digests"
     __table_args__ = (
         CheckConstraint(f"kind IN {DIGEST_KINDS}", name="kind_valid"),
-        UniqueConstraint("account_id", "kind", "local_date", name="uq_digests_account_kind_date"),
+        UniqueConstraint("account_id", "field_id", "kind", "local_date", name="uq_digests_field_kind_date"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    field_id = Column(UUID(as_uuid=True), ForeignKey("fields.id", ondelete="CASCADE"), index=True)  # None: before
     kind = Column(String(10), nullable=False)
     local_date = Column(Date, nullable=False)  # the day (or the week's last day) it covers, in the account's time
     period_start = Column(DateTime(timezone=True), nullable=False)
@@ -61,7 +63,7 @@ class NotificationPreferences(Base):
     max_nudges_per_day = Column(Integer, nullable=False, default=2)
     quiet_start = Column(String(5), nullable=False, default="21:00")  # local HH:MM
     quiet_end = Column(String(5), nullable=False, default="07:30")
-    daily_digest = Column(Boolean)  # None: on for owner/tecnico, off for staff
+    daily_digest = Column(Boolean)  # None: on (everyone in the account gets the summary of each field)
     weekly_digest = Column(Boolean)
     push_enabled = Column(Boolean, nullable=False, default=True)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

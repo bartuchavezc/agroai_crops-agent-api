@@ -1,6 +1,10 @@
-"""Daily and weekly summaries for whoever isn't at the field: what was done, what was skipped and why, how much it
-rained, what was applied and until when nothing can be harvested, what was lost — and the gaps: zones nobody
-reported on, tasks overdue, inputs running out. Facts read from the records, never a made-up score."""
+"""Daily and weekly summaries of each field for everyone in the account: what was done, what was skipped and why, what
+the analyses said, the weather the field had, what was applied and until when nothing can be harvested, what was lost
+— and the gaps: zones nobody reported on, a dry day with no irrigation, tasks overdue, inputs running out.
+
+This module gathers the FACTS (plain data read from the records and the weather) and saves the summary; the agent
+writes it (src/agent/digests.py). `render` is the plain-text fallback when the agent can't write (no key, an error)
+and the preview of the day so far. Never a made-up score."""
 import logging
 from collections import Counter
 from datetime import date, datetime, time, timedelta
@@ -37,28 +41,31 @@ def _plural(n: int, one: str, many: str) -> str:
 class DigestService:
     def __init__(
         self, session_factory: async_sessionmaker[AsyncSession], farm_service, application_service,
-        supply_service, task_service, notification_service, preferences,
+        supply_service, task_service, reports_service=None, weather_service=None,
     ):
         self.session_factory = session_factory
         self.farm = farm_service
         self.applications = application_service
         self.supplies = supply_service
         self.tasks = task_service
-        self.notifications = notification_service
-        self.preferences = preferences
+        self.reports = reports_service
+        self.weather = weather_service
 
-    async def gather(self, actor: Actor, start: datetime, end: datetime) -> dict:
-        """The facts of [start, end) for the account, as plain data (the text is built from it)."""
+    async def gather(self, actor: Actor, start: datetime, end: datetime, field=None) -> dict:
+        """The facts of [start, end) as plain data: for one field when given (the summary is per field), else for the
+        whole account (the preview). The agent writes the summary from this; `render` is the plain fallback."""
         tz = ZoneInfo(actor.timezone) if actor.timezone else None
-        events = await self.farm.list_events(actor, since=start, until=end, limit=500)
-        zones = {z.id: z for f in await self.farm.list_fields(actor) for z in await self.farm.list_zones(actor, f.id)}
-        lots = await self.farm.list_lots(actor, statuses=list(ACTIVE_LOT_STATUSES))
+        field_id = field.id if field is not None else None
+        events = await self.farm.list_events(actor, field_id=field_id, since=start, until=end, limit=500)
+        fields = [field] if field is not None else await self.farm.list_fields(actor)
+        zones = {z.id: z for f in fields for z in await self.farm.list_zones(actor, f.id)}
+        lots = await self.farm.list_lots(actor, field_id=field_id, statuses=list(ACTIVE_LOT_STATUSES))
+        where = lambda zone_id: zones[zone_id].label if zone_id in zones else None  # noqa: E731
 
         done = Counter(EVENT_WORDS.get(e.type, e.type) for e in events
                        if e.outcome == "done" and e.type not in ("rain", "photo", "loss"))
         skipped = [
-            {"what": EVENT_WORDS.get(e.type, e.type), "where": zones[e.zone_id].label if e.zone_id in zones else None,
-             "reason": e.reason}
+            {"what": EVENT_WORDS.get(e.type, e.type), "where": where(e.zone_id), "reason": e.reason}
             for e in events if e.outcome == "skipped"
         ]
         rain_by_day: dict[str, float] = {}
@@ -66,9 +73,14 @@ class DigestService:
             if e.type == "rain" and e.quantity:
                 day = e.data.get("date") or e.occurred_at.astimezone(tz).date().isoformat()
                 rain_by_day[day] = max(rain_by_day.get(day, 0.0), e.quantity)  # several fields: the wettest
-        sightings = [e.notes for e in events if e.type in ("inspection", "observation") and e.notes][:5]
+        observations = [
+            {"where": where(e.zone_id), "text": e.notes, "author_user_id": str(e.author_user_id or ""),
+             "at": e.occurred_at.astimezone(tz).strftime("%d/%m %H:%M") if tz else e.occurred_at.isoformat()}
+            for e in events if e.type in ("inspection", "observation") and e.notes
+        ]
         losses = [
-            {"quantity": e.quantity, "unit": e.unit, "cause": e.data.get("cause"), "reason": e.reason}
+            {"where": where(e.zone_id), "quantity": e.quantity, "unit": e.unit, "cause": e.data.get("cause"),
+             "reason": e.reason}
             for e in events if e.type == "loss"
         ]
         harvests: dict[str, float] = {}
@@ -80,15 +92,19 @@ class DigestService:
             {"products": [p.name for p in a.products], "lots": a.lot_labels,
              "release": a.harvest_release_date.isoformat() if a.harvest_release_date else None,
              "warnings": a.warnings}
-            for a in await self.applications.list_applications(actor, since=start, until=end, status="confirmed")
+            for a in await self.applications.list_applications(
+                actor, field_id=field_id, since=start, until=end, status="confirmed"
+            )
         ]
-        drafts = len(await self.applications.list_applications(actor, status="draft"))
+        drafts = len(await self.applications.list_applications(actor, field_id=field_id, status="draft"))
         today = end.astimezone(tz).date() if tz else end.date()
         blocked = [{"lot": lot.label, "until": lot.harvest_blocked_until.isoformat()}
                    for lot in lots if lot.harvest_blocked_until and lot.harvest_blocked_until > today]
 
-        # gaps: zones with something growing that nobody reported on lately
-        recent = await self.farm.list_events(actor, since=end - timedelta(days=STALE_ZONE_DAYS), limit=500)
+        # gaps: zones with something growing that nobody reported on lately, and whether they were watered
+        recent = await self.farm.list_events(
+            actor, field_id=field_id, since=end - timedelta(days=STALE_ZONE_DAYS), until=end, limit=500
+        )
         touched_zones = {e.zone_id for e in recent if e.source != "system"}
         touched_lots = {lot_id for e in recent if e.source != "system" for lot_id in e.lot_ids}
         growing_zones = {z for lot in lots if lot.status != "planned" for z in lot.zone_ids}
@@ -97,7 +113,7 @@ class DigestService:
             if z in zones and z not in touched_zones
             and not any(lot.id in touched_lots for lot in lots if z in lot.zone_ids)
         )
-        tasks = await self.tasks.list_tasks(actor, open_only=True)
+        tasks = await self.tasks.list_tasks(actor, field_id=field_id, open_only=True)
         overdue = [t.title for t in tasks if t.due_date and t.due_date < today]
         due_today = [t.title for t in tasks if t.due_date == today]
         low = [f"{i.name} ({i.quantity:g} {i.unit})" for i in await self.supplies.list_items(actor, in_stock=False)]
@@ -105,13 +121,80 @@ class DigestService:
             f"{i.name} (vence {i.expiry_date:%d/%m})"
             for i in await self.supplies.list_items(actor, in_stock=True, expiring_within_days=EXPIRING_DAYS)
         ]
-        return {
+        data = {
             "done": dict(done), "skipped": skipped, "rain_mm": round(sum(rain_by_day.values()), 1),
-            "rain_days": len(rain_by_day), "sightings": sightings, "losses": losses, "harvests": harvests,
-            "applications": applied, "application_drafts": drafts, "harvest_blocked": blocked,
+            "rain_days": len(rain_by_day), "sightings": [o["text"] for o in observations][:5], "losses": losses,
+            "harvests": harvests, "applications": applied, "application_drafts": drafts, "harvest_blocked": blocked,
             "quiet_zones": quiet, "tasks_overdue": overdue, "tasks_today": due_today, "out_of_stock": low,
             "expiring": expiring, "entries": sum(1 for e in events if e.source != "system"),
         }
+        if field is None:
+            return data
+
+        data["observations"] = observations
+        data["zones"] = await self._zones(actor, field, zones, lots, events, end)
+        data["analyses"] = await self._analyses(actor, field.id, start, end, where)
+        data["weather"] = await self._weather(field, start, end, tz)
+        return data
+
+    async def _zones(self, actor: Actor, field, zones: dict, lots: list, events: list, end: datetime) -> list[dict]:
+        """Each zone with something growing: its crops, how long since anyone logged anything, and whether it was
+        watered in the period (the agent crosses this with the weather to ask)."""
+        crops: dict = {}
+        for o in await self.farm.overview(actor):
+            if o.field.id == field.id:
+                for lot in o.active_lots:
+                    for z in lot.zone_ids or ([lot.zone_id] if lot.zone_id else []):
+                        crops.setdefault(z, []).append(lot.crop_name + (f" {lot.variety}" if lot.variety else ""))
+        history = await self.farm.list_events(actor, field_id=field.id, since=end - timedelta(days=30), until=end,
+                                              limit=1000)
+        out = []
+        for zone_id in sorted({z for lot in lots if lot.status != "planned" for z in lot.zone_ids}, key=str):
+            zone = zones.get(zone_id)
+            if zone is None:
+                continue
+            lot_ids = {lot.id for lot in lots if zone_id in lot.zone_ids}
+            mine = [e for e in history if e.source != "system"
+                    and (e.zone_id == zone_id or lot_ids & set(e.lot_ids))]
+            last = max((e.occurred_at for e in mine), default=None)
+            watered = [e for e in events if e.type == "irrigation" and e.outcome == "done"
+                       and (e.zone_id == zone_id or lot_ids & set(e.lot_ids))]
+            out.append({
+                "zone": zone.label, "crops": crops.get(zone_id, []),
+                "days_since_last_record": (end - last).days if last else None,
+                "irrigated_in_period": bool(watered),
+                "irrigation_skipped_in_period": any(
+                    e.type == "irrigation" and e.outcome == "skipped" and e.zone_id == zone_id for e in events
+                ),
+            })
+        return out
+
+    async def _analyses(self, actor: Actor, field_id: UUID, start: datetime, end: datetime, where) -> list[dict]:
+        if self.reports is None:
+            return []
+        reports = await self.reports.list_reports(actor, field_id=field_id, since=start, until=end, limit=20)
+        return [
+            {"type": r.report_type, "where": where(r.zone_id), "status": r.status, "title": r.title,
+             "summary": (r.summary or "")[:600], "recommendations": (r.recommendations or "")[:400]}
+            for r in reports
+        ]
+
+    async def _weather(self, field, start: datetime, end: datetime, tz) -> dict:
+        """What the field had (Open-Meteo's estimate for the point, not a station) and what today brings."""
+        if self.weather is None or field.latitude is None or field.longitude is None:
+            return {}
+        first, last = (start.astimezone(tz).date(), end.astimezone(tz).date()) if tz else (start.date(), end.date())
+        out: dict = {}
+        try:
+            rows = await self.weather.open_meteo.recent_daily(field.latitude, field.longitude,
+                                                              days=(datetime.now(tz).date() - first).days + 1)
+            out["days"] = [r for r in rows if first.isoformat() <= r["date"] < last.isoformat()]
+            forecast = await self.weather.daily_forecast(field.latitude, field.longitude, days=1)
+            if forecast:
+                out["today_forecast"] = forecast[0].to_dict()
+        except Exception:  # noqa: BLE001 - the summary is still worth it without the weather
+            logger.warning(f"No weather for the summary of field {field.id}", exc_info=True)
+        return out
 
     @staticmethod
     def render(kind: str, data: dict) -> str:
@@ -119,7 +202,7 @@ class DigestService:
         if data["done"]:
             lines.append("Hecho: " + ", ".join(f"{n} {w}" for w, n in sorted(data["done"].items())) + ".")
         elif not data["entries"]:
-            lines.append("Nadie cargó nada en la bitácora.")
+            lines.append("Sin registros en la bitácora.")
         for s in data["skipped"]:
             where = f" en {s['where']}" if s["where"] else ""
             lines.append(f"No se hizo {s['what']}{where}: {s['reason']}.")
@@ -160,58 +243,64 @@ class DigestService:
             ) + ".")
         return "\n".join(lines)
 
-    def _period(self, kind: str, local_day: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    @staticmethod
+    def period(kind: str, local_day: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
+        """The local day `local_day`, or the week ending on it."""
         end = datetime.combine(local_day + timedelta(days=1), time(0), tzinfo=tz)
         return end - timedelta(days=7 if kind == "weekly" else 1), end
 
-    async def build(self, actor: Actor, kind: str, local_day: Optional[date] = None, save: bool = True,
-                    notify: bool = True) -> Optional[Digest]:
-        """The summary of that local day (or the week ending that day). Saved once per account, kind and day: a
-        second call returns the saved one."""
+    @staticmethod
+    def title(kind: str, local_day: date, field_name: Optional[str] = None) -> str:
+        what = f"Resumen del {local_day:%d/%m}" if kind == "daily" else f"Resumen de la semana al {local_day:%d/%m}"
+        return f"{what} · {field_name}" if field_name else what
+
+    async def preview(self, actor: Actor, kind: str) -> Digest:
+        """How today (or the week up to today) reads right now for the whole account, in plain text (not saved, no
+        model call)."""
         tz = ZoneInfo(actor.timezone) if actor.timezone else ZoneInfo("UTC")
-        local_day = local_day or datetime.now(tz).date()
-        if save:
-            existing = await self._existing(actor.account_id, kind, local_day)
-            if existing is not None:
-                return existing
-        start, end = self._period(kind, local_day, tz)
+        local_day = datetime.now(tz).date()
+        start, end = self.period(kind, local_day, tz)
         data = await self.gather(actor, start, min(end, utcnow()))
-        title = (f"Resumen del {local_day:%d/%m}" if kind == "daily"
-                 else f"Resumen de la semana al {local_day:%d/%m}")
-        digest = Digest(account_id=actor.account_id, kind=kind, local_date=local_day, period_start=start,
-                        period_end=end, title=title, text=self.render(kind, data), data=data)
-        if not save:
-            return digest
+        return Digest(account_id=actor.account_id, kind=kind, local_date=local_day, period_start=start,
+                      period_end=end, title=self.title(kind, local_day), text=self.render(kind, data), data=data)
+
+    async def existing(self, account_id: UUID, field_id: Optional[UUID], kind: str,
+                       local_day: date) -> Optional[Digest]:
+        async with self.session_factory() as session:
+            return (await session.execute(select(Digest).where(
+                Digest.account_id == account_id, Digest.field_id == field_id, Digest.kind == kind,
+                Digest.local_date == local_day,
+            ))).scalar_one_or_none()
+
+    async def save(self, actor: Actor, field_id: UUID, kind: str, local_day: date, start: datetime, end: datetime,
+                   title: str, text: str, data: dict) -> Digest:
+        digest = Digest(account_id=actor.account_id, field_id=field_id, kind=kind, local_date=local_day,
+                        period_start=start, period_end=end, title=title, text=text, data=data)
         async with self.session_factory() as session:
             session.add(digest)
             await session.commit()
             await session.refresh(digest)
-        if notify:
-            await self._notify(actor, digest)
         return digest
 
-    async def _existing(self, account_id: UUID, kind: str, local_day: date) -> Optional[Digest]:
+    async def set_conversations(self, digest_id: UUID, conversations: dict[str, str]) -> Digest:
+        """Where each person got it: {user_id: conversation_id}, so the summary page can open the reply."""
         async with self.session_factory() as session:
-            return (await session.execute(select(Digest).where(
-                Digest.account_id == account_id, Digest.kind == kind, Digest.local_date == local_day
-            ))).scalar_one_or_none()
+            digest = await session.get(Digest, digest_id)
+            digest.data = {**digest.data, "conversations": conversations}
+            await session.commit()
+            await session.refresh(digest)
+        return digest
 
-    async def _notify(self, actor: Actor, digest: Digest) -> None:
-        recipients = await self.preferences.digest_recipients(actor.account_id, digest.kind)
-        first_line = digest.text.splitlines()[0] if digest.text else ""
-        for user_id in recipients:
-            await self.notifications.notify_account(
-                account_id=actor.account_id, exclude_user_id=None, only_user_id=user_id,
-                type="digest", title=digest.title, message=first_line, entity_type="digest", entity_id=digest.id,
-            )
-
-    async def list_digests(self, actor: Actor, kind: Optional[str] = None, limit: int = 14) -> list[Digest]:
+    async def list_digests(self, actor: Actor, kind: Optional[str] = None, limit: int = 14,
+                           field_id: Optional[UUID] = None) -> list[Digest]:
         stmt = select(Digest).where(Digest.account_id == actor.account_id)
         if kind:
             stmt = stmt.where(Digest.kind == kind)
+        if field_id:
+            stmt = stmt.where(Digest.field_id == field_id)
         async with self.session_factory() as session:
             return list((await session.execute(
-                stmt.order_by(Digest.local_date.desc(), Digest.kind).limit(max(1, min(limit, 100)))
+                stmt.order_by(Digest.local_date.desc(), Digest.kind, Digest.created_at).limit(max(1, min(limit, 100)))
             )).scalars())
 
     async def get(self, actor: Actor, digest_id: UUID) -> Digest:

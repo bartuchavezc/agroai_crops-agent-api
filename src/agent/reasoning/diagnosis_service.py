@@ -30,18 +30,27 @@ from src.shared.domain.locale import localized, today_in
 from src.shared.utils.errors import InvalidInputError, ProviderError
 from src.shared.utils.trace import set_trace_id
 
-from ..prompts.analysis import ANALYSIS_GROUNDING, DEEP_REFINE_INSTRUCTION
-from ..prompts.diagnosis import SYSTEM_INSTRUCTION
-from ..prompts.harvest import HARVEST_VERDICT_INSTRUCTION, PLANT_COUNT_INSTRUCTION
+from ..prompts.analysis import build_analysis_system, build_refine_prompt, with_field_data
+from ..prompts.diagnosis import DIAGNOSIS_SYSTEM_INSTRUCTION, build_diagnosis_prompt
+from ..prompts.followups import FOLLOWUP_SYSTEM_INSTRUCTION
+from ..prompts.harvest import (
+    HARVEST_VERDICT_INSTRUCTION,
+    PLANT_COUNT_INSTRUCTION,
+    build_harvest_verdict_prompt,
+    build_plant_count_prompt,
+)
 from ..prompts.knowledge import modules_for
 from ..prompts.periodic import (
-    FOLLOWUP_SYSTEM_INSTRUCTION,
     PERIODIC_SYSTEM_INSTRUCTION,
     ZONE_GROUP_SYSTEM_INSTRUCTION,
     ZONE_OVERVIEW_SYSTEM_INSTRUCTION,
     ZONE_SYNTHESIS_SYSTEM_INSTRUCTION,
+    build_periodic_prompt,
+    build_zone_group_prompt,
+    build_zone_overview_prompt,
+    build_zone_synthesis_prompt,
 )
-from ..prompts.soil import SOIL_SYSTEM_INSTRUCTION
+from ..prompts.soil import SOIL_SYSTEM_INSTRUCTION, build_soil_prompt
 from ..prompts.voice import localize
 from ..providers.gemini import GeminiGateway, patient_calls
 from ..schemas import DiagnosisResult, HarvestVerdictResult, PlantCountResult, SoilRecognitionResult
@@ -237,13 +246,8 @@ class DiagnosisService:
         """One analysis: the first pass over photo + context + references, then (when asked and worth it) the deep
         pass — web research on what the first pass found, and the analysis refined with it at the highest reasoning
         depth. Returns (result, research) where `research` says what went into it."""
-        system = localize(
-            f"{instruction}\n\n{ANALYSIS_GROUNDING}\n\n{knowledge}\n\n"
-            f"# Material de referencia\n\n{analysis.references}",
-            actor.country,
-        )
-        if analysis.data_lines:
-            prompt += "\n\nDatos del campo y registros:\n" + "\n".join(f"- {line}" for line in analysis.data_lines)
+        system = localize(build_analysis_system(instruction, knowledge, analysis.references), actor.country)
+        prompt = with_field_data(prompt, analysis.data_lines)
         result = await self.gemini.generate_structured(
             actor.user_id, contents=[*parts, prompt], schema=schema, system_instruction=system,
             thinking_level="medium", usage_sink=usage_sink,
@@ -255,10 +259,7 @@ class DiagnosisService:
             text, sources = await self.analysis_context.research(queries)
             research.update({"queries": queries, "sources": sources})
             if text:
-                refined_prompt = (
-                    f"{prompt}\n\n## Tu primer análisis (a refinar)\n{to_json(result)}\n\n"
-                    f"## Fuentes consultadas en la web\n{text}\n\n{DEEP_REFINE_INSTRUCTION}"
-                )
+                refined_prompt = build_refine_prompt(prompt, to_json(result), text)
                 result = await self.gemini.generate_structured(
                     actor.user_id, contents=[*parts, refined_prompt], schema=schema, system_instruction=system,
                     thinking_level="high", usage_sink=usage_sink,
@@ -322,9 +323,7 @@ class DiagnosisService:
         if weather_rules:
             context_lines.append("Alertas por reglas: " + " | ".join(r.message for r in weather_rules))
 
-        prompt = "Diagnosticá el estado del cultivo en la foto."
-        if context_lines:
-            prompt += "\n\nContexto del lote:\n" + "\n".join(f"- {line}" for line in context_lines)
+        prompt = build_diagnosis_prompt(context_lines)
 
         profile = await self.profiles.get_profile_context(actor.user_id)
         crop_families = await self.farm.crop_families(actor)
@@ -339,7 +338,7 @@ class DiagnosisService:
             parts=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type)],
             prompt=prompt,
             schema=DiagnosisResult,
-            instruction=SYSTEM_INSTRUCTION,
+            instruction=DIAGNOSIS_SYSTEM_INSTRUCTION,
             knowledge=knowledge,
             analysis=analysis,
             deep=deep,
@@ -413,9 +412,7 @@ class DiagnosisService:
         context_lines, weather = await self._field_context(actor, report.field_id)
         context_lines += await self._periodic_context(actor, report.field_id, report.lot_id)
 
-        prompt = "Hacé el seguimiento periódico del cultivo en la foto (no es solo diagnóstico de enfermedad)."
-        if context_lines:
-            prompt += "\n\nContexto del campo y del ciclo:\n" + "\n".join(f"- {line}" for line in context_lines)
+        prompt = build_periodic_prompt(context_lines)
 
         profile = await self.profiles.get_profile_context(actor.user_id)
         crop_families = await self.farm.crop_families(actor)
@@ -535,10 +532,7 @@ class DiagnosisService:
         (every photo when the report has no photo roles: see zone_photos.py)."""
         registered = ", ".join(dict.fromkeys(name for _, name in cycle_pairs)) or "(ninguno)"
         lines = [*zone_lines, f"Cultivos registrados en esta zona: {registered}", *notes_lines]
-        prompt = (
-            f"Mirá las {photo_count(parts)} foto/s de la zona completa y dame una lectura visual de conjunto.\n\n"
-            "Contexto:\n" + "\n".join(f"- {line}" for line in lines)
-        )
+        prompt = build_zone_overview_prompt(photo_count(parts), lines)
         return await self.gemini.generate_structured(
             actor.user_id, contents=[*parts, prompt], schema=ZoneOverviewResult,
             system_instruction=localize(ZONE_OVERVIEW_SYSTEM_INSTRUCTION, actor.country), thinking_level="medium",
@@ -562,11 +556,7 @@ class DiagnosisService:
         )
         own_cycle_lines = [line for cid in group.cycle_ids for line in cycle_lines[cid]]
         lines = [*zone_lines, *own_cycle_lines, *notes_lines]
-        intro = (
-            "Revisá con más detalle este grupo de cultivos: mostró señales de riesgo en una primera pasada."
-            if recheck else "Hacé el seguimiento de este grupo de cultivos de la zona."
-        )
-        prompt = f"{intro}\n\nContexto de la zona y de estos ciclos:\n" + "\n".join(f"- {line}" for line in lines)
+        prompt = build_zone_group_prompt(lines, recheck)
         result, _research = await self._structured(
             actor, parts=parts, prompt=prompt, schema=ZoneGroupAssessment, instruction=ZONE_GROUP_SYSTEM_INSTRUCTION,
             knowledge=knowledge, analysis=analysis, deep=False,
@@ -596,10 +586,7 @@ class DiagnosisService:
                     for e in t.result.evaluations
                 ]
         lines = [*zone_lines, *overview_lines, *group_lines, *notes_lines]
-        prompt = (
-            "Con la lectura de conjunto y la evaluación de cada grupo de cultivos de abajo, cerrá el "
-            "seguimiento de la zona.\n\nContexto:\n" + "\n".join(f"- {line}" for line in lines)
-        )
+        prompt = build_zone_synthesis_prompt(lines)
         return await self.gemini.generate_structured(
             actor.user_id, contents=[prompt], schema=ZoneSynthesisResult,
             system_instruction=localize(ZONE_SYNTHESIS_SYSTEM_INSTRUCTION, actor.country), thinking_level="medium",
@@ -893,9 +880,7 @@ class DiagnosisService:
         image_bytes, mime_type, image_id = await self._load_image(actor, report, image_identifier)
 
         context_lines, _ = await self._field_context(actor, report.field_id)
-        prompt = "Identificá el tipo de suelo aparente y la porosidad/drenaje a partir de la foto de la muestra."
-        if context_lines:
-            prompt += "\n\nContexto del lote:\n" + "\n".join(f"- {line}" for line in context_lines)
+        prompt = build_soil_prompt(context_lines)
 
         analysis = await self._analysis_context(actor, report, "soil")
         result, research = await self._structured(
@@ -953,11 +938,7 @@ class DiagnosisService:
     ) -> PlantCountResult:
         """How many live plants a photo shows, as a proposal for the person to confirm (nothing is saved)."""
         image_bytes, mime_type = await self.storage.get_image_for_model(actor, image_identifier, self.max_image_side)
-        prompt = "Contá las plantas vivas de la foto."
-        if crop_name:
-            prompt += f" Cultivo: {crop_name}."
-        if expected is not None:
-            prompt += f" Se esperaban unas {expected:g} (no ajustes el conteo a ese número: contá lo que se ve)."
+        prompt = build_plant_count_prompt(crop_name, expected)
         return await self.gemini.generate_structured(
             actor.user_id,
             contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt],
@@ -981,9 +962,7 @@ class DiagnosisService:
             )
             context_lines, _ = await self._field_context(actor, field_id)
             context_lines += await self._periodic_context(actor, field_id, lot_id)
-            prompt = "¿Está lista para cosechar la planta/fruto de la foto?"
-            if context_lines:
-                prompt += "\n\nContexto:\n" + "\n".join(f"- {line}" for line in context_lines)
+            prompt = build_harvest_verdict_prompt(context_lines)
 
             result: HarvestVerdictResult = await self.gemini.generate_structured(
                 actor.user_id,

@@ -6,7 +6,7 @@ from typing import Optional
 
 from google.genai import types
 
-from ..prompts.satellite import SATELLITE_IMAGE_INSTRUCTION, SATELLITE_SERIES_GUIDE
+from ..prompts.satellite import SATELLITE_IMAGE_INSTRUCTION, SATELLITE_MAP_PROMPT, SATELLITE_SERIES_GUIDE
 from ..prompts.voice import localize
 from ..schemas import SatelliteImageAnalysis
 from .context import ToolDeps, TurnContext, compact, resolve_field, tool
@@ -57,7 +57,7 @@ def satellite_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                         ctx.actor.user_id,
                         contents=[
                             types.Part.from_bytes(data=image_bytes, mime_type=mime),
-                            "Interpretá este mapa NDVI de la zona.",
+                            SATELLITE_MAP_PROMPT,
                         ],
                         schema=SatelliteImageAnalysis,
                         system_instruction=localize(SATELLITE_IMAGE_INSTRUCTION, ctx.actor.country),

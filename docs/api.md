@@ -219,13 +219,24 @@ nombres de cultivo salen en el idioma de la persona. Los textos ya guardados no 
 | GET / PUT | `/me/notification-preferences` | Mensajes por día, horario de silencio, resúmenes, push |
 | GET | `/push/public-key` | Clave VAPID para suscribir el navegador |
 | POST | `/push/subscriptions`, `/push/unsubscribe` | El `PushSubscription.toJSON()` del navegador / `{endpoint}` |
-| GET | `/digests`, `/digests/{id}`, `/digests/preview?kind=daily\|weekly` | Resúmenes (la vista previa no se guarda) |
+| GET | `/digests?field_id=&kind=`, `/digests/{id}` | Resúmenes: uno por campo y día (o semana), escrito por el agente |
+| GET | `/digests/preview?kind=daily\|weekly` | Lo que va del día en texto simple, de toda la cuenta (sin modelo, no se guarda) |
 | GET | `/nudges/log` | Cada chequeo del asistente: señales, qué escribió y a quién o por qué calló (owner/tecnico) |
 | POST | `/nudges/check` | Pedirle que mire ahora (owner/tecnico) |
 
 `/chat` acepta hasta 4 fotos juntas en `image_identifiers` (`image_identifier` sigue valiendo para una). Los mensajes de
 chat traen `image_identifiers`, `audio_identifier` y `origin` (`turn`, `note`, `nudge`). Las notificaciones suman los tipos
 `digest`, `nudge` y `application` y la entidad `conversation`; las de cada entrada de la bitácora no van al teléfono.
+
+**Resúmenes.** Cada mañana (`DAILY_DIGEST_HOUR`, 8 h local por defecto) el agente escribe el resumen del día anterior
+de cada campo; el lunes, además, el de la semana anterior. Los hechos salen de la bitácora (lo hecho, lo no hecho con
+su motivo, las observaciones), los análisis del período, el clima que tuvo el campo (Open-Meteo: máxima, mínima,
+lluvia y ET0) y los huecos (zonas sin noticias, zonas sin riego en días secos, tareas vencidas, stock). Lo paga la
+key de Gemini del owner (`src/shared/utils/account_key.py`); sin key, o si el modelo falla, va la versión en texto
+simple (`data.writer`: `agent` o `template`). Llega a todos los integrantes de la cuenta (salvo que lo apaguen en sus
+preferencias) como mensaje del agente en una conversación nueva, con push: la notificación es `digest` con entidad
+`conversation`, y `data.conversations` dice qué conversación recibió cada uno. Nadie carga resúmenes: quien quiere
+sumar algo se lo cuenta al agente, que lo registra como observación en la bitácora y entra en el próximo.
 
 ## Red Km 0: el mercado (`/market`)
 

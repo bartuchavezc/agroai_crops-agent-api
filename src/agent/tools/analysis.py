@@ -1,25 +1,18 @@
 """Expert analysis tool: the chat runs on a lite model, so interpreting satellite / weather / soil / irrigation
 data is delegated here — the field's data is gathered server-side and read by the analysis model chain
 (gemini.model_chain), which returns a conclusion for the chat to relay."""
-import json
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
 from src.shared.domain.locale import localized
-from ..prompts.satellite import SATELLITE_SERIES_GUIDE
+from ..prompts.expert import EXPERT_INSTRUCTION, build_expert_prompt
 from ..prompts.voice import localize
 from .context import ToolDeps, TurnContext, compact, resolve_field, tool
 
 logger = logging.getLogger(__name__)
 
 TOPICS = ("clima", "suelo", "satelital", "riego", "solar")
-
-EXPERT_INSTRUCTION = """Sos un ingeniero agrónomo analizando datos reales de un campo para responder una pregunta
-concreta del productor. Usá solo los datos provistos (indicá cuáles), cruzalos entre sí (p. ej. pronóstico + suelo
-+ estado satelital), explicá el razonamiento en pocas oraciones y terminá con recomendaciones accionables y su
-urgencia. Si faltan datos para concluir algo, decilo. Respondé en español rioplatense, sin inventar valores."""
-
 
 def analysis_tools(deps: ToolDeps, ctx: TurnContext) -> list:
     async def _gather(topics: list[str], field) -> dict:
@@ -87,12 +80,9 @@ def analysis_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             f"{', sembrado ' + c.planting_date.isoformat() if c.planting_date else ''})"
             for c in (overview.active_lots if overview else [])
         ) or "sin cultivos activos"
-        guide = f"\n\n{SATELLITE_SERIES_GUIDE}" if any(k.startswith("satelital") for k in data) else ""
-        prompt = (
-            f"{localize(EXPERT_INSTRUCTION, ctx.actor.country)}{guide}\n\n"
-            f"Fecha: {datetime.now(ctx.tz).date().isoformat()}\nCampo: {target.name}"
-            f"{' (' + target.city + ')' if target.city else ''}\nCultivos: {crops}\n"
-            f"Pregunta: {question}\n\nDatos disponibles (JSON):\n{json.dumps(data, ensure_ascii=False, default=str)}"
+        prompt = build_expert_prompt(
+            localize(EXPERT_INSTRUCTION, ctx.actor.country), datetime.now(ctx.tz).date().isoformat(),
+            f"{target.name}{' (' + target.city + ')' if target.city else ''}", crops, question, data,
         )
         analysis = await deps.gemini.generate_text(ctx.actor.user_id, prompt, models=deps.gemini.model_chain)
         return {

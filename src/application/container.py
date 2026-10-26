@@ -160,7 +160,7 @@ class ApplicationContainer(containers.DeclarativeContainer):
     digest_service = providers.Singleton(
         DigestService, session_factory=db_session_factory, farm_service=farm_service,
         application_service=application_service, supply_service=supply_service, task_service=task_service,
-        notification_service=notification_service, preferences=push_service,
+        reports_service=reports_service, weather_service=weather_service,
     )
 
     field_summary_service = providers.Singleton(

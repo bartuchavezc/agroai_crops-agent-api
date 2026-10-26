@@ -126,8 +126,8 @@ DEFAULT_CONFIG = {
         "vapid_subject": "mailto:soporte@agroai.app",
         # Where a notification opens (the web app's origin).
         "web_base_url": "http://localhost:3000",
-        "daily_digest_hour": 19,  # local time
-        "weekly_digest_weekday": 6,  # Sunday (Monday = 0)
+        "daily_digest_hour": 8,  # local time, the morning after: it summarizes the day before
+        "weekly_digest_weekday": 0,  # Monday (Monday = 0): it summarizes the week that ended on Sunday
         "nudge_windows": ["08:00", "17:30"],  # local times the assistant weighs whether to say something
     },
     "market": {

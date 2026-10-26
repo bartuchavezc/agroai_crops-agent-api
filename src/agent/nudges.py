@@ -24,9 +24,10 @@ from src.application.proactive.models import NudgeLog
 from src.auth.domain.models import User
 from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
+from src.shared.utils.account_key import any_key_user
 from src.shared.utils.errors import CropAnalysisError
 
-from .prompts.nudges import NUDGE_INSTRUCTION
+from .prompts.nudges import NUDGE_INSTRUCTION, build_nudge_prompt
 from .prompts.voice import local_now_label, localize
 
 logger = logging.getLogger(__name__)
@@ -188,32 +189,6 @@ class NudgeEngine:
                 .order_by(NudgeLog.created_at)
             )).scalars())
 
-    async def _key_holder(self, members: list[User]) -> Optional[User]:
-        """Whose Gemini key pays for the check (BYOK): an owner's first, else any member with one."""
-        ordered = sorted(members, key=lambda m: {"owner": 0, "tecnico": 1}.get(m.role, 2))
-        for member in ordered:
-            try:
-                await self.gemini.api_key_for(member.id)
-                return member
-            except CropAnalysisError:
-                continue
-        return None
-
-    def _prompt(self, people: list[dict], signals: list[Signal], said: list[NudgeLog], now_label: str) -> str:
-        lines = [f"Ahora: {now_label}.", "", "Personas:"]
-        lines += [
-            f"- id={p['id']} · {p['name']} · rol {p['role']} · mensajes disponibles hoy: {p['left']}"
-            + (" · EN HORARIO DE SILENCIO" if p["quiet"] else "")
-            for p in people
-        ]
-        lines += ["", "Señales:"] + [f"- [{s.key}] ({s.kind}{', urgente' if s.urgent else ''}) {s.text}"
-                                     for s in signals]
-        if said:
-            lines += ["", "Lo que ya dijiste estos días:"]
-            lines += [f"- {log.created_at:%d/%m %H:%M} a {log.user_id}: {log.message}" for log in said
-                      if log.outcome == "sent" and log.message]
-        return "\n".join(lines)
-
     async def run_account(self, members: list[User], window: Window, now: Optional[datetime] = None) -> list[NudgeLog]:
         now = now or utcnow()
         owner = next((m for m in members if m.role == "owner"), members[0])
@@ -235,14 +210,14 @@ class NudgeEngine:
         if not any(p["left"] for p in people):
             return [await self._log(owner.account_id, None, window, fresh, "budget", reason="Sin mensajes disponibles")]
 
-        holder = await self._key_holder(members)
+        holder = await any_key_user(self.gemini, members)
         if holder is None:
             return [await self._log(owner.account_id, None, window, fresh, "failed", reason="Sin API key de Gemini")]
         tz = ZoneInfo(owner.timezone) if owner.timezone else ZoneInfo("UTC")
         try:
             decision: NudgeDecision = await self.gemini.generate_structured(
                 holder.id,
-                contents=self._prompt(people, fresh, said, local_now_label(now.astimezone(tz))),
+                contents=build_nudge_prompt(people, fresh, said, local_now_label(now.astimezone(tz))),
                 schema=NudgeDecision,
                 system_instruction=localize(NUDGE_INSTRUCTION, owner.country),
                 thinking_level="low",
