@@ -222,3 +222,8 @@ class AdminAccountRow(BaseModel):
     user_messages: int
     events: int
     last_active_at: Optional[datetime]
+
+
+class AdminUserStatus(BaseModel):
+    """`PATCH /admin/users/{id}`: enable or disable a user of any account."""
+    is_active: bool

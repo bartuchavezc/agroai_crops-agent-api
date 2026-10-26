@@ -8,10 +8,8 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from ..services.account_service import AccountService
-from src.shared.domain.locale import default_currency
 from src.shared.utils.errors import UserAlreadyExistsError
 
-from ..domain.models import ROLE_OWNER
 from ..domain.schemas import (
     AccountRead,
     EnrollRequest,
@@ -59,38 +57,16 @@ async def signup(
     signup_req: SignupRequest,
     user_service: UserService = Depends(Provide["auth.user_service"]),
     auth_service: AuthService = Depends(Provide["auth.auth_service"]),
-    account_service: AccountService = Depends(Provide["auth.account_service"]),
 ):
     if not auth_service.allow_public_signup:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Public signup is disabled. Ask an account owner to add you as a member.",
         )
-    if await user_service.get_user_by_email(signup_req.email):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered.")
-
-    account_name = (
-        signup_req.account_name
-        or " ".join(p for p in (signup_req.first_name, signup_req.last_name) if p)
-        or signup_req.email.split("@")[0]
-    )
-    account = await account_service.create_account(name=account_name, currency=default_currency(signup_req.country))
     try:
-        user = await user_service.create_user(
-            user_create_dto=UserCreate(
-                email=signup_req.email,
-                password=signup_req.password,
-                first_name=signup_req.first_name,
-                last_name=signup_req.last_name,
-                country=signup_req.country,
-                timezone=signup_req.timezone,
-                locale=signup_req.locale,
-                account_id=account.id,
-                role=ROLE_OWNER,
-            )
-        )
-    except UserAlreadyExistsError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+        user = await user_service.create_owner(signup_req)
+    except UserAlreadyExistsError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered.") from None
     return TokenResponse(access_token=auth_service.create_token(user))
 
 

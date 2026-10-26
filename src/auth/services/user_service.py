@@ -5,10 +5,10 @@ User management service.
 from typing import List
 from uuid import UUID
 
-from ..domain.models import User
-from ..domain.schemas import UserCreate, UserLocaleUpdate, UserRead
+from ..domain.models import ROLE_OWNER, User
+from ..domain.schemas import SignupRequest, UserCreate, UserLocaleUpdate, UserRead
 from ..adapters.user_repository import UserRepositoryInterface
-from src.shared.domain.locale import default_locale, default_timezone
+from src.shared.domain.locale import default_currency, default_locale, default_timezone
 from src.shared.utils.errors import UserAlreadyExistsError
 
 
@@ -36,6 +36,34 @@ class UserService:
         if existing_user:
             raise UserAlreadyExistsError(f"User with email {user_create_dto.email} already exists.")
         return await self.user_repository.create(user_create_dto)
+
+    async def create_owner(self, request: SignupRequest) -> User:
+        """A new account and its owner (public signup, or the platform admin adding one).
+
+        Raises:
+            UserAlreadyExistsError: If user with email already exists
+        """
+        if await self.user_repository.get_by_email(request.email):
+            raise UserAlreadyExistsError(f"User with email {request.email} already exists.")
+        account_name = (
+            request.account_name
+            or " ".join(p for p in (request.first_name, request.last_name) if p)
+            or request.email.split("@")[0]
+        )
+        currency = default_currency(request.country)
+        account = await self.account_service.create_account(name=account_name, currency=currency)
+        return await self.create_user(
+            UserCreate(
+                **request.model_dump(exclude={"account_name"}),
+                account_id=account.id,
+                role=ROLE_OWNER,
+            )
+        )
+
+    async def set_active(self, user_id: UUID, active: bool) -> UserRead | None:
+        """Platform admin: enable or disable a user of any account (disabling closes their sessions)."""
+        user = await self.user_repository.set_active(user_id, active)
+        return UserRead.model_validate(user) if user else None
 
     async def get_user(self, user_id: UUID) -> UserRead | None:
         """
