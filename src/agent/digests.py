@@ -98,12 +98,14 @@ class DigestEngine:
         """A new conversation per person with the summary as the agent's message, and the notification opening it."""
         recipients = set(await self.push.digest_recipients(digest.account_id, digest.kind))
         conversations = {}
-        first_line = digest.text.splitlines()[0] if digest.text else ""
+        lines = [line for line in digest.text.splitlines() if line.strip()]
+        first_line = lines[0] if lines else ""
+        chat_text = "\n\n".join(lines)  # one paragraph per line in the chat (markdown joins single breaks)
         for member in members:
             if member.id not in recipients:
                 continue
             conversation_id = await self.conversations.post_nudge(
-                Actor.from_user(member), None, title=digest.title, text=digest.text, field_id=field_id,
+                Actor.from_user(member), None, title=digest.title, text=chat_text, field_id=field_id,
             )
             conversations[str(member.id)] = str(conversation_id)
             await self.notifications.notify_account(
