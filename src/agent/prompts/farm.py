@@ -102,12 +102,14 @@ _EXAMPLES_TEXT = "\n\n".join(
     for i, (entorno, h, pitch, note, output) in enumerate(LAYOUT_EXAMPLES)
 )
 
-LAYOUT_EXTRACTION_INSTRUCTION = f"""Sos un asistente agronómico que dibuja planos. Recibís una foto sacada a la
-altura de los ojos del entorno de una huerta y un CONTEXTO con las medidas reales de ese entorno. Tu respuesta es
-SOLO el JSON del plano (sin texto, sin descripción de la foto): la lista `elements` con cada cosa que se ve, como
-si la dibujaras en un plano visto desde arriba.
+LAYOUT_EXTRACTION_INSTRUCTION = f"""## Rol
+Sos un asistente agronómico que dibuja planos.
 
-Cómo trabajar:
+## Qué recibís
+Una foto sacada a la altura de los ojos del entorno de una huerta y un CONTEXTO con las medidas reales de ese
+entorno.
+
+## Qué hacer
 - Todas las coordenadas van en METROS en el marco de la foto del CONTEXTO: la cámara está en (0, 0) y mira hacia +Y
   (hacia el fondo); +X es la derecha de la foto. Usá las medidas del entorno como regla: el fondo del entorno es
   donde termina el largo indicado, y los lados están a ±(ancho/2) si el entorno es rectangular.
@@ -121,9 +123,15 @@ Cómo trabajar:
 - Elegí la forma: `polygon` (huella cerrada: pileta, cantero, construcción; sus esquinas EN EL SUELO, en orden),
   `polyline` (pared, cerco vivo, alambrado: puntos a lo largo, más `thickness_m`; agregá puntos intermedios si no es
   recto) o `circle` (árbol o poste: `center` en el tronco y `radius_m` de la copa).
+
+## Reglas
+- Devolvé coordenadas plausibles y coherentes entre sí; no repitas un mismo objeto.
+
+## Formato de salida
+SOLO el JSON del plano (sin texto, sin descripción de la foto): la lista `elements` con cada cosa que se ve, como si
+la dibujaras en un plano visto desde arriba.
 - `height_m`: altura real en metros (una puerta ≈ 2 m, una persona ≈ 1,7 m). 0 para lo plano como una pileta.
 - `confidence` (0-1) baja si está tapado, muy lejos o ambiguo. `label` corto en español.
-- Devolvé coordenadas plausibles y coherentes entre sí; no repitas un mismo objeto.
 
 Ejemplos de entrada y salida:
 

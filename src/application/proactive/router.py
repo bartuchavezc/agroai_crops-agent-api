@@ -28,6 +28,7 @@ class DigestRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: Optional[UUID] = None
+    field_id: Optional[UUID] = None
     kind: Literal["daily", "weekly"]
     local_date: date
     period_start: datetime
@@ -105,9 +106,10 @@ async def update_preferences(
 @inject
 async def list_digests(
     kind: Optional[Literal["daily", "weekly"]] = None, limit: int = Query(14, ge=1, le=100),
-    actor: Actor = Depends(get_actor), digests: DigestService = Depends(DIGESTS),
+    field_id: Optional[UUID] = None, actor: Actor = Depends(get_actor), digests: DigestService = Depends(DIGESTS),
 ):
-    return await digests.list_digests(actor, kind, limit)
+    """One per field and day (or week), written by the agent; `data.conversations` says where each person got it."""
+    return await digests.list_digests(actor, kind, limit, field_id)
 
 
 @router.get("/digests/preview", response_model=DigestRead, summary="The summary so far (not saved)")
@@ -116,8 +118,8 @@ async def preview_digest(
     kind: Literal["daily", "weekly"] = "daily", actor: Actor = Depends(get_actor),
     digests: DigestService = Depends(DIGESTS),
 ):
-    """How today (or the week up to today) reads right now, without waiting for the evening one."""
-    return await digests.build(actor, kind, save=False)
+    """How today (or the week up to today) reads right now for the whole account, in plain text: no model call."""
+    return await digests.preview(actor, kind)
 
 
 @router.get("/digests/{digest_id}", response_model=DigestRead, summary="A summary")

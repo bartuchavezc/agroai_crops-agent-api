@@ -18,6 +18,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
+from src.agent.prompts.transcription import TRANSCRIBE_PROMPT
 from src.shared.utils.errors import (
     CropAnalysisError,
     ProviderError,
@@ -141,12 +142,6 @@ async def validate_gemini_key(api_key: str) -> None:
     except Exception as exc:  # noqa: BLE001 - translated below
         raise translate_provider_error(exc) from None
 
-
-TRANSCRIBE_PROMPT = (
-    "Transcribí este audio palabra por palabra, en el idioma en que se habla, con puntuación. Es una persona contando "
-    "lo que hizo o vio en su huerta o campo: respetá nombres de cultivos, productos, números, dosis y unidades tal "
-    "como se dicen. Solo la transcripción, sin comentarios. Si no se entiende nada, devolvé una cadena vacía."
-)
 
 class GeminiGateway:
     """Builds per-user clients and wraps the one-shot calls used outside the agent loop."""

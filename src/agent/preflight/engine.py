@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 from uuid import UUID
 
+from ..prompts.preflight import ROUTER_INSTRUCTION, build_router_prompt
 from ..usage import TurnUsage
 from .blocks import build_block
 from .plan import PreflightPlan, ToolRequest
@@ -29,35 +30,6 @@ MAX_SKILLS = 6
 MAX_TOOLS = 6
 MIN_MESSAGE_CHARS = 12  # "hola", "gracias", "ok": nothing to gather, don't pay for a router call
 TOOL_RESULT_MAX_CHARS = 6000
-
-ROUTER_INSTRUCTION = """Eres el enrutador de contexto de AgroAI, un asistente agronómico. NO respondes a la persona:
-decides qué hay que reunir ANTES de que el asistente responda, para que lo tenga todo en una sola ronda.
-
-Devuelves un plan con tres cosas:
-- skills: nombres EXACTOS del menú de skills (máximo 6, los más importantes primero).
-- tools: herramientas de lectura del menú, con sus argumentos como objeto JSON en texto (máximo 6).
-- web_query: una sola búsqueda web específica (incluye el país y el cultivo), o null.
-
-Criterios:
-- Elige solo lo que cambia la respuesta. Un saludo, un agradecimiento, una confirmación o algo que la persona cuenta
-  haber hecho (regué, sembré, cosechamos) no necesita nada: listas vacías y web_query null.
-- Cultivo mencionado, o activo en el campo o zona de que se trata: su `ficha-<cultivo>`. Si la pregunta es un
-  síntoma, una plaga o una enfermedad: además `plagas-<cultivo>` y, si el síntoma sugiere nutrición o agua, el
-  fragmento `fisiologia-*` que corresponda. Pregunta por varios cultivos o por una zona: la ficha de cada uno.
-- Fertilizar, suelo o dosis de nutrientes: `core-fertilizantes-y-enmiendas`. Aplicar un plaguicida o seguridad del
-  aplicador: `core-uso-y-manejo-de-plaguicidas-mx`. Malezas resistentes: `core-resistencia-a-herbicidas-hrac`.
-  Fungicidas y su momento: `core-fungicidas-eficacia-y-momento-uc`. Orgánico, certificación, inocuidad, trazabilidad:
-  la guía que corresponda. Planificar hortalizas: además `inocuidad-produccion-primaria-vegetales`.
-- Datos vivos solo si el tema es el estado del cultivo, un estrés, el riego, el clima o una decisión que dependa de
-  ellos: `get_recent_weather_summary` (cómo fue el último mes), `get_forecast`, `get_current_weather`,
-  `get_irrigation_recommendation`, `get_zone_satellite_status`, más los registros del cultivo (`list_lots`,
-  `list_recent_events`). Para ver los datos del cultivo en el campo o la zona correctos, usa el nombre del campo de
-  la cuenta como argumento `field`.
-- web_query solo para productos, dosis, normativa o registro, precios, calendarios de siembra de la zona o plagas
-  nuevas; escrita para la fuente oficial del país de la persona. Nunca para conocimiento general que ya está en
-  un skill.
-- No inventes nombres: si algo no está en los menús, no lo pidas. No incluyas herramientas que escriban o borren."""
-
 
 @dataclass
 class PreflightInputs:
@@ -92,12 +64,8 @@ def _router_prompt(inp: PreflightInputs) -> str:
         f"- {name}: {' '.join(s.frontmatter.description.split())[:240]}" for name, s in inp.skills.items()
     )
     tools = "\n".join(_tool_signature(fn) for name, fn in inp.tools.items() if name in READ_ONLY_TOOLS)
-    recent = "\n".join(f"{role}: {text[:300]}" for role, text in inp.recent[-4:]) or "(conversación nueva)"
-    return (
-        f"## Mensaje de la persona\n{inp.message}\n\n## País de la persona\n{inp.country}\n\n"
-        f"## Estado de la cuenta\n{inp.account_text}\n\n## Conversación reciente\n{recent}\n\n"
-        f"## Menú de skills\n{skills}\n\n## Menú de herramientas de lectura\n{tools}"
-    )
+    recent = "\n".join(f"{role}: {text[:300]}" for role, text in inp.recent[-4:])
+    return build_router_prompt(inp.message, inp.country, inp.account_text, recent, skills, tools)
 
 
 class PreflightEngine:

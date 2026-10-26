@@ -1,4 +1,5 @@
 """Shared instructions for the analyses that get reference material and field data (reasoning/analysis_context)."""
+from ._common import with_context
 
 # Appended to every analysis instruction, ahead of the reference material.
 ANALYSIS_GROUNDING = """## Cómo usar el material de referencia y los datos
@@ -20,3 +21,20 @@ DEEP_REFINE_INSTRUCTION = """Con tu primer análisis y las fuentes de arriba, ha
 - Usa las fuentes para afinar las causas, el manejo y los plazos; cuando uses una, menciónala por su título dentro del
   texto que corresponda. No inventes datos que no estén en el material, en los datos del campo o en las fuentes.
 - Es el análisis largo y cuidadoso: razona la evidencia con calma antes de concluir."""
+
+
+def build_analysis_system(instruction: str, knowledge: str, references: str) -> str:
+    """An analysis' system instruction: its own, the grounding rules, the country/profile knowledge and the fichas."""
+    return f"{instruction}\n\n{ANALYSIS_GROUNDING}\n\n{knowledge}\n\n# Material de referencia\n\n{references}"
+
+
+def with_field_data(prompt: str, data_lines: list[str]) -> str:
+    return with_context(prompt, "Datos del campo y registros", data_lines)
+
+
+def build_refine_prompt(prompt: str, first_analysis_json: str, web_sources: str) -> str:
+    """The deep pass: the same prompt, the first analysis and what the web research found."""
+    return (
+        f"{prompt}\n\n## Tu primer análisis (a refinar)\n{first_analysis_json}\n\n"
+        f"## Fuentes consultadas en la web\n{web_sources}\n\n{DEEP_REFINE_INSTRUCTION}"
+    )

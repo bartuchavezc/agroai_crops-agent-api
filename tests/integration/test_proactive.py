@@ -5,10 +5,12 @@ applied after — whether to write first, in a conversation the push opens.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.agent.digests import DigestWriting
 from src.agent.nudges import NudgeDecision, NudgeMessage
 from src.application.proactive.push import in_quiet_hours
 from src.shared.domain.actor import Actor
@@ -104,15 +106,6 @@ async def test_rain_is_logged_once_per_day_and_the_summary_tells_facts_and_gaps(
     assert "No se hizo riego en Cantero 1: llovió." in text
     assert "Llovió 18.4 mm en 1 día." in text and "Pérdida: 3" in text
 
-    actor = Actor(user_id=owner["user"]["id"], account_id=owner["account"]["id"], role="owner",
-                  timezone=owner["user"].get("timezone"))
-    digest = await container.application.digest_service().build(actor, "daily")
-    again = await container.application.digest_service().build(actor, "daily")
-    assert digest.id == again.id
-    notes = (await client.get("/api/v1/notifications", headers=h)).json()
-    assert any(n["type"] == "digest" and n["entity_id"] == str(digest.id) for n in notes)
-    listed = (await client.get("/api/v1/digests", headers=h)).json()
-    assert [d["id"] for d in listed] == [str(digest.id)]
 
 
 @pytest.fixture
@@ -120,6 +113,69 @@ def no_forecast(container):
     weather = container.data_providers.weather_service()
     with patch.object(weather, "daily_forecast", AsyncMock(return_value=[])):
         yield
+
+
+async def test_the_morning_summary_is_written_per_field_and_reaches_everyone_in_the_chat(
+    client, signup, add_member, with_key, container, no_forecast  # noqa: F811
+):
+    owner = await signup("summary")
+    h = owner["headers"]
+    field, zone, lot = await _field_with_lot(client, h)
+    await _field_with_lot(client, h, name="Galpón vacío")  # also growing: gets its own summary
+    staff = await add_member(owner, "staff")
+    engine = container.agent.digest_engine()
+    members = (await container.agent.nudge_engine().accounts())[uuid.UUID(owner["account"]["id"])]
+    tz = ZoneInfo(next(m for m in members if m.role == "owner").timezone or "UTC")
+    today = datetime.now(tz).date()
+    # told in the chat yesterday ("sumalo al resumen"): an observation in the bitácora
+    noon = datetime.combine(today - timedelta(days=1), datetime.min.time().replace(hour=12), tz)
+    r = await client.post(f"{FARM}/events", headers=staff["headers"], json={
+        "field_id": field["id"], "zone_id": zone["id"], "type": "observation",
+        "notes": "las lechugas del fondo están más chicas",
+        "occurred_at": noon.isoformat(),
+    })
+    assert r.status_code == 201, r.text
+    weather = container.data_providers.weather_service()
+    hot = [{"date": today.isoformat(), "temp_max_c": 33, "temp_min_c": 19, "temp_mean_c": 26,
+            "precipitation_mm": 0, "et0_mm": 6.1}]
+
+    # without the owner's key: the plain version goes, still to everyone and still in the chat
+    with patch.object(weather.open_meteo, "recent_daily", AsyncMock(return_value=hot)):
+        plain = await engine.run_account(members, "daily", today)
+    assert len(plain) == 2 and {d.data["writer"] for d in plain} == {"template"}
+
+    # with it: the agent writes from the facts, once per field and day
+    await with_key(owner)
+    gateway = container.agent.gemini()
+    writing = DigestWriting(text="Ayer hizo calor (33 °C, ET0 6 mm) y no hay riego en el Cantero 1.",
+                            questions=["¿Se regó el Cantero 1 ayer?"])
+    day = today - timedelta(days=1)
+    yesterday_hot = [{**hot[0], "date": day.isoformat()}]
+    with patch.object(weather.open_meteo, "recent_daily", AsyncMock(return_value=yesterday_hot)), \
+            patch.object(gateway, "generate_structured", AsyncMock(return_value=writing)) as write:
+        digests = await engine.run_account(members, "daily", day)
+        assert await engine.run_account(members, "daily", day) == []  # once
+    assert len(digests) == 2 and write.await_count == 2
+    quinta = next(d for d in digests if d.field_id == uuid.UUID(field["id"]))
+    prompt = next(c.kwargs["contents"] for c in write.await_args_list if "«Quinta»" in c.kwargs["contents"])
+    assert "las lechugas del fondo están más chicas" in prompt and "et0_mm" in prompt
+    assert '"irrigated_in_period": false' in prompt
+    assert {c.args[0] for c in write.await_args_list} == {uuid.UUID(owner["user"]["id"])}  # the owner's key
+    assert quinta.data["writer"] == "agent" and quinta.text.endswith("¿Se regó el Cantero 1 ayer?")
+    assert quinta.title == f"Resumen del {day:%d/%m} · Quinta"
+
+    # everyone gets it as the agent's message, and the notification opens that conversation
+    for person in (owner, staff):
+        conversation_id = quinta.data["conversations"][person["user"]["id"]]
+        messages = (await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages",
+                                     headers=person["headers"])).json()
+        assert (messages[0]["role"], messages[0]["origin"]) == ("assistant", "nudge")
+        assert "no hay riego en el Cantero 1" in messages[0]["content"]
+        notes = (await client.get("/api/v1/notifications", headers=person["headers"])).json()
+        assert any(n["type"] == "digest" and n["entity_id"] == conversation_id for n in notes)
+    listed = (await client.get(f"/api/v1/digests?field_id={field['id']}", headers=staff["headers"])).json()
+    assert str(quinta.id) in [d["id"] for d in listed]
+    assert {d["field_id"] for d in listed} == {field["id"]}
 
 
 async def test_the_assistant_writes_first_within_the_persons_limits(
@@ -188,7 +244,7 @@ async def test_push_subscriptions_and_preferences(client, signup, add_member, co
     owner = await signup("push")
     staff = await add_member(owner, "staff")
     prefs = (await client.get("/api/v1/me/notification-preferences", headers=staff["headers"])).json()
-    assert (prefs["daily_digest"], prefs["max_nudges_per_day"], prefs["push_devices"]) == (False, 2, 0)
+    assert (prefs["daily_digest"], prefs["max_nudges_per_day"], prefs["push_devices"]) == (True, 2, 0)
     sub = {"endpoint": "https://push.example/abc", "keys": {"p256dh": "k", "auth": "a"}}
     assert (await client.post("/api/v1/push/subscriptions", headers=staff["headers"], json=sub)).json() == {
         "devices": 1
@@ -198,7 +254,11 @@ async def test_push_subscriptions_and_preferences(client, signup, add_member, co
     }
     push = container.application.push_service()
     recipients = await push.digest_recipients(uuid.UUID(owner["account"]["id"]), "daily")
-    assert [str(r) for r in recipients] == [owner["user"]["id"]]
+    assert {str(r) for r in recipients} == {owner["user"]["id"], staff["user"]["id"]}  # everyone, unless they opt out
+    await client.put("/api/v1/me/notification-preferences", headers=staff["headers"], json={"daily_digest": False})
+    assert [str(r) for r in await push.digest_recipients(uuid.UUID(owner["account"]["id"]), "daily")] == [
+        owner["user"]["id"]
+    ]
 
     # with push configured, a notification goes to the phone; the bitácora's own entries don't
     with patch.object(push, "private_key", "x"), patch.object(push, "public_key", "y"), \

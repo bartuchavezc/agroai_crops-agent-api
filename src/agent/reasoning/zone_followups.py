@@ -18,6 +18,7 @@ from typing import Optional
 from src.application.farm.schemas import FieldEventRead
 from src.application.followups.schemas import FollowUpRead
 
+from ..prompts.followups import FOLLOWUP_CLOSING, NO_BEFORE_PHOTO, NOW_LABEL, before_label, followup_header
 from .periodic_report import FollowUpEvaluation, ZoneIssue, format_event_history
 from .zone_photos import ZonePhoto
 
@@ -78,19 +79,15 @@ def followup_pass_contents(inputs: list[FollowUpInput]) -> list:
     contents: list = []
     for item in inputs:
         f = item.followup
-        hint = f" Qué mirar: {f.photo_hint}." if f.photo_hint else ""
         history = "; ".join(format_event_history(list(reversed(item.history[:HISTORY_ENTRIES]))))
-        contents.append(
-            f"Seguimiento id={f.id}: {f.title} ({f.kind}), detectado el {f.created_at.date().isoformat()}.{hint}"
-            + (f"\nHistoria (más vieja primero): {history}" if history else "")
-        )
+        contents.append(followup_header(f.id, f.title, f.kind, f.created_at.date(), f.photo_hint, history))
         if item.previous_part is not None:
-            contents += [f"ANTES ({item.previous_at.date().isoformat()}):", item.previous_part]
+            contents += [before_label(item.previous_at.date()), item.previous_part]
         else:
-            contents.append("ANTES: no hay foto anterior; compará contra la historia.")
-        contents.append("AHORA:")
+            contents.append(NO_BEFORE_PHOTO)
+        contents.append(NOW_LABEL)
         contents += [p.part for p in item.photos]
-    contents.append("Evaluá la evolución de cada seguimiento de arriba, uno por uno, con su id tal cual.")
+    contents.append(FOLLOWUP_CLOSING)
     return contents
 
 

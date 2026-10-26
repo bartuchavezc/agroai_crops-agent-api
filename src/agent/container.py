@@ -3,6 +3,7 @@ from google.adk.sessions import DatabaseSessionService
 
 from .conversations.service import ConversationService
 from .memory.service import MemoryService
+from .digests import DigestEngine
 from .nudges import NudgeEngine
 from .providers.credentials_service import CredentialsService
 from .providers.encryption import SecretBox
@@ -99,6 +100,15 @@ class AgentContainer(containers.DeclarativeContainer):
         max_image_side=config.gemini.max_image_side,
         preflight_enabled=config.agent.preflight,
         preflight_max_tokens=config.agent.preflight_max_tokens,
+    )
+    digest_engine = providers.Singleton(
+        DigestEngine,
+        gemini=gemini,
+        digest_service=application.digest_service,
+        farm_service=application.farm_service,
+        conversation_service=conversation_service,
+        push_service=application.push_service,
+        notification_service=application.notification_service,
     )
     nudge_engine = providers.Singleton(
         NudgeEngine,

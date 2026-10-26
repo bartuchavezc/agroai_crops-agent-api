@@ -1,7 +1,8 @@
 """The proactive loop (`python -m src.batch proactive --every-minutes 15`): every few minutes it checks, per account
-and in the account's own time, whether it is time for the rain log, the evening summary, the weekly one or one of the
-nudge windows — and runs each at most once. What already ran is read back from the database (digests, nudge log), so
-a restart neither repeats nor skips anything."""
+and in the account's own time, whether it is time for the rain log, the morning summary of each field (about the day
+before), the weekly one (Monday, about the week before) or one of the nudge windows — and runs each at most once.
+What already ran is read back from the database (digests, nudge log), so a restart neither repeats nor skips
+anything."""
 import logging
 from datetime import datetime, time, timedelta
 from typing import Optional
@@ -10,7 +11,6 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 
 from src.application.proactive.models import NudgeLog
-from src.shared.domain.actor import Actor
 from src.shared.domain.base import utcnow
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ class ProactiveJob:
     def __init__(self, container):
         self.app = container.application
         self.nudges = container.agent.nudge_engine()
+        self.digests = container.agent.digest_engine()
         self.config = container.config.proactive()
         self._last_rain: Optional[datetime] = None
 
@@ -45,7 +46,6 @@ class ProactiveJob:
             done["rain"] = await self.app.rain_log_service().run()
             self._last_rain = now
 
-        digests = self.app.digest_service()
         windows = [("morning", _clock(self.config["nudge_windows"][0]))]
         if len(self.config["nudge_windows"]) > 1:
             windows.append(("evening", _clock(self.config["nudge_windows"][1])))
@@ -54,13 +54,12 @@ class ProactiveJob:
             tz = ZoneInfo(owner.timezone) if owner.timezone else ZoneInfo("UTC")
             local = now.astimezone(tz)
             day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
-            actor = Actor.from_user(owner)
             try:
                 if local.hour >= self.config["daily_digest_hour"]:
-                    await digests.build(actor, "daily", local.date())
-                    done["digests"] += 1
+                    yesterday = local.date() - timedelta(days=1)
+                    done["digests"] += len(await self.digests.run_account(members, "daily", yesterday))
                     if local.weekday() == self.config["weekly_digest_weekday"]:
-                        await digests.build(actor, "weekly", local.date())
+                        done["digests"] += len(await self.digests.run_account(members, "weekly", yesterday))
                 for window, at in windows:
                     # A window runs once a day, from its time until the next window (a late start still runs it).
                     if local.time() >= at and not await self._ran(account_id, window, day_start):
