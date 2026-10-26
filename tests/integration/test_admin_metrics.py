@@ -136,3 +136,62 @@ async def test_overview_and_listings_reflect_usage(client, container, signup, ad
     assert len(series["points"]) == 14
     assert sum(p["user_messages"] for p in series["points"]) >= 4
     assert sum(p["signups"] for p in series["points"]) >= 3
+
+
+async def test_admin_user_management_is_hidden_from_regular_users(client, signup):
+    user = await signup("notadmin-manage")
+    body = {"email": f"x-{uuid.uuid4().hex[:8]}@example.com", "password": "secret-pass-1"}
+    created = await client.post(ADMIN + "/users", headers=user["headers"], json=body)
+    assert created.status_code == 404
+    path = f"{ADMIN}/users/{user['user']['id']}"
+    toggled = await client.patch(path, headers=user["headers"], json={"is_active": False})
+    assert toggled.status_code == 404
+
+
+async def test_admin_adds_an_owner_with_a_new_account(client):
+    headers = await _admin_headers(client)
+    email = f"owner-{uuid.uuid4().hex[:8]}@example.com"
+    body = {"email": email, "password": "secret-pass-1", "first_name": "Ana", "account_name": "Huerta de Ana"}
+    created = await client.post(ADMIN + "/users", headers=headers, json=body)
+    assert created.status_code == 201, created.text
+    assert created.json()["role"] == "owner"
+
+    login = await client.post("/api/v1/auth/login", json={"email": email, "password": "secret-pass-1"})
+    assert login.status_code == 200
+    owner_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    me = (await client.get("/api/v1/auth/me", headers=owner_headers)).json()
+    assert me["account"]["name"] == "Huerta de Ana"
+
+    duplicate = await client.post(ADMIN + "/users", headers=headers, json={**body, "email": email.upper()})
+    assert duplicate.status_code == 409
+
+
+async def test_admin_disables_and_enables_a_user(client, signup):
+    headers = await _admin_headers(client)
+    user = await signup("toggled")
+    path = f"{ADMIN}/users/{user['user']['id']}"
+
+    disabled = await client.patch(path, headers=headers, json={"is_active": False})
+    assert disabled.status_code == 200 and disabled.json()["is_active"] is False
+    assert (await client.get("/api/v1/auth/me", headers=user["headers"])).status_code == 401
+    login = await client.post("/api/v1/auth/login", json={"email": user["email"], "password": "secret-pass-1"})
+    assert login.status_code == 401
+    rows = {r["id"]: r for r in (await client.get(ADMIN + "/users", headers=headers)).json()}
+    assert rows[user["user"]["id"]]["is_active"] is False
+
+    enabled = await client.patch(path, headers=headers, json={"is_active": True})
+    assert enabled.status_code == 200 and enabled.json()["is_active"] is True
+    login = await client.post("/api/v1/auth/login", json={"email": user["email"], "password": "secret-pass-1"})
+    assert login.status_code == 200
+    # The session that was open when they were disabled stays closed.
+    assert (await client.get("/api/v1/auth/me", headers=user["headers"])).status_code == 401
+
+    missing = await client.patch(f"{ADMIN}/users/{uuid.uuid4()}", headers=headers, json={"is_active": False})
+    assert missing.status_code == 404
+
+
+async def test_admin_cannot_disable_themselves(client):
+    headers = await _admin_headers(client)
+    me = (await client.get(ADMIN + "/me", headers=headers)).json()
+    response = await client.patch(f"{ADMIN}/users/{me['id']}", headers=headers, json={"is_active": False})
+    assert response.status_code == 400

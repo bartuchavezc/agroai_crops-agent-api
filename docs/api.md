@@ -145,7 +145,7 @@ tareas (`/tasks`).
 ## Admin de plataforma (panel `agroai_admin`)
 Solo para los emails de `PLATFORM_ADMIN_EMAILS` (sin distinguir mayúsculas); cualquier otro usuario recibe 404.
 Se loguea con `/auth/login` como cualquier usuario. Solo agregados y metadata: nunca el texto de los chats, las
-fotos, la memoria del agente ni las keys.
+fotos, la memoria del agente ni las keys. Además puede dar de alta owners y habilitar o deshabilitar usuarios.
 
 | Método | Ruta | Notas |
 |---|---|---|
@@ -154,6 +154,8 @@ fotos, la memoria del agente ni las keys.
 | GET | `/admin/timeseries?days=30` | Serie diaria (zona `APP_TIMEZONE`): altas, usuarios activos, mensajes, conversaciones, sesiones, fotos, eventos |
 | GET | `/admin/users` | Cada usuario con cuenta, rol, estado, última actividad y contadores de uso |
 | GET | `/admin/accounts` | Cada cuenta con miembros por rol, campos, superficie, ciclos, fotos, chats y última actividad |
+| POST | `/admin/users` | Alta de un owner con cuenta nueva (mismo body que `/auth/signup`; anda aunque `ALLOW_PUBLIC_SIGNUP` esté apagado). 201 `UserRead`, 409 si el email ya existe |
+| PATCH | `/admin/users/{id}` | `{is_active}`: deshabilita (no puede ingresar y se revocan sus tokens; sus datos quedan) o habilita a cualquier usuario. 400 si el admin se deshabilita a sí mismo |
 
 Definiciones: **actividad** = mensaje al agente, foto subida o evento cargado a mano. **Sesión** = mensajes de un
 usuario (y respuestas del agente) separados por menos de 30 min; su largo va del primer mensaje a la última
