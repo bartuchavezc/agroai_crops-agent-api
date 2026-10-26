@@ -392,9 +392,12 @@ class MarketService:
             for listing_id, kg in wanted.items():
                 listing, lot, producer, _, _, state = rows[listing_id]
                 now = state["availability"]["kind"] == "now"
-                limit = listing.stock_kg if now else listing.weekly_capacity_kg
+                if now:
+                    limit = listing.stock_kg
+                else:
+                    limit = listing.weekly_capacity_kg - await self._reserved(session, listing.id)
                 if kg > limit + 1e-9:
-                    raise InvalidInputError(f"{listing.title}: only {limit:g} kg available.")
+                    raise InvalidInputError(f"{listing.title}: only {max(limit, 0):g} kg available.")
                 if now:
                     listing.stock_kg = round(listing.stock_kg - kg, 3)
                 elif state["available_from"] and (latest_from is None or state["available_from"] > latest_from):
@@ -437,6 +440,15 @@ class MarketService:
             await self._notify_new(part, order, items)
         read = await self.buyer_order(order.code, token)
         return OrderPlaced(**read.model_dump(), token=token)
+
+    async def _reserved(self, session: AsyncSession, listing_id: UUID) -> float:
+        """What open presale orders already reserved of a listing: together they can't pass its weekly capacity."""
+        total = await session.execute(
+            select(func.coalesce(func.sum(OrderItem.kg), 0.0)).join(OrderPart, OrderPart.id == OrderItem.part_id)
+            .where(OrderItem.listing_id == listing_id, OrderItem.from_stock.is_(False),
+                   OrderPart.status.in_(OPEN_PART_STATUSES))
+        )
+        return float(total.scalar_one())
 
     async def _notify_new(self, part: OrderPart, order: Order, items: list[OrderItem]) -> None:
         what = ", ".join(f"{i.title} {i.kg:g} kg" for i in items)

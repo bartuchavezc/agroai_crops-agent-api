@@ -191,6 +191,10 @@ async def test_listing_follows_its_lot(client, signup):
     })
     assert ok.status_code == 201, ok.text
     assert ok.json()["delivery_date"] >= later
+    full = await client.post(f"{M}/public/orders", json={  # the 5 kg/week are reserved now
+        "buyer": _buyer("otro@local.com"), "items": [{"listing_id": listing["id"], "kg": 1}],
+    })
+    assert full.status_code == 400
 
     # the lot failed: off sale everywhere, and the producer sees why
     await client.put(f"{FARM}/lots/{lot['id']}", headers=h, json={"status": "failed"})
