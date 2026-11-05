@@ -252,16 +252,29 @@ class ConversationService:
             await self._owned(session, actor, conversation_id)
             last_user = (await session.execute(
                 select(func.max(ConversationMessage.created_at)).where(
-                    ConversationMessage.conversation_id == conversation_id, ConversationMessage.role == "user"
+                    ConversationMessage.conversation_id == conversation_id, ConversationMessage.role == "user",
+                    ConversationMessage.origin == "turn",
                 )
             )).scalar()
-            stmt = select(ConversationMessage.content).where(
+            stmt = select(ConversationMessage.role, ConversationMessage.content).where(
                 ConversationMessage.conversation_id == conversation_id, ConversationMessage.origin != "turn"
             )
             if last_user is not None:
                 stmt = stmt.where(ConversationMessage.created_at > last_user)
-            rows = (await session.execute(stmt.order_by(ConversationMessage.created_at))).scalars().all()
-        return [r for r in rows if r]
+            rows = (await session.execute(stmt.order_by(ConversationMessage.created_at))).all()
+        return [f"(la persona respondió con un toque) {content}" if role == "user" else content
+                for role, content in rows if content]
+
+    async def post_reply(self, actor: Actor, conversation_id: UUID, text: str) -> None:
+        """A one-tap answer to the assistant's message (a notification button): it shows in the chat as the person's,
+        and the next turn is told about it, without running the agent now."""
+        async with self.session_factory() as session:
+            conversation = await self._owned(session, actor, conversation_id)
+            session.add(ConversationMessage(
+                conversation_id=conversation.id, role="user", content=text, origin="button", created_at=utcnow()
+            ))
+            conversation.updated_at = utcnow()
+            await session.commit()
 
     async def post_nudge(self, actor: Actor, conversation_id: Optional[UUID], title: str, text: str,
                          field_id: Optional[UUID] = None, attachments: Optional[list[dict]] = None) -> UUID:

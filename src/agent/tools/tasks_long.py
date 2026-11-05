@@ -22,6 +22,7 @@ def long_task_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             {"lot_ids": [str(lot.id) for lot in lots], "replan": replan, "reason": reason},
             conversation_id=ctx.conversation_id,
         )
+        ctx.attachments.append({"type": "task", "task_id": str(task.id), "caption": task.goal})
         return {"task_id": str(task.id), "status": task.status, "lots": len(lots)}
 
     @tool
@@ -30,6 +31,7 @@ def long_task_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         proponeme las zonas que faltan»). It runs in the background with its own to-do list; any change to the
         person's data comes back as a proposal to confirm. Say in one line that you started it."""
         task = await deps.long_tasks.create(ctx.actor, "general", goal, {}, conversation_id=ctx.conversation_id)
+        ctx.attachments.append({"type": "task", "task_id": str(task.id), "caption": task.goal})
         return {"task_id": str(task.id), "status": task.status}
 
     @tool

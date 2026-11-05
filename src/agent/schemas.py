@@ -202,12 +202,15 @@ class Source(BaseModel):
 
 
 class Attachment(BaseModel):
-    """zone_map: an image (image_identifier, field_id); proposal: changes for the user to confirm (proposal_id)."""
-    type: Literal["zone_map", "proposal"]
+    """zone_map: an image (image_identifier, field_id); proposal: changes for the user to confirm (proposal_id);
+    quick_replies: one-tap answers to the agent's question (options); task: background work started (task_id)."""
+    type: Literal["zone_map", "proposal", "quick_replies", "task"]
     image_identifier: Optional[str] = None
     field_id: Optional[UUID] = None
     proposal_id: Optional[UUID] = None
-    caption: str
+    task_id: Optional[UUID] = None
+    options: list[str] = Field(default_factory=list)
+    caption: str = ""
 
 
 class ToolCallInfo(BaseModel):

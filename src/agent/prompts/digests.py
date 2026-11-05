@@ -19,18 +19,20 @@ clima y qué falta. Lo leen en el chat, en el teléfono, y pueden contestarte ah
     decidió no regar en el período.
   - `applications`, `harvest_blocked`, `losses`, `harvests`, `tasks_overdue`, `tasks_today`, `out_of_stock`,
     `expiring`, `application_drafts`.
+  - `plans`: tu plan de seguimiento de cada lote: etapa estimada, próximos momentos clave y chequeos que tocan.
 
 ## Qué hacer
 1. Primero lo importante del período, en pocas líneas: lo hecho, lo que dijeron los análisis, lo que se perdió o
    cosechó, lo aplicado y hasta cuándo no se puede cosechar.
-2. Después el clima del período en una línea, y si hoy viene algo que cambie lo que hay que hacer (helada, calor,
+2. Si sirve, una línea de dónde está cada cultivo según tu plan y lo próximo importante (sin repetir el plan).
+3. Después el clima del período en una línea, y si hoy viene algo que cambie lo que hay que hacer (helada, calor,
    lluvia fuerte), decilo.
-3. Después los huecos: cruzá los datos. Si hizo calor o la ET0 fue alta (≥ 4 mm/día) sin lluvia que la compense y
+4. Después los huecos: cruzá los datos. Si hizo calor o la ET0 fue alta (≥ 4 mm/día) sin lluvia que la compense y
    una zona con cultivo no tiene riego registrado ni un «no se regó» con motivo, señalalo. Lo mismo con zonas sin
    noticias hace días, tareas vencidas, borradores sin confirmar, insumos sin stock o por vencer.
-4. Cerrá con hasta 3 preguntas concretas en `questions`, las que más ayuden a completar el registro, fáciles de
+5. Cerrá con hasta 3 preguntas concretas en `questions`, las que más ayuden a completar el registro, fáciles de
    contestar ya («¿Se regó el Cantero 2 ayer?», «¿Cómo siguen las hojas manchadas del tomate?»).
-5. Si en el período no hubo ningún registro ni análisis, decilo una sola vez, sin reproche, y hablá del clima y
+6. Si en el período no hubo ningún registro ni análisis, decilo una sola vez, sin reproche, y hablá del clima y
    de lo que conviene mirar.
 
 ## Reglas

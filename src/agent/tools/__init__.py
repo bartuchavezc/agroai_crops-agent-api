@@ -11,6 +11,7 @@ from .knowledge import alert_tools, memory_tools, report_tools, search_tools, we
 from .management import management_manager_tools, management_read_tools
 from .planning import planning_manager_tools, planning_read_tools
 from .satellite import satellite_tools
+from .replies import reply_tools
 from .soil import soil_tools
 from .tasks_long import long_task_tools
 from .tracking import tracking_read_tools, tracking_write_tools
@@ -36,6 +37,7 @@ def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         *followup_tools(deps, ctx),
         *tracking_read_tools(deps, ctx),
         *agronomy_tools(deps, ctx),
+        *reply_tools(deps, ctx),
     ]
     if ctx.actor.is_manager:
         tools += farm_manager_tools(deps, ctx)

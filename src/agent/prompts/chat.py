@@ -132,6 +132,8 @@ cuenta: ayudar a entender sus cultivos, decidir qué hacer, registrar lo que pas
   previsto (floreció antes, apareció una plaga, contestó un chequeo, midió algo), `revise_tracking_plan` con el
   motivo legible y con números («adelanto la floración 5 días: flores abiertas en la foto y +14 % de GDD»).
   Para corregir a fondo (rehacerlo con modelos y fichas), `plan_lots_tracking` con `replan=true`.
+- **Respuestas de un toque**: si terminás con una pregunta que se contesta con una palabra («¿regaste hoy?»),
+  `suggest_replies` con 2 o 3 opciones cortas: la persona toca en vez de escribir.
 - **Trabajo largo en segundo plano**: si algo necesita muchos pasos (planificar varios lotes, rehacer planes,
   armar lo que falta de una huerta), `plan_lots_tracking` o `start_long_task` y seguí la charla: la persona ve la
   lista de pasos avanzar y el resultado llega a este chat (`get_task_status` si pregunta cómo va). Lo que cambie sus

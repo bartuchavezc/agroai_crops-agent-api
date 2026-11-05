@@ -51,12 +51,19 @@ class Signal(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class PlanRef(BaseModel):
+    lot_id: str
+    item_id: str
+
+
 class NudgeMessage(BaseModel):
     recipient_user_id: str
     kind: Literal["ask", "recommend", "warn", "info"]
     title: str = Field(description="A few words for the phone notification, in Spanish")
     text: str = Field(description="The message itself, two or three short lines at most")
     signal_keys: list[str] = Field(default_factory=list)
+    quick_replies: list[str] = Field(default_factory=list, description="Up to 3 one-tap answers, 1-3 words each")
+    plan_ref: Optional[PlanRef] = Field(default=None, description="The tracking-plan check this message asks for")
 
 
 class NudgeDecision(BaseModel):
@@ -68,7 +75,7 @@ class NudgeEngine:
     def __init__(
         self, session_factory: async_sessionmaker[AsyncSession], gemini, farm_service, application_service,
         supply_service, task_service, weather_service, alert_service, conversation_service, push_service,
-        notification_service, profile_service=None, engagement_service=None,
+        notification_service, profile_service=None, engagement_service=None, tracking_service=None,
     ):
         self.session_factory = session_factory
         self.gemini = gemini
@@ -83,6 +90,7 @@ class NudgeEngine:
         self.notifications = notification_service
         self.profiles = profile_service
         self.engagement = engagement_service
+        self.tracking = tracking_service
 
     # ---------- signals ----------
 
@@ -181,7 +189,62 @@ class NudgeEngine:
         for alert in (await self.alerts.get_active_alerts(actor))[:5]:
             out.append(Signal(key=f"alert:{alert.id}", kind="alert", urgent=alert.severity in ("high", "critical"),
                               text=f"Alerta [{alert.severity}]: {alert.message}"))
+        out += await self._plan_signals(actor, lots, today, now)
+        out += self._sowing_signals(fields, zones, lots, today)
         return out
+
+    async def _plan_signals(self, actor: Actor, lots, today, now: datetime) -> list[Signal]:
+        """What the agent's own tracking plans say: checks due, key moments about to come, plans no observation has
+        corrected for a while (the drift the person can fix with one photo)."""
+        if self.tracking is None:
+            return []
+        labels = {lot.id: lot.label or "lote" for lot in lots}
+        plans = await self.tracking.list_plans(actor, list(labels))
+        out = []
+        for plan, item in (await self.tracking.due_items(actor, today, plans=plans))[:6]:
+            overdue = item.window_end is not None and item.window_end < today
+            out.append(Signal(
+                key=f"plan_check:{plan.lot_id}:{item.id}:{today.isoformat()}", kind="plan_check",
+                text=f"{labels.get(plan.lot_id)}: chequeo «{item.title}» ({item.section}"
+                     + (", vencido" if overdue else "") + f"). Cómo: {item.how} Por qué: {item.why}"
+                     + (f" Necesita: {item.requires_tool} (si no lo tiene: {item.alternative})."
+                        if item.requires_tool else ""),
+                data={"lot_id": str(plan.lot_id), "item_id": item.id, "method": item.method,
+                      "status": item.status},
+            ))
+        for plan in plans:
+            label = labels.get(plan.lot_id)
+            for moment in plan.content.key_moments:
+                start = moment.window_start or moment.window_end
+                if start and today <= start <= today + timedelta(days=3):
+                    out.append(Signal(key=f"moment:{plan.lot_id}:{moment.key}", kind="key_moment",
+                                      text=f"{label}: se acerca «{moment.name}» (desde el {start:%d/%m})"
+                                           + (f": {moment.why}" if moment.why else "."),
+                                      data={"lot_id": str(plan.lot_id)}))
+            if self.tracking.stale(plan, now):
+                out.append(Signal(key=f"plan_stale:{plan.lot_id}:{today.isocalendar()[1]}", kind="plan_drift",
+                                  text=f"{label}: el plan lleva más de 10 días sin una observación que lo confirme "
+                                       f"(etapa estimada: {plan.content.current_stage or 'sin dato'}).",
+                                  data={"lot_id": str(plan.lot_id)}))
+        missing = [lot for lot in lots if lot.status != "planned" and lot.id not in {p.lot_id for p in plans}]
+        if missing:
+            out.append(Signal(key=f"no_plan:{today.isoformat()}", kind="no_plan",
+                              text="Lotes sin plan de seguimiento todavía: "
+                                   + ", ".join(labels[lot.id] for lot in missing[:5]) + "."))
+        return out
+
+    @staticmethod
+    def _sowing_signals(fields, zones, lots, today) -> list[Signal]:
+        """Room to sow: zones with nothing growing, and the date — for «hoy es buen día para sembrar…» the model
+        crosses it with the season, the region and the forecast."""
+        busy = {z for lot in lots for z in lot.zone_ids}
+        free = [z for z in zones.values() if z.id not in busy]
+        if not free:
+            return []
+        names = ", ".join(z.label for z in free[:6])
+        return [Signal(key=f"free_zones:{today.isocalendar()[1]}", kind="sowing_room",
+                       text=f"Zonas sin cultivo ahora: {names}. Fecha: {today:%d/%m} (para ver qué conviene sembrar "
+                            "según la época, la región y el pronóstico).")]
 
     # ---------- decision ----------
 
@@ -296,10 +359,27 @@ class NudgeEngine:
             actor, today, title=f"Avisos del {now.astimezone(tz):%d/%m}", text=msg.text,
         )
         log = await self._log(user.account_id, user.id, window, signals, "sent", msg, conversation_id)
+        replies = [r.strip()[:24] for r in msg.quick_replies if r.strip()][:3]
+        extra = None
+        if replies:
+            extra = {"nudge_id": str(log.id), "reply_token": self.push.reply_token(log.id),
+                     "actions": [{"action": f"r{i}", "title": r} for i, r in enumerate(replies)],
+                     "replies": replies}
         await self.notifications.notify_account(
             account_id=user.account_id, exclude_user_id=None, only_user_id=user.id, type="nudge",
             title=msg.title, message=msg.text, entity_type="conversation", entity_id=conversation_id,
+            push_extra=extra,
         )
+        if msg.plan_ref and self.tracking is not None:
+            try:
+                from src.application.tracking.schemas import ItemChange, PlanRevise
+
+                await self.tracking.revise(actor, UUID(msg.plan_ref.lot_id), PlanRevise(
+                    reason=f"Pedido a la persona: «{msg.title}»",
+                    items=[ItemChange(id=msg.plan_ref.item_id, status="pedido")],
+                ), by="system")
+            except Exception:  # noqa: BLE001 - a stale reference must not lose the message
+                logger.warning(f"Could not mark plan item {msg.plan_ref} as asked")
         return log
 
     async def _log(self, account_id: UUID, user_id: Optional[UUID], window: Window, signals: list[Signal],
@@ -310,6 +390,8 @@ class NudgeEngine:
             signals=[s.model_dump() for s in signals], signal_keys=msg.signal_keys if msg else [],
             outcome=outcome, kind=msg.kind if msg else None, message=msg.text if msg else None,
             reason=reason, conversation_id=conversation_id,
+            quick_replies=[r.strip()[:24] for r in msg.quick_replies if r.strip()][:3] if msg else [],
+            plan_ref=msg.plan_ref.model_dump() if msg and msg.plan_ref else None,
         )
         async with self.session_factory() as session:
             session.add(log)

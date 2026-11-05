@@ -7,6 +7,7 @@ from .digests import DigestEngine
 from .long_tasks.hooks import LongTaskHooks
 from .long_tasks.runner import LongTaskRunner
 from .long_tasks.service import LongTaskService
+from .nudge_replies import NudgeReplyService
 from .nudges import NudgeEngine
 from .providers.credentials_service import CredentialsService
 from .providers.encryption import SecretBox
@@ -118,6 +119,11 @@ class AgentContainer(containers.DeclarativeContainer):
         LongTaskHooks, tasks=long_task_service, tracking_service=application.tracking_plan_service,
         farm_service=application.farm_service, reports_service=application.reports_service,
     )
+    nudge_reply_service = providers.Singleton(
+        NudgeReplyService, session_factory=db_session_factory, push_service=application.push_service,
+        conversation_service=conversation_service, tracking_service=application.tracking_plan_service,
+        long_task_service=long_task_service,
+    )
     digest_engine = providers.Singleton(
         DigestEngine,
         gemini=gemini,
@@ -128,6 +134,7 @@ class AgentContainer(containers.DeclarativeContainer):
         notification_service=application.notification_service,
         profile_service=profile_service,
         engagement_service=application.engagement_service,
+        tracking_service=application.tracking_plan_service,
     )
     nudge_engine = providers.Singleton(
         NudgeEngine,
@@ -144,4 +151,5 @@ class AgentContainer(containers.DeclarativeContainer):
         notification_service=application.notification_service,
         profile_service=profile_service,
         engagement_service=application.engagement_service,
+        tracking_service=application.tracking_plan_service,
     )

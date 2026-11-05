@@ -49,8 +49,10 @@ class NotificationService:
         only_user_id: Optional[UUID] = None,
         zone_id: Optional[UUID] = None,
         lot_id: Optional[UUID] = None,
+        push_extra: Optional[dict] = None,
     ) -> None:
-        """only_user_id: notify just that member (e.g. a reminder's assignee) instead of everyone."""
+        """only_user_id: notify just that member (e.g. a reminder's assignee) instead of everyone. push_extra: more
+        for the phone notification (one-tap answer buttons)."""
         members = await self.users.list_by_account(account_id)
         recipients = [
             m for m in members if m.id != exclude_user_id and (only_user_id is None or m.id == only_user_id)
@@ -83,7 +85,7 @@ class NotificationService:
             try:
                 await self.push.send(
                     [m.id for m in recipients], title, message, self.push.url_for(entity_type, entity_id, field_id),
-                    tag=f"{entity_type}:{entity_id}",
+                    tag=f"{entity_type}:{entity_id}", extra=push_extra,
                 )
             except Exception:  # noqa: BLE001 - the in-app notification is already there
                 logger.exception("Web push failed")

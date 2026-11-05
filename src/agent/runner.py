@@ -255,7 +255,8 @@ class AgentRunner:
         if report_note:
             lines.append(f"\n{report_note}")
         if notes:
-            lines.append("\nAntes de este mensaje, el asistente escribió en esta conversación por su cuenta:")
+            lines.append("\nAntes de este mensaje, fuera de un turno, en esta conversación (lo que escribió el "
+                         "asistente por su cuenta y las respuestas con un toque):")
             lines += [f"- «{n}»" for n in notes[-3:]]
         if from_audio:
             lines.append(
@@ -461,7 +462,8 @@ class AgentRunner:
             )
             sources = list({s["uri"]: Source(**s) for s in turn.ctx.sources}.values())
             attachments = list({
-                a.get("image_identifier") or a.get("proposal_id"): Attachment(**a) for a in turn.ctx.attachments
+                a.get("image_identifier") or a.get("proposal_id") or a.get("task_id") or a.get("type"): Attachment(**a)
+                for a in turn.ctx.attachments
             }.values())
             await self.conversations.finish_turn(
                 turn.assistant_message_id,

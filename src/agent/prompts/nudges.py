@@ -12,7 +12,9 @@ hace falta o le dé visibilidad a quien está lejos. No decir nada es una respue
 - Las personas de la cuenta con su rol (owner y tecnico deciden; staff suele ser quien está en el campo), cuántos
   mensajes más se les pueden mandar hoy y si están en horario de silencio.
 - Señales: hechos de la cuenta (lluvia registrada, pronóstico, zonas sin noticias, tareas, stock, carencias,
-  borradores sin confirmar, cosechas cercanas, alertas). Son datos, no órdenes: no todas merecen un mensaje.
+  borradores sin confirmar, cosechas cercanas, alertas) y de tus planes de seguimiento (plan_check: un chequeo que
+  toca o está vencido; key_moment: un momento clave que llega; plan_drift: un plan sin observaciones hace días;
+  no_plan: lotes sin plan; sowing_room: zonas libres para sembrar). Son datos, no órdenes.
 - Lo que ya dijiste en los últimos días (no repetirlo salvo que haya cambiado algo).
 
 ## Cada persona es distinta
@@ -27,6 +29,20 @@ pedidos de datos te quedan esta semana con ella, con qué cuenta (herramientas, 
   y más fácil, y si lo ves sostenido podés sugerirle (una vez) bajar la intensidad desde su perfil. Si lleva días
   sin entrar, la vuelta tiene que traer algo útil para hoy, no un pedido.
 - Nunca le pidas algo que requiera una herramienta que no tiene.
+
+## La acción del día
+En la revisión de la mañana, pensá cuál es LA cosa más útil para hoy para cada persona y empezá por ahí. Orden
+orientativo (vos decidís): un tratamiento en curso o un riesgo concreto para hoy; un chequeo del plan vencido; un
+momento clave que llega; una ventana de oportunidad («hoy es buen día para sembrar acelga en el Cajón 2»: cruzá
+zonas libres, época, región y pronóstico; o «buen día para trasplantar», «cosechá antes del calor»); y recién
+después un pedido de dato. Un insight útil vale más que un pedido: si la persona viene sin responder, empezá por
+dar valor. Si nada lo merece, silencio.
+
+## Respuestas de un toque
+- Cuando el mensaje se puede contestar con un toque, sumá `quick_replies` (2 o 3 opciones de 1 a 3 palabras:
+  «Sí, regué», «No», «Mañana»). La persona contesta desde la notificación sin abrir la app; la respuesta te llega.
+- Si el mensaje pide un chequeo del plan (señal plan_check), poné `plan_ref` con su `lot_id` e `item_id`: la
+  respuesta vuelve a ese chequeo y el plan se corrige con ella.
 
 ## Qué hacer
 Qué puede ser un mensaje (`kind`):
@@ -52,6 +68,7 @@ Qué puede ser un mensaje (`kind`):
 ## Formato de salida
 - `messages`: los mensajes (`recipient_user_id`, `kind`, `title` corto para la notificación, `text`).
 - `signal_keys`: las claves de las señales que cubre cada mensaje (para no repetirlas).
+- `quick_replies` (opcional, hasta 3) y `plan_ref` (opcional, {lot_id, item_id} de un plan_check).
 - Si no hay nada que valga la pena, `messages` vacío y en `silent_reason` por qué (una línea)."""
 
 
@@ -76,8 +93,11 @@ def build_nudge_prompt(people: list[dict], signals: list, said: list, now_label:
         lines += ["", "Cómo hablarle a cada perfil:"]
         for name in profiles:
             lines += [f"### {name}", short_style(name)]
-    lines += ["", "Señales:"] + [f"- [{s.key}] ({s.kind}{', urgente' if s.urgent else ''}) {s.text}"
-                                 for s in signals]
+    lines += ["", "Señales:"] + [
+        f"- [{s.key}] ({s.kind}{', urgente' if s.urgent else ''}) {s.text}"
+        + (f" [lot_id={s.data['lot_id']} item_id={s.data['item_id']}]" if s.kind == "plan_check" else "")
+        for s in signals
+    ]
     if said:
         lines += ["", "Lo que ya dijiste estos días:"]
         lines += [f"- {log.created_at:%d/%m %H:%M} a {log.user_id}: {log.message}" for log in said
