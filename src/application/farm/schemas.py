@@ -337,6 +337,9 @@ class CropMasterBase(BaseModel):
     thousand_seed_weight_g: Optional[float] = PField(
         default=None, gt=0, le=100000, description="Typical weight of 1000 seeds, in grams"
     )
+    t_base_c: Optional[float] = PField(default=None, ge=-5, le=20, description="Base temperature for GDD, °C")
+    t_upper_c: Optional[float] = PField(default=None, ge=15, le=45, description="Upper cutoff for GDD, °C")
+    gdd_to_maturity: Optional[float] = PField(default=None, gt=0, le=6000, description="GDD to first harvest")
     i18n: Dict[str, str] = PField(default_factory=dict, description="Crop name by locale, e.g. {'es-MX': 'Jitomate'}")
     variety_i18n: Dict[str, str] = PField(default_factory=dict, description="Variety by locale")
 

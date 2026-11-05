@@ -138,6 +138,52 @@ class OpenMeteoAdapter:
             for i, t in enumerate(times)
         ]
 
+    async def hourly_window(self, latitude: float, longitude: float, past_days: int = 7,
+                            forecast_days: int = 3) -> list[OpenMeteoHour]:
+        """Recent past plus the next days, hour by hour (temperature and humidity drive the disease models)."""
+        params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "hourly": self._BASE_HOURLY_VARS,
+            "past_days": max(0, min(past_days, 92)),
+            "forecast_days": max(1, min(forecast_days, 16)),
+            "timezone": "auto",
+            "wind_speed_unit": "ms",
+        }
+        data = await self._get(self.FORECAST_URL, params)
+        return self._parse_hourly(data) if data else []
+
+    async def daily_window(self, latitude: float, longitude: float, past_days: int = 30,
+                           forecast_days: int = 7) -> list[dict]:
+        """Like recent_daily, plus the next days (`forecast`: True on them) to project thermal time and water."""
+        params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "daily": (
+                "temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,et0_fao_evapotranspiration"
+            ),
+            "past_days": max(0, min(past_days, 92)),
+            "forecast_days": max(1, min(forecast_days, 16)),
+            "timezone": "auto",
+        }
+        data = await self._get(self.FORECAST_URL, params)
+        daily = (data or {}).get("daily") or {}
+        times = daily.get("time") or []
+        today = date.today().isoformat()
+
+        def at(key: str, i: int) -> Optional[float]:
+            series = daily.get(key) or []
+            return series[i] if i < len(series) else None
+
+        return [
+            {
+                "date": t, "forecast": t > today,
+                "temp_max_c": at("temperature_2m_max", i), "temp_min_c": at("temperature_2m_min", i),
+                "precipitation_mm": at("precipitation_sum", i), "et0_mm": at("et0_fao_evapotranspiration", i),
+            }
+            for i, t in enumerate(times)
+        ]
+
     async def historical_hourly(
         self, latitude: float, longitude: float, start: date, end: date
     ) -> list[OpenMeteoHour]:

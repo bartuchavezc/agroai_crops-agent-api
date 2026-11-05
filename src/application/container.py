@@ -22,6 +22,7 @@ from .market.service import MarketService
 from .notifications.service import NotificationService
 from .followups.service import FollowUpService
 from .tracking.service import TrackingPlanService
+from .agronomy.service import AgronomyModels
 from .reports.discard import ReportDiscardService
 from .planning.progress import CycleProgressService
 from .proactive.engagement import EngagementService
@@ -129,6 +130,7 @@ class ApplicationContainer(containers.DeclarativeContainer):
         management_service=management_service,
     )
 
+    agronomy_models = providers.Singleton(AgronomyModels, farm_service=farm_service, weather_service=weather_service)
     tracking_plan_service = providers.Singleton(
         TrackingPlanService, session_factory=db_session_factory, farm_service=farm_service,
     )

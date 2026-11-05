@@ -152,6 +152,10 @@ class CropMaster(Base):
     kc_mid = Column(Float)
     kc_late = Column(Float)
     thousand_seed_weight_g = Column(Float)  # typical grams per 1000 seeds; seed lots fall back to it
+    # Thermal time (src/application/agronomy/thermal.py): None falls back to the published table for the crop.
+    t_base_c = Column(Float)
+    t_upper_c = Column(Float)
+    gdd_to_maturity = Column(Float)
     # Names by locale ({"es-MX": "Jitomate"}); `name`/`variety` stay the neutral value and the fallback.
     i18n = Column(JSONB, nullable=False, default=dict, server_default="{}")
     variety_i18n = Column(JSONB, nullable=False, default=dict, server_default="{}")
