@@ -84,6 +84,8 @@ class AgentContainer(containers.DeclarativeContainer):
         applications=application.application_service,
         supplies=application.supply_service,
         registry=application.product_registry_service,
+        tracking=application.tracking_plan_service,
+        profiles=profile_service,
     )
     runner = providers.Singleton(
         AgentRunner,

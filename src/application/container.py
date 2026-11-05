@@ -21,6 +21,7 @@ from .management.service import ManagementService
 from .market.service import MarketService
 from .notifications.service import NotificationService
 from .followups.service import FollowUpService
+from .tracking.service import TrackingPlanService
 from .reports.discard import ReportDiscardService
 from .planning.progress import CycleProgressService
 from .proactive.engagement import EngagementService
@@ -128,6 +129,9 @@ class ApplicationContainer(containers.DeclarativeContainer):
         management_service=management_service,
     )
 
+    tracking_plan_service = providers.Singleton(
+        TrackingPlanService, session_factory=db_session_factory, farm_service=farm_service,
+    )
     followup_service = providers.Singleton(
         FollowUpService, session_factory=db_session_factory, farm_service=farm_service,
         reports_service=reports_service, timezone_name=config.app.timezone,

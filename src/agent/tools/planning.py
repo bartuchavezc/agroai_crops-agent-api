@@ -153,7 +153,6 @@ def planning_read_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         update_reminder,
         list_plans,
         get_plan,
-        preview_crop_stage_plan,
     ]
 
 
@@ -280,7 +279,6 @@ def planning_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         return {"deleted_reminder_id": reminder_id}
 
     return [
-        generate_crop_stage_plan,
         create_plan,
         add_plan_crops,
         add_plan_stage,

@@ -20,6 +20,7 @@ import src.application.alerts.models  # noqa: F401,E402
 import src.application.applications.models  # noqa: F401,E402
 import src.application.changes.models  # noqa: F401,E402
 import src.application.farm.models  # noqa: F401,E402
+import src.application.tracking.models  # noqa: F401,E402
 import src.application.inventory.models  # noqa: F401,E402
 import src.application.management.models  # noqa: F401,E402
 import src.application.market.models  # noqa: F401,E402

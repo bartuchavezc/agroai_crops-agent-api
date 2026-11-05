@@ -10,6 +10,8 @@ from src.application.farm.schemas import (
     FieldEventCreate,
     FieldUpdate,
     FieldZoneCreate,
+    FieldZoneUpdate,
+    IrrigationSetup,
     LayoutObject,
 )
 from src.shared.domain.base import utcnow
@@ -419,6 +421,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         unit: Optional[str] = None,
         expected_yield_kg: Optional[float] = None,
         expected_price: Optional[float] = None,
+        sowing_method: Optional[str] = None,
     ) -> dict:
         """Start a lot (lote: one batch of a crop sown together). Resolves the crop from the catalog by name,
         adding it to the account catalog if missing. status: planned|seedbed|planted|growing. Dates YYYY-MM-DD.
@@ -426,7 +429,9 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         zone: the zone it grows in, e.g. 'cantero 3'; zones: several, when the same batch went into more than one.
         season ("26/27") and number (2 = second sowing of that zone this season): the user's own labels.
         quantity + unit (plantas | semillas | gramos), expected_yield_kg, expected_price (per kg): optional, they
-        feed the cost per plant and the break-even in get_budget_summary."""
+        feed the cost per plant and the break-even in get_budget_summary.
+        sowing_method: directa | almacigo_trasplante | plantin_comprado | esqueje — how it started; ask if unknown,
+        the tracking plan depends on it. After creating lots, have them planned (plan_lots_tracking)."""
         target = await resolve_field(deps, ctx, field)
         zone_ids = [(await resolve_zone(deps, ctx, target, z)).id for z in [*([zone] if zone else []), *(zones or [])]]
         matches = await deps.farm.find_crop_masters(ctx.actor, crop_name, variety)
@@ -448,6 +453,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
                 field_id=target.id,
                 crop_master_id=crop.id,
                 zone_ids=zone_ids,
+                sowing_method=sowing_method,
                 season=season,
                 number=number,
                 status=status,
@@ -479,6 +485,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         number: Optional[int] = None,
         quantity: Optional[float] = None,
         unit: Optional[str] = None,
+        sowing_method: Optional[str] = None,
     ) -> dict:
         """Update a lot: status (planned|seedbed|planted|growing|harvesting|harvested|failed), harvest dates
         (YYYY-MM-DD), notes, season ("26/27"), number, zone (move it to e.g. 'cantero 2'; 'ninguna' takes it out
@@ -493,6 +500,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
             "notes": notes,
             "season": season,
             "number": number,
+            "sowing_method": sowing_method,
         }
         values = {k: v for k, v in values.items() if v is not None}
         if zone is not None:
@@ -548,19 +556,43 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
 
     @tool
     async def create_zone(
-        zone: str, field: Optional[str] = None, name: Optional[str] = None, notes: Optional[str] = None
+        zone: str, field: Optional[str] = None, name: Optional[str] = None, notes: Optional[str] = None,
+        irrigation_system: Optional[str] = None, irrigation_timer: Optional[bool] = None,
     ) -> dict:
-        """Create a zone in a field: a numbered cajón, cantero, invernadero or hidroponía, e.g. zone='cantero 3'
-        or just 'invernadero' (takes the next free number). name: optional nickname. Afterwards assign crops to it
-        with create_lot / update_lot (zone=...)."""
+        """Create a zone in a field: a numbered cajón, cantero, invernadero, hidroponía, maceta or tierra directa
+        (a plot in open ground), e.g. zone='cantero 3', 'maceta 2' or just 'invernadero' (takes the next free
+        number). name: optional nickname. irrigation_system (regadera | manguera | goteo | aspersion |
+        microaspersion | fertirriego | lluvia) and irrigation_timer: how it is watered, when it differs from the
+        field. Afterwards assign crops to it with create_lot / update_lot (zone=...)."""
         target = await resolve_field(deps, ctx, field)
         zone_type, number = parse_zone(zone)
         if zone_type is None:
-            raise InvalidInputError("Say which kind of zone: cajón, cantero, invernadero or hidroponía.")
+            raise InvalidInputError("Say which kind of zone: cajón, cantero, invernadero, hidroponía, maceta or "
+                                    "tierra directa.")
+        irrigation = (IrrigationSetup(system=irrigation_system, timer=irrigation_timer)
+                      if irrigation_system or irrigation_timer is not None else None)
         created = await deps.farm.create_zone(
-            ctx.actor, target.id, FieldZoneCreate(type=zone_type, number=number, name=name, notes=notes)
+            ctx.actor, target.id,
+            FieldZoneCreate(type=zone_type, number=number, name=name, notes=notes, irrigation=irrigation),
         )
         return {"created_zone": compact(created), "field_name": target.name}
+
+    @tool
+    async def set_watering(
+        system: str, field: Optional[str] = None, zone: Optional[str] = None, timer: Optional[bool] = None,
+        notes: Optional[str] = None,
+    ) -> dict:
+        """How a field (or one zone, when it differs) is watered: system regadera | manguera | goteo | aspersion |
+        microaspersion | fertirriego | lluvia (only rain), timer: whether it runs on a programador. The tracking
+        plan and the water balance count on it."""
+        target = await resolve_field(deps, ctx, field)
+        setup = IrrigationSetup(system=system, timer=timer, notes=notes)
+        if zone:
+            z = await resolve_zone(deps, ctx, target, zone)
+            updated = await deps.farm.update_zone(ctx.actor, z.id, FieldZoneUpdate(irrigation=setup))
+            return {"zone": updated.label, "irrigation": setup.model_dump(exclude_none=True)}
+        await deps.farm.update_field(ctx.actor, target.id, FieldUpdate(irrigation=setup))
+        return {"field": target.name, "irrigation": setup.model_dump(exclude_none=True)}
 
     @tool
     async def delete_field(field: str) -> dict:
@@ -586,6 +618,7 @@ def farm_manager_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         update_field,
         add_crop_to_catalog,
         create_zone,
+        set_watering,
         create_lot,
         update_lot,
         resow_lot,

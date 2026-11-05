@@ -11,6 +11,7 @@ from .management import management_manager_tools, management_read_tools
 from .planning import planning_manager_tools, planning_read_tools
 from .satellite import satellite_tools
 from .soil import soil_tools
+from .tracking import tracking_read_tools, tracking_write_tools
 
 
 def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
@@ -31,12 +32,14 @@ def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         *change_tools(deps, ctx),
         *application_tools(deps, ctx),
         *followup_tools(deps, ctx),
+        *tracking_read_tools(deps, ctx),
     ]
     if ctx.actor.is_manager:
         tools += farm_manager_tools(deps, ctx)
         tools += inventory_manager_tools(deps, ctx)
         tools += management_manager_tools(deps, ctx)
         tools += planning_manager_tools(deps, ctx)
+        tools += tracking_write_tools(deps, ctx)
     return tools
 
 

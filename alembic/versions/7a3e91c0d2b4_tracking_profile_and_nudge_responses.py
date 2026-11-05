@@ -22,7 +22,7 @@ def upgrade() -> None:
     op.add_column('user_profiles', sa.Column(
         'growing_context', postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default='{}'))
     op.create_check_constraint(
-        'tracking_intensity_valid', 'user_profiles',
+        op.f('ck_user_profiles_tracking_intensity_valid'), 'user_profiles',
         "tracking_intensity IS NULL OR tracking_intensity IN ('baja', 'media', 'alta')")
     op.add_column('nudge_log', sa.Column('responded_at', sa.DateTime(timezone=True), nullable=True))
     op.add_column('nudge_log', sa.Column('response_channel', sa.String(length=10), nullable=True))
@@ -37,6 +37,6 @@ def downgrade() -> None:
     op.drop_index('ix_nudge_log_conversation', table_name='nudge_log')
     for column in ('plan_ref', 'quick_replies', 'response_text', 'response_channel', 'responded_at'):
         op.drop_column('nudge_log', column)
-    op.drop_constraint('tracking_intensity_valid', 'user_profiles', type_='check')
+    op.drop_constraint(op.f('ck_user_profiles_tracking_intensity_valid'), 'user_profiles', type_='check')
     op.drop_column('user_profiles', 'growing_context')
     op.drop_column('user_profiles', 'tracking_intensity')

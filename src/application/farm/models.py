@@ -57,8 +57,14 @@ FOLLOWUP_SEVERITIES = ("low", "medium", "high", "critical")
 LOSS_CAUSES = ("no_germination", "pest", "disease", "frost", "heat", "waterlogging", "drought", "animals", "other")
 EVENT_SOURCES = ("user", "agent", "system")  # system: written by a job (rain from the weather data)
 # A zone groups the crops of a field that are grown (and tracked/photographed) together: "Cantero 3".
-ZONE_TYPES = ("cajon", "cantero", "invernadero", "hidroponia")
-ZONE_TYPE_LABELS = {"cajon": "Cajón", "cantero": "Cantero", "invernadero": "Invernadero", "hidroponia": "Hidroponía"}
+# maceta: a pot or container; tierra_directa: a plot in open ground (lote a campo), no bed around it.
+ZONE_TYPES = ("cajon", "cantero", "invernadero", "hidroponia", "maceta", "tierra_directa")
+ZONE_TYPE_LABELS = {"cajon": "Cajón", "cantero": "Cantero", "invernadero": "Invernadero", "hidroponia": "Hidroponía",
+                    "maceta": "Maceta", "tierra_directa": "Tierra directa"}
+# How the water gets there: what the planner can ask for and how much a watering is worth.
+IRRIGATION_SYSTEMS = ("regadera", "manguera", "goteo", "aspersion", "microaspersion", "fertirriego", "lluvia")
+# How a lot started: sown where it grows, raised in an almácigo and transplanted, or bought as plantines.
+SOWING_METHODS = ("directa", "almacigo_trasplante", "plantin_comprado", "esqueje")
 
 
 class Field(Base):
@@ -90,6 +96,7 @@ class Field(Base):
     layout_objects = Column(JSONB, nullable=False, default=list, server_default="[]")
     layout_photos = Column(JSONB, nullable=False, default=list, server_default="[]")
     soil_context = Column(JSONB)  # cached INTA soil lookup (src/application/soil_data); None until computed
+    irrigation = Column(JSONB)  # {system, timer, notes}: the field's default; a zone may say otherwise
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True))
@@ -119,6 +126,7 @@ class FieldZone(Base):
     # The zone's own soil where it differs from the field's (substrate or compost added):
     # {nitrogen, potassium, carbon, ph, notes, updated_at}; missing keys fall back to the field's soil context.
     soil = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    irrigation = Column(JSONB)  # {system, timer, notes}; None: the field's
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True))
@@ -158,6 +166,7 @@ class Lot(Base):
     __table_args__ = (
         CheckConstraint(f"status IN {LOT_STATUSES}", name="status_valid"),
         CheckConstraint("number IS NULL OR number >= 1", name="number_positive"),
+        CheckConstraint(f"sowing_method IS NULL OR sowing_method IN {SOWING_METHODS}", name="sowing_method_valid"),
         Index("ix_lots_account_status", "account_id", "status"),
     )
 
@@ -168,6 +177,7 @@ class Lot(Base):
     season = Column(String(10))
     number = Column(Integer)
     planting_date = Column(Date)  # sown, or planted out for bought plantines
+    sowing_method = Column(String(24))  # directa | almacigo_trasplante | plantin_comprado | esqueje
     transplant_date = Column(Date)
     expected_harvest_date = Column(Date)
     actual_harvest_date = Column(Date)

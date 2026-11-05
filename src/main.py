@@ -34,6 +34,7 @@ from src.application.satellite.router import router as satellite_router
 from src.application.storage.router import router as upload_router
 from src.application.supplies.router import router as supplies_router
 from src.application.tasks.router import router as tasks_router
+from src.application.tracking.router import router as tracking_router
 from src.auth.api.routes import router as auth_router
 from src.config.bootstrap import build_container
 from src.providers.weather.router import router as weather_router
@@ -51,6 +52,7 @@ ROUTERS = [
     layout_router,  # before farm_router: /fields/layout/extract must not be shadowed by /fields/{field_id}
     farm_router,
     followups_router,
+    tracking_router,
     reports_router,
     alerts_router,
     notifications_router,
@@ -82,6 +84,7 @@ WIRED_MODULES = [
     "src.application.alerts.router",
     "src.application.farm.router",
     "src.application.followups.router",
+    "src.application.tracking.router",
     "src.application.notifications.router",
     "src.application.reports.router",
     "src.application.storage.router",

@@ -194,7 +194,8 @@ async def test_general_plan_crops_become_planned_lots_with_sowing_tasks(client, 
     assert len(sow_tasks) == 3 and sow_tasks[0]["title"].startswith("Sembrar Lechuga")
     assert "Cantero 1" in sow_tasks[0]["title"] and sow_tasks[0]["source"] == "plan"
 
-    # Doing the first sowing task sows its lot: planted, logged, seed discounted, stage plan generated.
+    # Doing the first sowing task sows its lot: planted, logged, seed discounted — and no stage plan full of
+    # reminders: the agent plans the lot's follow-up for itself.
     first = plan["lots"][0]
     task = next(t for t in sow_tasks if t["lot_id"] == first["id"])
     done = await client.put(f"/api/v1/tasks/{task['id']}", headers=h, json={"status": "hecha"})
@@ -204,7 +205,7 @@ async def test_general_plan_crops_become_planned_lots_with_sowing_tasks(client, 
     assert (await client.get("/api/v1/inventory/seed-lots", headers=h)).json()[0]["quantity"] == 400
     log = (await client.get(f"{FARM}/log?lot_id={first['id']}&type=sowing", headers=h)).json()
     assert len([i for d in log["days"] for i in d["items"]]) == 1
-    assert len([p for p in (await client.get(f"{P}/plans", headers=h)).json() if p["lot_id"] == first["id"]]) == 1
+    assert [p for p in (await client.get(f"{P}/plans", headers=h)).json() if p["lot_id"] == first["id"]] == []
 
     # The second one is sown straight from the lot: its task closes by itself; twice is refused.
     second = plan["lots"][1]

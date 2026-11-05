@@ -10,7 +10,17 @@ from .models import ZONE_TYPE_LABELS
 
 Octant = Literal["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
 LotStatus = Literal["planned", "seedbed", "planted", "growing", "harvesting", "harvested", "failed"]
-ZoneType = Literal["cajon", "cantero", "invernadero", "hidroponia"]
+ZoneType = Literal["cajon", "cantero", "invernadero", "hidroponia", "maceta", "tierra_directa"]
+IrrigationSystem = Literal["regadera", "manguera", "goteo", "aspersion", "microaspersion", "fertirriego", "lluvia"]
+SowingMethod = Literal["directa", "almacigo_trasplante", "plantin_comprado", "esqueje"]
+
+
+class IrrigationSetup(BaseModel):
+    """How a field or zone is watered: what the planner can count on (a timer, a drip line) when it plans checks."""
+
+    system: Optional[IrrigationSystem] = None
+    timer: Optional[bool] = PField(default=None, description="Runs on a timer (programador)")
+    notes: Optional[str] = PField(default=None, max_length=500)
 EventType = Literal[
     "irrigation",
     "fertilization",
@@ -134,6 +144,7 @@ class FieldBase(BaseModel):
     layout_view_bearing: Optional[float] = PField(
         default=None, ge=0, le=360, description="Compass bearing drawn upward on the plan; null = automatic"
     )
+    irrigation: Optional[IrrigationSetup] = PField(default=None, description="How the field is usually watered")
 
     _check_boundary = field_validator("boundary")(_check_boundary)
 
@@ -156,6 +167,7 @@ class FieldUpdate(BaseModel):
     layout_objects: Optional[list[LayoutObject]] = None
     layout_photos: Optional[list[LayoutPhoto]] = None
     layout_view_bearing: Optional[float] = PField(default=None, ge=0, le=360)
+    irrigation: Optional[IrrigationSetup] = None
 
     _check_boundary = field_validator("boundary")(_check_boundary)
 
@@ -238,6 +250,7 @@ class FieldZoneCreate(BaseModel):
     length_m: Optional[float] = PField(default=None, gt=0, le=10000)
     width_m: Optional[float] = PField(default=None, gt=0, le=10000)
     soil: Optional[ZoneSoil] = None
+    irrigation: Optional[IrrigationSetup] = PField(default=None, description="None: as the field")
 
 
 class FieldZoneUpdate(BaseModel):
@@ -249,6 +262,7 @@ class FieldZoneUpdate(BaseModel):
     length_m: Optional[float] = PField(default=None, gt=0, le=10000)
     width_m: Optional[float] = PField(default=None, gt=0, le=10000)
     soil: Optional[ZoneSoil] = None
+    irrigation: Optional[IrrigationSetup] = None
 
 
 class ZoneRenumber(BaseModel):
@@ -282,6 +296,7 @@ class FieldZoneRead(ORMModel):
     length_m: Optional[float] = None
     width_m: Optional[float] = None
     soil: ZoneSoil = PField(default_factory=ZoneSoil)
+    irrigation: Optional[IrrigationSetup] = None
     created_at: datetime
     updated_at: datetime
 
@@ -357,6 +372,7 @@ class LotCreate(BaseModel):
     season: Optional[str] = PField(default=None, max_length=10, description='e.g. "26/27"')
     number: Optional[int] = PField(default=None, ge=1, le=999)
     planting_date: Optional[date] = None
+    sowing_method: Optional[SowingMethod] = PField(default=None, description="How it started")
     transplant_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
@@ -386,6 +402,7 @@ class LotUpdate(BaseModel):
     season: Optional[str] = PField(default=None, max_length=10)
     number: Optional[int] = PField(default=None, ge=1, le=999)
     planting_date: Optional[date] = None
+    sowing_method: Optional[SowingMethod] = None
     transplant_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None
@@ -419,6 +436,7 @@ class LotRead(ORMModel):
     season: Optional[str] = None
     number: Optional[int] = None
     planting_date: Optional[date] = None
+    sowing_method: Optional[SowingMethod] = None
     transplant_date: Optional[date] = None
     expected_harvest_date: Optional[date] = None
     actual_harvest_date: Optional[date] = None

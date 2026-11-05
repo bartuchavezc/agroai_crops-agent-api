@@ -7,6 +7,7 @@ task) — and the stage plan of a lot generated from its crop's template
 Permissions: every member can create reminders (staff does the daily work); plans, stages and plan crops are
 manager-only, like lots. Reminders without assignee notify the whole account.
 """
+import logging
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 from uuid import UUID
@@ -77,6 +78,8 @@ def next_occurrence(reminder: Reminder, after: datetime) -> Optional[datetime]:
         return None
     return nxt
 
+
+logger = logging.getLogger(__name__)
 
 class PlanningService:
     def __init__(
@@ -500,7 +503,14 @@ class PlanningService:
                     await self.tasks.repo.update(
                         actor.account_id, task.id, {"status": "hecha", "completed_at": utcnow()}
                     )
-        await self.apply_cycle_plan(actor, lot_id)
+        # No stage plan with reminders any more: the agent plans the lot's follow-up for itself (a tracking plan),
+        # in the background, when there is a hook for it (src/agent/long_tasks).
+        hook = getattr(self, "lot_sown_hook", None)
+        if hook is not None:
+            try:
+                await hook(actor, lot_id)
+            except Exception:  # noqa: BLE001 - sowing must never fail because the planner couldn't be queued
+                logger.exception(f"Could not queue the tracking plan of lot {lot_id}")
         return await self.farm.get_lot(actor, lot_id)
 
     # ---------- lot stage plan ----------
