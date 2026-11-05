@@ -264,7 +264,7 @@ class ConversationService:
         return [r for r in rows if r]
 
     async def post_nudge(self, actor: Actor, conversation_id: Optional[UUID], title: str, text: str,
-                         field_id: Optional[UUID] = None) -> UUID:
+                         field_id: Optional[UUID] = None, attachments: Optional[list[dict]] = None) -> UUID:
         """The agent writes first: into the given conversation, or a new one titled `title`. Returns its id."""
         async with self.session_factory() as session:
             if conversation_id is not None:
@@ -275,7 +275,8 @@ class ConversationService:
                 session.add(conversation)
                 await session.flush()
             session.add(ConversationMessage(
-                conversation_id=conversation.id, role="assistant", content=text, origin="nudge", created_at=utcnow()
+                conversation_id=conversation.id, role="assistant", content=text, origin="nudge", created_at=utcnow(),
+                **({"attachments": attachments} if attachments else {}),
             ))
             conversation.updated_at = utcnow()
             await session.commit()

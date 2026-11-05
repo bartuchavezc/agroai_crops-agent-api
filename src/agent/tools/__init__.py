@@ -12,6 +12,7 @@ from .management import management_manager_tools, management_read_tools
 from .planning import planning_manager_tools, planning_read_tools
 from .satellite import satellite_tools
 from .soil import soil_tools
+from .tasks_long import long_task_tools
 from .tracking import tracking_read_tools, tracking_write_tools
 
 
@@ -42,6 +43,7 @@ def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         tools += management_manager_tools(deps, ctx)
         tools += planning_manager_tools(deps, ctx)
         tools += tracking_write_tools(deps, ctx)
+        tools += long_task_tools(deps, ctx)
     return tools
 
 

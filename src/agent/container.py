@@ -4,6 +4,9 @@ from google.adk.sessions import DatabaseSessionService
 from .conversations.service import ConversationService
 from .memory.service import MemoryService
 from .digests import DigestEngine
+from .long_tasks.hooks import LongTaskHooks
+from .long_tasks.runner import LongTaskRunner
+from .long_tasks.service import LongTaskService
 from .nudges import NudgeEngine
 from .providers.credentials_service import CredentialsService
 from .providers.encryption import SecretBox
@@ -57,6 +60,7 @@ class AgentContainer(containers.DeclarativeContainer):
         followup_service=application.followup_service,
     )
 
+    long_task_service = providers.Singleton(LongTaskService, session_factory=db_session_factory)
     tool_deps = providers.Singleton(
         ToolDeps,
         farm=application.farm_service,
@@ -86,6 +90,7 @@ class AgentContainer(containers.DeclarativeContainer):
         registry=application.product_registry_service,
         tracking=application.tracking_plan_service,
         models=application.agronomy_models,
+        long_tasks=long_task_service,
         profiles=profile_service,
     )
     runner = providers.Singleton(
@@ -104,6 +109,14 @@ class AgentContainer(containers.DeclarativeContainer):
         max_image_side=config.gemini.max_image_side,
         preflight_enabled=config.agent.preflight,
         preflight_max_tokens=config.agent.preflight_max_tokens,
+    )
+    long_task_runner = providers.Singleton(
+        LongTaskRunner, tasks=long_task_service, agent_runner=runner, session_factory=db_session_factory,
+        profile_service=profile_service,
+    )
+    long_task_hooks = providers.Singleton(
+        LongTaskHooks, tasks=long_task_service, tracking_service=application.tracking_plan_service,
+        farm_service=application.farm_service, reports_service=application.reports_service,
     )
     digest_engine = providers.Singleton(
         DigestEngine,

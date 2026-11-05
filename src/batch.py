@@ -11,6 +11,8 @@ Batch jobs.
     python -m src.batch satellite-backfill --years 5 [--field-id ID] [--source sentinel2|sentinel1]
     python -m src.batch proactive                     # rain log, summaries and the assistant's checks, once
     python -m src.batch proactive --every-minutes 15  # same, forever (the `proactive` compose service)
+    python -m src.batch tasks                         # the agent's queued background tasks, once
+    python -m src.batch tasks --every-seconds 20      # same, forever (the `tasks` compose service)
 """
 import argparse
 import asyncio
@@ -102,6 +104,13 @@ async def run_proactive(container) -> None:
         logger.info(f"Proactive: {result}")
 
 
+async def run_tasks(container) -> None:
+    """The agent's background work: plans and re-plans of lots, longer jobs asked for in the chat."""
+    done = await container.agent.long_task_runner().run_all()
+    if done:
+        logger.info(f"Agent tasks: {done} run")
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m src.batch")
     sub = parser.add_subparsers(dest="job", required=True)
@@ -118,9 +127,16 @@ async def main() -> None:
     backfill.add_argument("--source", choices=["sentinel2", "sentinel1"], default=None)
     proactive = sub.add_parser("proactive", help="Rain log, daily/weekly summaries and the assistant's checks")
     proactive.add_argument("--every-minutes", type=float, default=None)
+    tasks = sub.add_parser("tasks", help="The agent's background tasks (lot plans, re-plans, long jobs)")
+    tasks.add_argument("--every-seconds", type=float, default=None)
     args = parser.parse_args()
 
-    if args.job == "proactive":
+    min_sleep = 30.0
+    if args.job == "tasks":
+        job, name = run_tasks, "Agent tasks"
+        interval = args.every_seconds if args.every_seconds else None
+        min_sleep = 5.0
+    elif args.job == "proactive":
         job, name = run_proactive, "Proactive"
         interval = args.every_minutes * 60 if args.every_minutes else None
     elif args.job == "reminders":
@@ -149,7 +165,7 @@ async def main() -> None:
                     raise
             if interval is None:
                 break
-            await asyncio.sleep(max(30.0, interval - (time.monotonic() - started)))
+            await asyncio.sleep(max(min_sleep, interval - (time.monotonic() - started)))
     finally:
         await dispose_database_connections()
 

@@ -19,4 +19,8 @@ def build_container() -> Container:
     container.application.planning_service()
     # Notifications reach the phone through the push service once both exist.
     container.application.notification_service().set_push(container.application.push_service())
+    # The agent plans by itself: a sown lot gets its tracking plan, a zone analysis re-plans the zone's lots.
+    hooks = container.agent.long_task_hooks()
+    container.application.planning_service().lot_sown_hook = hooks.lot_sown
+    container.agent.diagnosis_service().after_analysis = [hooks.zone_analyzed]
     return container

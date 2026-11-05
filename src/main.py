@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 from src.admin.router import router as admin_router
 from src.agent.conversations.router import router as chat_router
+from src.agent.long_tasks.router import router as agent_tasks_router
 from src.agent.memory.router import router as memory_router
 from src.agent.providers.router import router as provider_credentials_router
 from src.agent.reasoning.router import layout_router
@@ -59,6 +60,7 @@ ROUTERS = [
     upload_router,
     weather_router,
     chat_router,
+    agent_tasks_router,
     memory_router,
     analyze_router,
     inventory_router,
@@ -79,6 +81,7 @@ WIRED_MODULES = [
     "src.auth.api.routes",
     "src.agent.conversations.router",
     "src.agent.memory.router",
+    "src.agent.long_tasks.router",
     "src.agent.providers.router",
     "src.agent.reasoning.router",
     "src.application.alerts.router",
