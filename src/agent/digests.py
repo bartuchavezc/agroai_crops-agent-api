@@ -22,6 +22,7 @@ from src.shared.utils.account_key import owner_key_user
 from src.shared.utils.errors import CropAnalysisError
 
 from .prompts.digests import DIGEST_INSTRUCTION, build_digest_prompt
+from .prompts.knowledge import short_style
 from .prompts.voice import localize
 
 logger = logging.getLogger(__name__)
@@ -38,13 +39,14 @@ def _name(user: User) -> str:
 
 class DigestEngine:
     def __init__(self, gemini, digest_service: DigestService, farm_service, conversation_service, push_service,
-                 notification_service):
+                 notification_service, profile_service=None, engagement_service=None):
         self.gemini = gemini
         self.digests = digest_service
         self.farm = farm_service
         self.conversations = conversation_service
         self.push = push_service
         self.notifications = notification_service
+        self.profiles = profile_service
 
     async def run_account(self, members: list[User], kind: str, local_day: date) -> list[Digest]:
         """The summary of `local_day` (or of the week ending on it) for each field of the account, once."""
@@ -84,7 +86,7 @@ class DigestEngine:
                 writer.id,
                 contents=build_digest_prompt(kind, field_name, period, people, facts),
                 schema=DigestWriting,
-                system_instruction=localize(DIGEST_INSTRUCTION, owner.country),
+                system_instruction=localize(DIGEST_INSTRUCTION, owner.country) + await self._voice(owner),
                 thinking_level="low",
             )
         except CropAnalysisError as e:
@@ -93,6 +95,16 @@ class DigestEngine:
         questions = [q.strip() for q in writing.questions if q.strip()][:3]
         text = writing.text.strip() + ("\n\n" + "\n".join(questions) if questions else "")
         return text, {**facts, "writer": "agent", "questions": questions}
+
+    async def _voice(self, owner: User) -> str:
+        """The summary goes to the whole team, worded the way the owner's profile asks for."""
+        if self.profiles is None:
+            return ""
+        try:
+            context = await self.profiles.get_profile_context(owner.id)
+        except Exception:  # noqa: BLE001
+            return ""
+        return "\n\n## Cómo hablarle a este equipo\n" + short_style(context.calculated_profile if context else None)
 
     async def _deliver(self, members: list[User], digest: Digest, field_id) -> Digest:
         """A new conversation per person with the summary as the agent's message, and the notification opening it."""

@@ -96,6 +96,7 @@ class AgentContainer(containers.DeclarativeContainer):
         profile_service=profile_service,
         storage_service=application.storage_service,
         reports_service=application.reports_service,
+        engagement_service=application.engagement_service,
         timezone_name=config.app.timezone,
         max_image_side=config.gemini.max_image_side,
         preflight_enabled=config.agent.preflight,
@@ -109,6 +110,8 @@ class AgentContainer(containers.DeclarativeContainer):
         conversation_service=conversation_service,
         push_service=application.push_service,
         notification_service=application.notification_service,
+        profile_service=profile_service,
+        engagement_service=application.engagement_service,
     )
     nudge_engine = providers.Singleton(
         NudgeEngine,
@@ -123,4 +126,6 @@ class AgentContainer(containers.DeclarativeContainer):
         conversation_service=conversation_service,
         push_service=application.push_service,
         notification_service=application.notification_service,
+        profile_service=profile_service,
+        engagement_service=application.engagement_service,
     )

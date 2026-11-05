@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.agent.digests import DigestWriting
-from src.agent.nudges import NudgeDecision, NudgeMessage
+from src.agent.nudges import NudgeDecision, NudgeMessage, Signal
 from src.application.proactive.push import in_quiet_hours
 from src.shared.domain.actor import Actor
 
@@ -269,3 +269,65 @@ async def test_push_subscriptions_and_preferences(client, signup, add_member, co
     assert (await client.get("/api/v1/me/notification-preferences", headers=staff["headers"])).json()[
         "push_devices"
     ] == 0
+
+
+async def test_the_person_sets_how_closely_the_agent_follows_them(client, signup):
+    user = await signup("tracking")
+    h = user["headers"]
+    start = (await client.get("/api/v1/auth/tracking-profile", headers=h)).json()
+    assert start["intensity"] == "media" and start["intensity_source"] == "default"
+    await client.post("/api/v1/auth/enroll", headers=h, json={"form": {f"q{i}": "C" for i in range(1, 11)}})
+    enrolled = (await client.get("/api/v1/auth/tracking-profile", headers=h)).json()
+    assert (enrolled["intensity"], enrolled["intensity_source"]) == ("alta", "enroll")
+    r = await client.put("/api/v1/auth/tracking-profile", headers=h, json={
+        "intensity": "baja", "growing_context": {"tools": ["medidor_ph"], "weekly_hours": 2, "budget": "bajo"},
+    })
+    assert r.status_code == 200, r.text
+    assert (r.json()["intensity"], r.json()["intensity_source"], r.json()["weekly_asks"]) == ("baja", "person", 2)
+    assert r.json()["growing_context"]["tools"] == ["medidor_ph"]
+    bad = await client.put("/api/v1/auth/tracking-profile", headers=h, json={"intensity": "maxima"})
+    assert bad.status_code == 422
+    reset = (await client.put("/api/v1/auth/tracking-profile", headers=h, json={"reset_intensity": True})).json()
+    assert (reset["intensity"], reset["growing_context"]["weekly_hours"]) == ("alta", 2)
+
+
+async def test_data_requests_respect_the_weekly_budget_and_answers_are_recorded(
+    client, signup, with_key, scripted_model, container, no_forecast  # noqa: F811
+):
+    owner = await signup("asks")
+    await with_key(owner)
+    h = owner["headers"]
+    await _field_with_lot(client, h)
+    await client.put("/api/v1/auth/tracking-profile", headers=h, json={"intensity": "baja"})
+    await client.put("/api/v1/me/notification-preferences", headers=h, json={"max_nudges_per_day": 6})
+    engine = container.agent.nudge_engine()
+    members = (await engine.accounts())[uuid.UUID(owner["account"]["id"])]
+    now = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=15, minute=0)
+    gateway = container.agent.gemini()
+
+    outcomes, prompts = [], []
+    for i in range(3):  # intensidad baja: 2 pedidos por semana
+        decision = NudgeDecision(messages=[NudgeMessage(
+            recipient_user_id=owner["user"]["id"], kind="ask", title="Una foto",
+            text=f"¿Me mandás una foto del cantero? ({i})", signal_keys=[f"k{i}"],
+        )])
+        with patch.object(gateway, "generate_structured", AsyncMock(return_value=decision)) as decide, \
+                patch.object(engine, "signals", AsyncMock(return_value=[Signal(key=f"k{i}", kind="no_news",
+                                                                                text="Sin noticias.")])):
+            logs = await engine.run_account(members, "morning", now + timedelta(minutes=i))
+        outcomes.append(logs[0].outcome)
+        prompts.append(decide.await_args.kwargs["contents"])
+    assert outcomes == ["sent", "sent", "budget"]
+    assert "intensidad baja · pedidos de datos disponibles esta semana: 2" in prompts[0]
+    assert "pedidos de datos disponibles esta semana: 0" in prompts[2]
+
+    # answering in the conversation the assistant opened marks it, with the channel
+    conversation_id = (await client.get("/api/v1/chat/conversations", headers=h)).json()[0]["id"]
+    scripted_model.script = [("text", "Gracias.")]
+    r = await client.post("/api/v1/chat", headers=h, json={"message": "ahí va", "conversation_id": conversation_id})
+    assert r.status_code == 200, r.text
+    log = (await client.get("/api/v1/nudges/log", headers=h)).json()
+    answered = [e for e in log if e.get("responded_at")]
+    assert len(answered) == 1 and answered[0]["response_channel"] == "text"
+    summary = await container.application.engagement_service().summary(uuid.UUID(owner["user"]["id"]))
+    assert (summary.asks_sent, summary.asks_answered, summary.channels) == (2, 1, {"text": 1})

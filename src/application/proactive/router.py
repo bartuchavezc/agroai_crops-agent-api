@@ -52,6 +52,10 @@ class NudgeLogRead(BaseModel):
     signal_keys: list[str] = []
     signals: list[dict[str, Any]] = []
     conversation_id: Optional[UUID] = None
+    responded_at: Optional[datetime] = None
+    response_channel: Optional[str] = None
+    response_text: Optional[str] = None
+    quick_replies: list[str] = []
     created_at: datetime
 
 

@@ -28,6 +28,7 @@ from ..domain.schemas import (
 )
 from ..services.auth_service import AuthService
 from ..services.profile_service import ProfileService
+from ..services.tracking_profile import TrackingProfileRead, TrackingProfileUpdate
 from ..services.user_service import UserService
 from .dependencies import get_current_user, require_owner
 
@@ -231,3 +232,24 @@ async def get_profile_context(
     if not context:
         raise HTTPException(status_code=404, detail="Profile not found. Please complete enrollment first.")
     return context
+
+
+@router.get("/tracking-profile", response_model=TrackingProfileRead, summary="How closely the agent follows my crops")
+@inject
+async def get_tracking_profile(
+    current_user: UserRead = Depends(get_current_user),
+    profile_service: ProfileService = Depends(Provide["auth.profile_service"]),
+):
+    """The intensity of follow-up (baja | media | alta: how often the agent asks for a photo, a description or a
+    measurement — prediction runs either way), where it comes from, and the tools, time and budget the person has."""
+    return await profile_service.tracking_profile(current_user.id)
+
+
+@router.put("/tracking-profile", response_model=TrackingProfileRead, summary="Change how closely the agent follows me")
+@inject
+async def update_tracking_profile(
+    body: TrackingProfileUpdate,
+    current_user: UserRead = Depends(get_current_user),
+    profile_service: ProfileService = Depends(Provide["auth.profile_service"]),
+):
+    return await profile_service.update_tracking_profile(current_user.id, body)

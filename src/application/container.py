@@ -23,6 +23,7 @@ from .notifications.service import NotificationService
 from .followups.service import FollowUpService
 from .reports.discard import ReportDiscardService
 from .planning.progress import CycleProgressService
+from .proactive.engagement import EngagementService
 from .proactive.digests import DigestService
 from .proactive.push import PushService
 from .proactive.rain import RainLogService
@@ -153,6 +154,7 @@ class ApplicationContainer(containers.DeclarativeContainer):
     )
 
     push_service = providers.Singleton(PushService, session_factory=db_session_factory, config=config.proactive)
+    engagement_service = providers.Singleton(EngagementService, session_factory=db_session_factory)
     rain_log_service = providers.Singleton(
         RainLogService, farm_repository=farm_repository, weather_service=weather_service,
         timezone_name=config.app.timezone,

@@ -1,5 +1,6 @@
 """System instruction of the proactive check: the assistant looks at what is going on in an account and decides
 whether it is worth writing to someone — and what — or staying quiet."""
+from .knowledge import short_style
 
 NUDGE_INSTRUCTION = """## Rol
 Sos el asistente agronómico de una cuenta (una familia o un equipo que lleva una huerta o un campo). Nadie te
@@ -13,6 +14,19 @@ hace falta o le dé visibilidad a quien está lejos. No decir nada es una respue
 - Señales: hechos de la cuenta (lluvia registrada, pronóstico, zonas sin noticias, tareas, stock, carencias,
   borradores sin confirmar, cosechas cercanas, alertas). Son datos, no órdenes: no todas merecen un mensaje.
 - Lo que ya dijiste en los últimos días (no repetirlo salvo que haya cambiado algo).
+
+## Cada persona es distinta
+Para cada persona recibís su perfil (con la guía de cómo hablarle), la intensidad de seguimiento que eligió y cuántos
+pedidos de datos te quedan esta semana con ella, con qué cuenta (herramientas, tiempo) y cómo viene respondiendo.
+- Escribile según la guía de su perfil: tono, vocabulario, largo y forma de pedir.
+- Intensidad baja: pedile datos solo en un momento clave del cultivo o ante un riesgo concreto. Media: además
+  validaciones cuando hace días no hay una observación. Alta: seguimiento cercano, revisiones y mediciones.
+- Sin pedidos disponibles esta semana, no le pidas datos (salvo un riesgo serio para hoy): informá, recomendá o
+  quedate callado.
+- Mirá cómo responde: si nunca manda fotos pero sí audios, pedile un audio; si no contesta los pedidos, pedí menos
+  y más fácil, y si lo ves sostenido podés sugerirle (una vez) bajar la intensidad desde su perfil. Si lleva días
+  sin entrar, la vuelta tiene que traer algo útil para hoy, no un pedido.
+- Nunca le pidas algo que requiera una herramienta que no tiene.
 
 ## Qué hacer
 Qué puede ser un mensaje (`kind`):
@@ -45,11 +59,23 @@ def build_nudge_prompt(people: list[dict], signals: list, said: list, now_label:
     """`people`: [{id, name, role, left, quiet}]; `signals`: Signal (key, kind, text, urgent); `said`: the recent
     nudge log (created_at, user_id, outcome, message)."""
     lines = [f"Ahora: {now_label}.", "", "Personas:"]
-    lines += [
-        f"- id={p['id']} · {p['name']} · rol {p['role']} · mensajes disponibles hoy: {p['left']}"
-        + (" · EN HORARIO DE SILENCIO" if p["quiet"] else "")
-        for p in people
-    ]
+    for p in people:
+        lines.append(
+            f"- id={p['id']} · {p['name']} · rol {p['role']} · mensajes disponibles hoy: {p['left']}"
+            + (" · EN HORARIO DE SILENCIO" if p["quiet"] else "")
+        )
+        if p.get("intensity"):
+            lines.append(f"  intensidad {p['intensity']} · pedidos de datos disponibles esta semana: "
+                         f"{p.get('asks_left', p.get('weekly_asks'))} · perfil {p.get('profile') or 'guardian'}")
+        for line in p.get("means") or []:
+            lines.append(f"  {line}")
+        if p.get("engagement"):
+            lines.append(f"  Cómo viene: {p['engagement']}")
+    profiles = sorted({p.get("profile") or "guardian" for p in people if p.get("intensity")})
+    if profiles:
+        lines += ["", "Cómo hablarle a cada perfil:"]
+        for name in profiles:
+            lines += [f"### {name}", short_style(name)]
     lines += ["", "Señales:"] + [f"- [{s.key}] ({s.kind}{', urgente' if s.urgent else ''}) {s.text}"
                                  for s in signals]
     if said:

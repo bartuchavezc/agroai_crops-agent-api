@@ -27,6 +27,8 @@ from src.shared.domain.base import utcnow
 from src.shared.utils.account_key import any_key_user
 from src.shared.utils.errors import CropAnalysisError
 
+from src.auth.services.tracking_profile import growing_context_lines
+
 from .prompts.nudges import NUDGE_INSTRUCTION, build_nudge_prompt
 from .prompts.voice import local_now_label, localize
 
@@ -66,7 +68,7 @@ class NudgeEngine:
     def __init__(
         self, session_factory: async_sessionmaker[AsyncSession], gemini, farm_service, application_service,
         supply_service, task_service, weather_service, alert_service, conversation_service, push_service,
-        notification_service,
+        notification_service, profile_service=None, engagement_service=None,
     ):
         self.session_factory = session_factory
         self.gemini = gemini
@@ -79,6 +81,8 @@ class NudgeEngine:
         self.conversations = conversation_service
         self.push = push_service
         self.notifications = notification_service
+        self.profiles = profile_service
+        self.engagement = engagement_service
 
     # ---------- signals ----------
 
@@ -206,7 +210,8 @@ class NudgeEngine:
         for m in members:
             left, quiet = await self.push.nudge_budget_left(m, now)
             people.append({"id": str(m.id), "name": " ".join(p for p in (m.first_name, m.last_name) if p) or m.email,
-                           "role": m.role, "left": left, "quiet": quiet, "user": m})
+                           "role": m.role, "left": left, "quiet": quiet, "user": m,
+                           **await self._person_profile(m, now)})
         if not any(p["left"] for p in people):
             return [await self._log(owner.account_id, None, window, fresh, "budget", reason="Sin mensajes disponibles")]
 
@@ -240,9 +245,40 @@ class NudgeEngine:
             if person["quiet"] and not urgent:
                 logs.append(await self._log(owner.account_id, person["user"].id, window, fresh, "quiet_hours", msg))
                 continue
+            if msg.kind == "ask" and person.get("asks_left", 1) <= 0 and not urgent:
+                logs.append(await self._log(owner.account_id, person["user"].id, window, fresh, "budget", msg,
+                                            reason="Sin pedidos de datos disponibles esta semana (intensidad "
+                                                   f"{person.get('intensity')})"))
+                continue
             logs.append(await self._deliver(person["user"], window, fresh, msg, now))
             person["left"] -= 1
         return logs
+
+    async def _person_profile(self, user: User, now: datetime) -> dict:
+        """How to talk to this person and how much asking is left: their profile's guide, the tracking intensity
+        they chose (and the weekly data requests it allows) and how they have actually been answering."""
+        out: dict = {}
+        if self.profiles is not None:
+            try:
+                context = await self.profiles.get_profile_context(user.id)
+                tracking = await self.profiles.tracking_profile(user.id)
+            except Exception:  # noqa: BLE001 - a missing profile is just the default voice
+                logger.exception(f"No profile for {user.id}")
+            else:
+                out["profile"] = context.calculated_profile if context else None
+                out["intensity"] = tracking.intensity
+                out["weekly_asks"] = tracking.weekly_asks
+                out["means"] = growing_context_lines(tracking)[1:]
+        if self.engagement is not None:
+            try:
+                engagement = await self.engagement.summary(user.id, user.timezone, now)
+            except Exception:  # noqa: BLE001
+                logger.exception(f"No engagement summary for {user.id}")
+            else:
+                out["engagement"] = engagement.line()
+                if "weekly_asks" in out:
+                    out["asks_left"] = max(out["weekly_asks"] - engagement.asks_this_week, 0)
+        return out
 
     async def _deliver(self, user: User, window: Window, signals: list[Signal], msg: NudgeMessage,
                        now: datetime) -> NudgeLog:

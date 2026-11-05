@@ -108,3 +108,18 @@ class SQLAlchemyProfileRepository(ProfileRepositoryInterface):
             await session.commit()
             await session.refresh(merged_profile)
         return merged_profile
+
+    async def update_tracking(self, user_id: UUID, values: dict) -> UserProfile:
+        """Set tracking_intensity / growing_context, creating the row (empty form) for someone not enrolled yet."""
+        async with self.session_factory() as session:
+            profile = (await session.execute(
+                select(UserProfile).filter(UserProfile.user_id == user_id)
+            )).scalars().first()
+            if profile is None:
+                profile = UserProfile(user_id=user_id, form={}, growing_context={})
+                session.add(profile)
+            for key, value in values.items():
+                setattr(profile, key, value)
+            await session.commit()
+            await session.refresh(profile)
+        return profile

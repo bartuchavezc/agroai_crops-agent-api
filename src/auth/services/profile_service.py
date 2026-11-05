@@ -10,6 +10,7 @@ from ..domain.schemas import UserProfileRead, UserProfileContext
 from ..adapters.profile_repository import ProfileRepositoryInterface
 from ..adapters.user_repository import UserRepositoryInterface
 from .profile_calculator import ProfileCalculator
+from .tracking_profile import TrackingProfileRead, TrackingProfileUpdate, tracking_profile_read
 
 
 class ProfileService:
@@ -87,7 +88,7 @@ class ProfileService:
             UserProfileContext with calculated_profile and config, or None if no profile
         """
         profile = await self.profile_repository.get_by_user_id(user_id)
-        if not profile:
+        if not profile or not profile.profile:  # a row with only tracking settings: not enrolled yet
             return None
         
         # Build categories dict from profile
@@ -118,3 +119,19 @@ class ProfileService:
         """
         profile = await self.profile_repository.get_by_user_id(user_id)
         return profile is not None
+
+    async def tracking_profile(self, user_id: UUID) -> TrackingProfileRead:
+        """How closely the agent follows this person's crops and what they have to work with."""
+        return tracking_profile_read(await self.profile_repository.get_by_user_id(user_id))
+
+    async def update_tracking_profile(self, user_id: UUID, data: TrackingProfileUpdate) -> TrackingProfileRead:
+        values: dict = {}
+        if data.reset_intensity:
+            values["tracking_intensity"] = None
+        elif data.intensity is not None:
+            values["tracking_intensity"] = data.intensity
+        if data.growing_context is not None:
+            values["growing_context"] = data.growing_context.model_dump(exclude_none=True)
+        if values:
+            await self.profile_repository.update_tracking(user_id, values)
+        return await self.tracking_profile(user_id)

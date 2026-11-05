@@ -13,6 +13,7 @@ from src.shared.domain.base import utcnow
 
 DIGEST_KINDS = ("daily", "weekly")
 NUDGE_OUTCOMES = ("sent", "silent", "budget", "quiet_hours", "failed")
+RESPONSE_CHANNELS = ("text", "audio", "photo", "button")
 
 
 class Digest(Base):
@@ -90,4 +91,11 @@ class NudgeLog(Base):
     message = Column(Text)
     reason = Column(Text)  # the model's own why (also for staying quiet)
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"))
+    # What happened after: the person answered (in the chat, by voice, with a photo or with a notification button).
+    # It is what tells the agent how this person likes to be talked to, and how much asking is too much.
+    responded_at = Column(DateTime(timezone=True))
+    response_channel = Column(String(10))  # text | audio | photo | button
+    response_text = Column(Text)
+    quick_replies = Column(JSONB, nullable=False, default=list, server_default="[]")  # one-tap answers offered
+    plan_ref = Column(JSONB)  # {lot_id, item_id}: the tracking-plan check this message asks for
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
