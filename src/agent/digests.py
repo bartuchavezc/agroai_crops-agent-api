@@ -22,6 +22,7 @@ from src.shared.utils.account_key import owner_key_user
 from src.shared.utils.errors import CropAnalysisError
 
 from .prompts.digests import DIGEST_INSTRUCTION, build_digest_prompt
+from .prompts.knowledge import short_style
 from .prompts.voice import localize
 
 logger = logging.getLogger(__name__)
@@ -38,13 +39,15 @@ def _name(user: User) -> str:
 
 class DigestEngine:
     def __init__(self, gemini, digest_service: DigestService, farm_service, conversation_service, push_service,
-                 notification_service):
+                 notification_service, profile_service=None, engagement_service=None, tracking_service=None):
         self.gemini = gemini
         self.digests = digest_service
         self.farm = farm_service
         self.conversations = conversation_service
         self.push = push_service
         self.notifications = notification_service
+        self.profiles = profile_service
+        self.tracking = tracking_service
 
     async def run_account(self, members: list[User], kind: str, local_day: date) -> list[Digest]:
         """The summary of `local_day` (or of the week ending on it) for each field of the account, once."""
@@ -61,6 +64,7 @@ class DigestEngine:
             facts = await self.digests.gather(actor, start, end, field=field)
             if not (facts["zones"] or facts["entries"] or facts["analyses"]):
                 continue  # nothing growing and nothing done: nothing to tell about this field
+            facts["plans"] = await self._plans(actor, field.id, local_day)
             if not writer_checked:
                 writer, writer_checked = await owner_key_user(self.gemini, members), True
             text, facts = await self._write(owner, writer, kind, field.name, local_day, members, facts)
@@ -84,7 +88,7 @@ class DigestEngine:
                 writer.id,
                 contents=build_digest_prompt(kind, field_name, period, people, facts),
                 schema=DigestWriting,
-                system_instruction=localize(DIGEST_INSTRUCTION, owner.country),
+                system_instruction=localize(DIGEST_INSTRUCTION, owner.country) + await self._voice(owner),
                 thinking_level="low",
             )
         except CropAnalysisError as e:
@@ -93,6 +97,42 @@ class DigestEngine:
         questions = [q.strip() for q in writing.questions if q.strip()][:3]
         text = writing.text.strip() + ("\n\n" + "\n".join(questions) if questions else "")
         return text, {**facts, "writer": "agent", "questions": questions}
+
+    async def _plans(self, actor: Actor, field_id, local_day: date) -> list[dict]:
+        """Where each lot of the field is on the agent's tracking plan, and what comes next."""
+        if self.tracking is None:
+            return []
+        try:
+            lots = [lot for lot in await self.farm.list_lots(actor, field_id=field_id)
+                    if lot.status not in ("harvested", "failed")]
+            plans = await self.tracking.list_plans(actor, [lot.id for lot in lots])
+        except Exception:  # noqa: BLE001 - the summary goes without it
+            logger.exception("No tracking plans for the summary")
+            return []
+        labels = {lot.id: lot.label for lot in lots}
+        out = []
+        for plan in plans:
+            stage = next((s for s in plan.content.stages if s.key == plan.content.current_stage), None)
+            upcoming = [m for m in plan.content.key_moments if (m.window_start or m.window_end) and
+                        (m.window_start or m.window_end) >= local_day][:2]
+            due = await self.tracking.due_items(actor, local_day, plans=[plan])
+            out.append({
+                "lot": labels.get(plan.lot_id), "stage": stage.name if stage else plan.content.current_stage,
+                "next_moments": [{"name": m.name, "from": (m.window_start or m.window_end).isoformat()}
+                                 for m in upcoming],
+                "checks_due": [i.title for _, i in due[:3]],
+            })
+        return out
+
+    async def _voice(self, owner: User) -> str:
+        """The summary goes to the whole team, worded the way the owner's profile asks for."""
+        if self.profiles is None:
+            return ""
+        try:
+            context = await self.profiles.get_profile_context(owner.id)
+        except Exception:  # noqa: BLE001
+            return ""
+        return "\n\n## Cómo hablarle a este equipo\n" + short_style(context.calculated_profile if context else None)
 
     async def _deliver(self, members: list[User], digest: Digest, field_id) -> Digest:
         """A new conversation per person with the summary as the agent's message, and the notification opening it."""

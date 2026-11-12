@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 from src.admin.router import router as admin_router
 from src.agent.conversations.router import router as chat_router
+from src.agent.long_tasks.router import router as agent_tasks_router
 from src.agent.memory.router import router as memory_router
 from src.agent.providers.router import router as provider_credentials_router
 from src.agent.reasoning.router import layout_router
@@ -34,6 +35,7 @@ from src.application.satellite.router import router as satellite_router
 from src.application.storage.router import router as upload_router
 from src.application.supplies.router import router as supplies_router
 from src.application.tasks.router import router as tasks_router
+from src.application.tracking.router import router as tracking_router
 from src.auth.api.routes import router as auth_router
 from src.config.bootstrap import build_container
 from src.providers.weather.router import router as weather_router
@@ -51,12 +53,14 @@ ROUTERS = [
     layout_router,  # before farm_router: /fields/layout/extract must not be shadowed by /fields/{field_id}
     farm_router,
     followups_router,
+    tracking_router,
     reports_router,
     alerts_router,
     notifications_router,
     upload_router,
     weather_router,
     chat_router,
+    agent_tasks_router,
     memory_router,
     analyze_router,
     inventory_router,
@@ -77,11 +81,13 @@ WIRED_MODULES = [
     "src.auth.api.routes",
     "src.agent.conversations.router",
     "src.agent.memory.router",
+    "src.agent.long_tasks.router",
     "src.agent.providers.router",
     "src.agent.reasoning.router",
     "src.application.alerts.router",
     "src.application.farm.router",
     "src.application.followups.router",
+    "src.application.tracking.router",
     "src.application.notifications.router",
     "src.application.reports.router",
     "src.application.storage.router",

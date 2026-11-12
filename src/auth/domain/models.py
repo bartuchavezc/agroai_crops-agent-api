@@ -85,6 +85,12 @@ class User(Base):
 class UserProfile(Base):
     """Onboarding questionnaire and the derived profile used to tune the agent."""
     __tablename__ = "user_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "tracking_intensity IS NULL OR tracking_intensity IN ('baja', 'media', 'alta')",
+            name="tracking_intensity_valid",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
@@ -94,6 +100,12 @@ class UserProfile(Base):
     risk = Column(String(50))
     philosophy = Column(String(50))
     profile = Column(String(50))
+    # How much the agent asks for data (baja | media | alta). None: derived from the enrollment answers; the person
+    # can set it from their profile. Prediction always runs: this only sets how hard the agent pushes for checks.
+    tracking_intensity = Column(String(10))
+    # What the person has and how they work, in their own words: {resources: [{name, note, source}], notes}. No fixed
+    # list: the person writes it and the agent adds what they mention. The planner only proposes what fits it.
+    growing_context = Column(JSONB, nullable=False, default=dict, server_default="{}")
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 

@@ -19,3 +19,14 @@ def modules_for(country: Optional[str], profile: Optional[ProfileType], crop_fam
 def style_for(profile: Optional[ProfileType]) -> str:
     """How to behave for the onboarding profile. Country-neutral; the voice block says how to word it."""
     return knowledge_ar.style_for_profile(profile)
+
+
+def intensity_for(intensity: Optional[str]) -> str:
+    """How hard to push for checks, by the person's chosen tracking intensity (baja | media | alta)."""
+    return knowledge_ar.intensity_prompt(intensity)
+
+
+def short_style(profile: Optional[ProfileType]) -> str:
+    """The communication guide of a profile without its heading, for prompts that address several people."""
+    text = style_for(profile)
+    return text.split("\n", 1)[1].strip() if "\n" in text else text

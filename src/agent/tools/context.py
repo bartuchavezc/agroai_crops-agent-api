@@ -65,6 +65,10 @@ class ToolDeps:
     supplies: Any = None  # SupplyService: inputs in stock
     registry: Any = None  # ProductRegistryService: the official products registry
     followups: Any = None  # FollowUpService: problems being followed (seguimientos)
+    tracking: Any = None  # TrackingPlanService: the agent's tracking plan of each lot
+    models: Any = None  # AgronomyModels: water balance, thermal time, light, disease risk
+    profiles: Any = None  # ProfileService: the person's tracking intensity and means
+    long_tasks: Any = None  # LongTaskService: background work of the agent
 
 
 @dataclass
@@ -140,7 +144,8 @@ async def resolve_field(deps: ToolDeps, ctx: TurnContext, field: Optional[str]) 
 
 
 _ZONE_TYPE_WORDS = {"cajon": "cajon", "cantero": "cantero", "invernadero": "invernadero", "hidroponia": "hidroponia",
-                    "hidroponico": "hidroponia", "hidro": "hidroponia"}
+                    "hidroponico": "hidroponia", "hidro": "hidroponia", "maceta": "maceta", "macetero": "maceta",
+                    "tierra directa": "tierra_directa", "lote a campo": "tierra_directa"}
 
 
 def _plain(text: str) -> str:

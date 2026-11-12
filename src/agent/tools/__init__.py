@@ -1,3 +1,4 @@
+from .agronomy import agronomy_tools
 from .analysis import analysis_tools
 from .applications import application_tools
 from .changes import change_tools
@@ -7,10 +8,14 @@ from .followups import followup_tools
 from .inventory import inventory_manager_tools, inventory_read_tools
 from .irrigation import irrigation_tools
 from .knowledge import alert_tools, memory_tools, report_tools, search_tools, weather_tools
+from .means import means_tools
 from .management import management_manager_tools, management_read_tools
 from .planning import planning_manager_tools, planning_read_tools
 from .satellite import satellite_tools
+from .replies import reply_tools
 from .soil import soil_tools
+from .tasks_long import long_task_tools
+from .tracking import tracking_read_tools, tracking_write_tools
 
 
 def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
@@ -31,12 +36,18 @@ def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         *change_tools(deps, ctx),
         *application_tools(deps, ctx),
         *followup_tools(deps, ctx),
+        *tracking_read_tools(deps, ctx),
+        *agronomy_tools(deps, ctx),
+        *reply_tools(deps, ctx),
+        *means_tools(deps, ctx),
     ]
     if ctx.actor.is_manager:
         tools += farm_manager_tools(deps, ctx)
         tools += inventory_manager_tools(deps, ctx)
         tools += management_manager_tools(deps, ctx)
         tools += planning_manager_tools(deps, ctx)
+        tools += tracking_write_tools(deps, ctx)
+        tools += long_task_tools(deps, ctx)
     return tools
 
 

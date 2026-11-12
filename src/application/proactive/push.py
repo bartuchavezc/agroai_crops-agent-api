@@ -4,6 +4,8 @@ Web Push needs nothing from a store: the browser (Chrome on Android, Safari on i
 screen) gives a subscription, and we sign each message with our VAPID key. A subscription the push service says is
 gone (404/410) is dropped; a notification is always in the app as well, so a missed push loses nothing."""
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 from datetime import datetime, time
@@ -69,6 +71,7 @@ class PushService:
         self.private_key = config.get("vapid_private_key") or ""
         self.subject = config.get("vapid_subject") or "mailto:soporte@agroai.app"
         self.base_url = (config.get("web_base_url") or "").rstrip("/")
+        self.reply_secret = (config.get("reply_secret") or "dev-reply-secret").encode()
 
     @property
     def enabled(self) -> bool:
@@ -177,7 +180,15 @@ class PushService:
         except WebPushException as e:
             return getattr(e.response, "status_code", 0) or 0
 
-    async def send(self, user_ids: list[UUID], title: str, body: str, url: str, tag: Optional[str] = None) -> int:
+    def reply_token(self, nudge_id: UUID) -> str:
+        """What lets a notification button answer a message without a session (the service worker has none)."""
+        return hmac.new(self.reply_secret, str(nudge_id).encode(), hashlib.sha256).hexdigest()[:32]
+
+    def valid_reply_token(self, nudge_id: UUID, token: Optional[str]) -> bool:
+        return bool(token) and hmac.compare_digest(self.reply_token(nudge_id), token)
+
+    async def send(self, user_ids: list[UUID], title: str, body: str, url: str, tag: Optional[str] = None,
+                   extra: Optional[dict] = None) -> int:
         """Push to every device of those users (who didn't turn push off). Returns how many devices got it."""
         if not self.enabled or not user_ids:
             return 0
@@ -188,7 +199,8 @@ class PushService:
                 .where(PushSubscription.user_id.in_(user_ids),
                        func.coalesce(NotificationPreferences.push_enabled, True).is_(True))
             )).scalars().all()
-        payload = json.dumps({"title": title, "body": body[:240], "url": url, "tag": tag}, ensure_ascii=False)
+        payload = json.dumps({"title": title, "body": body[:240], "url": url, "tag": tag, **(extra or {})},
+                             ensure_ascii=False)
         delivered = 0
         for sub in rows:
             info = {"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}}

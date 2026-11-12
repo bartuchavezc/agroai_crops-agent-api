@@ -37,7 +37,7 @@ class MessageRead(BaseModel):
     image_identifier: Optional[str] = None
     image_identifiers: list[str] = Field(default_factory=list)
     audio_identifier: Optional[str] = None
-    origin: Literal["turn", "note", "nudge"] = "turn"
+    origin: Literal["turn", "note", "nudge", "button"] = "turn"
     sources: list[dict[str, Any]] = Field(default_factory=list)
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     attachments: list[dict[str, Any]] = Field(default_factory=list)

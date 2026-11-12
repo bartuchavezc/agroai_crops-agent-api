@@ -15,11 +15,13 @@ from src.shared.database import parse_db_url, shared_metadata
 # Import every model module so its tables register on shared_metadata.
 import src.agent.conversations.models  # noqa: F401,E402
 import src.agent.memory.models  # noqa: F401,E402
+import src.agent.long_tasks.models  # noqa: F401,E402
 import src.agent.providers.models  # noqa: F401,E402
 import src.application.alerts.models  # noqa: F401,E402
 import src.application.applications.models  # noqa: F401,E402
 import src.application.changes.models  # noqa: F401,E402
 import src.application.farm.models  # noqa: F401,E402
+import src.application.tracking.models  # noqa: F401,E402
 import src.application.inventory.models  # noqa: F401,E402
 import src.application.management.models  # noqa: F401,E402
 import src.application.market.models  # noqa: F401,E402

@@ -13,6 +13,8 @@ from src.auth.api.dependencies import get_actor
 from src.shared.domain.actor import Actor
 from src.shared.utils.errors import PermissionDeniedError
 
+from src.agent.nudge_replies import NudgeReply
+
 from .digests import DigestService
 from .models import NudgeLog
 from .push import PreferencesRead, PreferencesUpdate, PushService, PushSubscriptionIn
@@ -52,6 +54,10 @@ class NudgeLogRead(BaseModel):
     signal_keys: list[str] = []
     signals: list[dict[str, Any]] = []
     conversation_id: Optional[UUID] = None
+    responded_at: Optional[datetime] = None
+    response_channel: Optional[str] = None
+    response_text: Optional[str] = None
+    quick_replies: list[str] = []
     created_at: datetime
 
 
@@ -151,3 +157,20 @@ async def check_now(actor: Actor = Depends(get_actor), nudges=Depends(NUDGES)):
     _require_manager(actor)
     members = (await nudges.accounts()).get(actor.account_id, [])
     return [NudgeLogRead.model_validate(log) for log in await nudges.run_account(members, "evening")]
+
+
+REPLIES = Provide["agent.nudge_reply_service"]
+
+
+@router.post("/nudges/{nudge_id}/reply", summary="Answer one of the assistant's messages with one tap")
+@inject
+async def reply(nudge_id: UUID, body: "NudgeReply", actor: Actor = Depends(get_actor), replies=Depends(REPLIES)):
+    """From a chip in the chat (with the session)."""
+    return await replies.reply(nudge_id, body, actor)
+
+
+@router.post("/nudges/{nudge_id}/notification-reply", summary="Answer from the phone notification")
+@inject
+async def notification_reply(nudge_id: UUID, body: "NudgeReply", replies=Depends(REPLIES)):
+    """The service worker has no session: the notification carries a token signed for this message only."""
+    return await replies.reply(nudge_id, body, None)

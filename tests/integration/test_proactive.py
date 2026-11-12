@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.agent.digests import DigestWriting
-from src.agent.nudges import NudgeDecision, NudgeMessage
+from src.agent.nudges import NudgeDecision, NudgeMessage, Signal
 from src.application.proactive.push import in_quiet_hours
 from src.shared.domain.actor import Actor
 
@@ -201,7 +201,9 @@ async def test_the_assistant_writes_first_within_the_persons_limits(
         text="Hace 3 días no hay noticias del Cantero 1: si pasás, mandame una foto y registro todo.",
         signal_keys=[s.key for s in signals if s.kind == "no_news"],
     )])
-    with patch.object(gateway, "generate_structured", AsyncMock(return_value=decision)) as decide:
+    # (without the tracking plans: their signals are tested on their own)
+    with patch.object(gateway, "generate_structured", AsyncMock(return_value=decision)) as decide, \
+            patch.object(engine, "tracking", None):
         logs = await engine.run_account(members, "morning", now + timedelta(days=3))
         assert [log.outcome for log in logs] == ["sent"]
         # already said: the same signal doesn't make it speak again
@@ -269,3 +271,165 @@ async def test_push_subscriptions_and_preferences(client, signup, add_member, co
     assert (await client.get("/api/v1/me/notification-preferences", headers=staff["headers"])).json()[
         "push_devices"
     ] == 0
+
+
+async def test_the_person_sets_how_closely_the_agent_follows_them(client, signup):
+    user = await signup("tracking")
+    h = user["headers"]
+    start = (await client.get("/api/v1/auth/tracking-profile", headers=h)).json()
+    assert start["intensity"] == "media" and start["intensity_source"] == "default"
+    await client.post("/api/v1/auth/enroll", headers=h, json={"form": {f"q{i}": "C" for i in range(1, 11)}})
+    enrolled = (await client.get("/api/v1/auth/tracking-profile", headers=h)).json()
+    assert (enrolled["intensity"], enrolled["intensity_source"]) == ("alta", "enroll")
+    r = await client.put("/api/v1/auth/tracking-profile", headers=h, json={
+        "intensity": "baja",
+        "growing_context": {"resources": [{"name": "tester de pH barato"}], "notes": "dos horas por semana"},
+    })
+    assert r.status_code == 200, r.text
+    assert (r.json()["intensity"], r.json()["intensity_source"], r.json()["weekly_asks"]) == ("baja", "person", 2)
+    assert [x["name"] for x in r.json()["growing_context"]["resources"]] == ["tester de pH barato"]
+    bad = await client.put("/api/v1/auth/tracking-profile", headers=h, json={"intensity": "maxima"})
+    assert bad.status_code == 422
+    reset = (await client.put("/api/v1/auth/tracking-profile", headers=h, json={"reset_intensity": True})).json()
+    assert (reset["intensity"], reset["growing_context"]["notes"]) == ("alta", "dos horas por semana")
+
+
+async def test_the_agent_notes_what_the_person_has_from_the_chat(
+    client, signup, with_key, scripted_model  # noqa: F811
+):
+    user = await signup("means")
+    await with_key(user)
+    h = user["headers"]
+    scripted_model.script = [
+        ("call", "update_growing_means", {"add": [{"name": "botellas como riego por goteo"}]}),
+        ("text", "Anotado."),
+    ]
+    r = await client.post("/api/v1/chat", headers=h, json={"message": "riego con botellas enterradas"})
+    assert r.status_code == 200, r.text
+    means = (await client.get("/api/v1/auth/tracking-profile", headers=h)).json()["growing_context"]["resources"]
+    assert [(m["name"], m["source"]) for m in means] == [("botellas como riego por goteo", "agent")]
+
+
+async def test_data_requests_respect_the_weekly_budget_and_answers_are_recorded(
+    client, signup, with_key, scripted_model, container, no_forecast  # noqa: F811
+):
+    owner = await signup("asks")
+    await with_key(owner)
+    h = owner["headers"]
+    await _field_with_lot(client, h)
+    await client.put("/api/v1/auth/tracking-profile", headers=h, json={"intensity": "baja"})
+    await client.put("/api/v1/me/notification-preferences", headers=h, json={"max_nudges_per_day": 6})
+    engine = container.agent.nudge_engine()
+    members = (await engine.accounts())[uuid.UUID(owner["account"]["id"])]
+    now = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=15, minute=0)
+    gateway = container.agent.gemini()
+
+    outcomes, prompts = [], []
+    for i in range(3):  # intensidad baja: 2 pedidos por semana
+        decision = NudgeDecision(messages=[NudgeMessage(
+            recipient_user_id=owner["user"]["id"], kind="ask", title="Una foto",
+            text=f"¿Me mandás una foto del cantero? ({i})", signal_keys=[f"k{i}"],
+        )])
+        with patch.object(gateway, "generate_structured", AsyncMock(return_value=decision)) as decide, \
+                patch.object(engine, "signals", AsyncMock(return_value=[Signal(key=f"k{i}", kind="no_news",
+                                                                                text="Sin noticias.")])):
+            logs = await engine.run_account(members, "morning", now + timedelta(minutes=i))
+        outcomes.append(logs[0].outcome)
+        prompts.append(decide.await_args.kwargs["contents"])
+    assert outcomes == ["sent", "sent", "budget"]
+    assert "intensidad baja · pedidos de datos disponibles esta semana: 2" in prompts[0]
+    assert "pedidos de datos disponibles esta semana: 0" in prompts[2]
+
+    # answering in the conversation the assistant opened marks it, with the channel
+    conversation_id = (await client.get("/api/v1/chat/conversations", headers=h)).json()[0]["id"]
+    scripted_model.script = [("text", "Gracias.")]
+    r = await client.post("/api/v1/chat", headers=h, json={"message": "ahí va", "conversation_id": conversation_id})
+    assert r.status_code == 200, r.text
+    log = (await client.get("/api/v1/nudges/log", headers=h)).json()
+    answered = [e for e in log if e.get("responded_at")]
+    assert len(answered) == 1 and answered[0]["response_channel"] == "text"
+    summary = await container.application.engagement_service().summary(uuid.UUID(owner["user"]["id"]))
+    assert (summary.asks_sent, summary.asks_answered, summary.channels) == (2, 1, {"text": 1})
+
+
+async def test_the_daily_action_comes_from_the_plan_and_is_answered_with_one_tap(
+    client, signup, with_key, scripted_model, container, no_forecast  # noqa: F811
+):
+    from datetime import date
+
+    from src.application.tracking.schemas import TrackingPlanContent
+
+    owner = await signup("oneTap")
+    await with_key(owner)
+    h = owner["headers"]
+    field, zone, lot = await _field_with_lot(client, h)
+    await client.post(f"{FARM}/fields/{field['id']}/zones", headers=h, json={"type": "cajon"})  # free to sow
+    actor = Actor(user_id=uuid.UUID(owner["user"]["id"]), account_id=uuid.UUID(owner["account"]["id"]),
+                  role="owner")
+    today = date.today()
+    plans = container.application.tracking_plan_service()
+    saved = await plans.save(actor, uuid.UUID(lot["id"]), TrackingPlanContent.model_validate({
+        "summary": "Lechuga", "current_stage": "vegetativo",
+        "stages": [{"key": "vegetativo", "name": "Crecimiento", "status": "actual"}],
+        "key_moments": [{"key": "cosecha", "name": "Primera cosecha", "window_start": today.isoformat()}],
+        "items": [{"section": "revision", "title": "Humedad a 10 cm", "why": "Mucha ET0",
+                   "how": "Tocá la tierra a 10 cm", "method": "medicion", "measurement": "humedad_suelo",
+                   "window_start": (today - timedelta(days=3)).isoformat(),
+                   "window_end": (today - timedelta(days=1)).isoformat()}],
+    }), "inicial")
+    item = saved.content.items[0]
+
+    engine = container.agent.nudge_engine()
+    members = (await engine.accounts())[uuid.UUID(owner["account"]["id"])]
+    signals = await engine.signals(Actor.from_user(members[0]))
+    kinds = {s.kind for s in signals}
+    assert {"plan_check", "key_moment", "sowing_room"} <= kinds
+    check = next(s for s in signals if s.kind == "plan_check")
+    assert "vencido" in check.text and check.data["item_id"] == item.id
+    assert "Cajón 1" in next(s for s in signals if s.kind == "sowing_room").text
+
+    push = container.application.push_service()
+    gateway = container.agent.gemini()
+    decision = NudgeDecision(messages=[NudgeMessage(
+        recipient_user_id=owner["user"]["id"], kind="ask", title="¿Cómo está la tierra?",
+        text="¿La tierra del Cantero 1 a 10 cm está húmeda o seca?", signal_keys=[check.key],
+        quick_replies=["Húmeda", "Seca", "No sé"], plan_ref={"lot_id": lot["id"], "item_id": item.id},
+    )])
+    with patch.object(gateway, "generate_structured", AsyncMock(return_value=decision)) as decide, \
+            patch.object(push, "send", AsyncMock(return_value=1)) as sent, \
+            patch.object(type(push), "enabled", property(lambda self: True)):
+        logs = await engine.run_account(members, "morning")
+    assert "La acción del día" in decide.await_args.kwargs["system_instruction"]
+    assert f"item_id={item.id}" in decide.await_args.kwargs["contents"]
+    log = logs[0]
+    assert log.outcome == "sent" and log.quick_replies == ["Húmeda", "Seca", "No sé"]
+    extra = sent.await_args.kwargs["extra"]
+    assert [a["title"] for a in extra["actions"]] == ["Húmeda", "Seca", "No sé"]
+    assert (await plans.get(actor, uuid.UUID(lot["id"]))).content.items[0].status == "pedido"
+
+    # from the notification: no session, the signed token instead
+    bad = await client.post(f"/api/v1/nudges/{log.id}/notification-reply", json={"answer": "Seca", "token": "x"})
+    assert bad.status_code == 403
+    ok = await client.post(f"/api/v1/nudges/{log.id}/notification-reply",
+                           json={"answer": "Seca", "token": extra["reply_token"]})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["channel"] == "button" and ok.json()["plan_updated"] is True
+    plan = await plans.get(actor, uuid.UUID(lot["id"]))
+    assert (plan.content.items[0].status, plan.content.items[0].result) == ("respondido", "Seca")
+    assert plan.revisions[-1].by == "person"
+    tasks = (await client.get("/api/v1/agent-tasks", headers=h)).json()
+    assert tasks[0]["kind"] == "replan_lot" and "Seca" in tasks[0]["input"]["observations"][0]
+    messages = (await client.get(f"/api/v1/chat/conversations/{log.conversation_id}/messages", headers=h)).json()
+    assert (messages[-1]["role"], messages[-1]["content"], messages[-1]["origin"]) == ("user", "Seca", "button")
+
+    # the next chat turn is told about the answer
+    scripted_model.script = [("call", "suggest_replies", {"options": ["Sí", "No"]}), ("text", "¿Regaste hoy?")]
+    r = await client.post("/api/v1/chat", headers=h, json={"message": "dale", "conversation_id":
+                                                            str(log.conversation_id)})
+    assert "(la persona respondió con un toque) Seca" in str(scripted_model.requests[0].contents[-1].parts)
+    chips = [a for a in r.json()["attachments"] if a["type"] == "quick_replies"]
+    assert chips and chips[0]["options"] == ["Sí", "No"]
+
+    other = await signup("intruder")
+    stolen = await client.post(f"/api/v1/nudges/{log.id}/reply", headers=other["headers"], json={"answer": "x"})
+    assert stolen.status_code == 404

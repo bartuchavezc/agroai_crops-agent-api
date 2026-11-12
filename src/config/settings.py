@@ -1,6 +1,8 @@
 """
 Centralized configuration: defaults, then optional config.yml, then environment variables.
 """
+import hashlib
+import hmac
 import copy
 import ipaddress
 import logging
@@ -281,6 +283,9 @@ def _validate(config: dict) -> None:
             raise ValueError("AUTH_SECRET_KEY must be set when DEV_MODE is false.")
         config_logger.warning("AUTH_SECRET_KEY not set; using an insecure development key.")
         auth["secret_key"] = DEV_SECRET_KEY
+    # Signs the one-tap answers of a notification (the service worker has no session): derived, never the key.
+    config["proactive"]["reply_secret"] = hmac.new(auth["secret_key"].encode(), b"nudge-replies",
+                                                   hashlib.sha256).hexdigest()
 
     if not security["credentials_encryption_key"]:
         if not dev_mode:

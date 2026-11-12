@@ -110,6 +110,12 @@ async def analyze_in_background(
                 await diagnosis_service.analyze(actor, report_id, image_identifier, deep)
     except Exception:  # noqa: BLE001 - background task, nothing to return the error to
         logger.exception(f"Background analysis failed for report {report_id}")
+        return
+    for hook in getattr(diagnosis_service, "after_analysis", []):
+        try:
+            await hook(actor, report_id)  # e.g. re-plan the zone's lots with what the analysis saw
+        except Exception:  # noqa: BLE001
+            logger.exception(f"After-analysis hook failed for report {report_id}")
 
 
 class DiagnosisService:

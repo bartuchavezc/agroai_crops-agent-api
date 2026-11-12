@@ -29,6 +29,7 @@ from src.application.farm.service import FarmService
 from src.application.reports.service import ReportsService
 from src.application.storage.service import StorageService
 from src.auth.services.profile_service import ProfileService
+from src.auth.services.tracking_profile import growing_context_lines
 from src.shared.domain.locale import localized
 from src.shared.domain.actor import Actor
 from src.shared.utils.errors import NotFoundError
@@ -44,7 +45,7 @@ from src.shared.utils.trace import set_trace_id
 from .conversations.schemas import ConversationCreate
 from .conversations.service import ConversationService
 from .prompts.chat import BASE_INSTRUCTION
-from .prompts.knowledge import modules_for, style_for
+from .prompts.knowledge import intensity_for, modules_for, style_for
 from .prompts.knowledge_base import core_knowledge_base
 from .preflight import PreflightEngine, PreflightInputs, prune_consulted_blocks
 from .prompts.knowledge_skills import skill_catalog, specific_manuals_toolset
@@ -105,6 +106,7 @@ class AgentRunner:
         storage_service: StorageService,
         reports_service: ReportsService,
         timezone_name: str,
+        engagement_service=None,
         max_image_side: int = 1536,
         preflight_enabled: bool = True,
         preflight_max_tokens: int = 60000,
@@ -118,6 +120,7 @@ class AgentRunner:
         self.profiles = profile_service
         self.storage = storage_service
         self.reports = reports_service
+        self.engagement = engagement_service
         self.tz = ZoneInfo(timezone_name)
         self.max_image_side = max_image_side
         self.preflight = PreflightEngine(gemini, enabled=preflight_enabled, max_tokens=preflight_max_tokens)
@@ -185,6 +188,7 @@ class AgentRunner:
 
         profile = await self.profiles.get_profile_context(actor.user_id)
         profile_name = profile.calculated_profile if profile else None
+        tracking = await self.profiles.tracking_profile(actor.user_id)
 
         blocks = [
             block
@@ -193,6 +197,8 @@ class AgentRunner:
                 core_knowledge_base(),
                 modules_for(actor.country, profile_name, crop_families, field_texts),
                 style_for(profile_name),
+                intensity_for(tracking.intensity),
+                "## Con qué cuenta esta persona\n" + "\n".join(f"- {line}" for line in growing_context_lines(tracking)),
                 voice_for(actor.country),
                 self._account_structure(overview, actor.locale),
             )
@@ -249,7 +255,8 @@ class AgentRunner:
         if report_note:
             lines.append(f"\n{report_note}")
         if notes:
-            lines.append("\nAntes de este mensaje, el asistente escribió en esta conversación por su cuenta:")
+            lines.append("\nAntes de este mensaje, fuera de un turno, en esta conversación (lo que escribió el "
+                         "asistente por su cuenta y las respuestas con un toque):")
             lines += [f"- «{n}»" for n in notes[-3:]]
         if from_audio:
             lines.append(
@@ -324,6 +331,12 @@ class AgentRunner:
         session_id, user_id = str(conversation.id), str(actor.user_id)
         if await self.sessions.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id) is None:
             await self.sessions.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+        if self.engagement is not None and not retry_message_id:
+            channel = "audio" if audio_identifier else "photo" if image_identifiers else "text"
+            try:
+                await self.engagement.mark_responded(actor.user_id, conversation.id, channel, message)
+            except Exception:  # noqa: BLE001 - bookkeeping must never block a turn
+                logger.exception("Could not mark the nudge as answered")
         _, assistant_message_id = await self.conversations.start_turn(
             actor, conversation.id, message, image_identifiers, retry_message_id=retry_message_id,
             audio_identifier=audio_identifier,
@@ -449,7 +462,8 @@ class AgentRunner:
             )
             sources = list({s["uri"]: Source(**s) for s in turn.ctx.sources}.values())
             attachments = list({
-                a.get("image_identifier") or a.get("proposal_id"): Attachment(**a) for a in turn.ctx.attachments
+                a.get("image_identifier") or a.get("proposal_id") or a.get("task_id") or a.get("type"): Attachment(**a)
+                for a in turn.ctx.attachments
             }.values())
             await self.conversations.finish_turn(
                 turn.assistant_message_id,
