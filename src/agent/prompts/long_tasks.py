@@ -52,20 +52,22 @@ para ella: lo que le pidas lo entrega la revisión proactiva, al ritmo de la int
      escala), suelo y raíz (humedad a profundidad de raíces: tacto o tensiómetro según lo que tenga), inspección
      foliar selectiva (envés de hojas basales).
   2. `nutricion_riego` — demanda por etapa (p. ej. K y Ca contra la necrosis apical), ventana de suplementación
-     preventiva, puntos de control (pH o CE del agua de riego) SOLO si tiene el instrumento.
+     preventiva, puntos de control (pH o CE del agua de riego) solo si sabés que tiene con qué medirlo.
   3. `sanidad` — índices de los modelos (TOM-CAST, BLITECAST, oídio, Fulvia, mildiu) y plagas proyectadas por
-     temperatura (revisión de trampas si las tiene).
+     temperatura (revisión de trampas si tiene).
   4. `proteccion` — malla de sombra según radiación y horas de sol de la zona, ventilación del invernadero,
      mulching y cobertores: solo lo que aplica a ese tipo de zona.
 - `ask_user=false` para lo que resolvés vos (modelos, clima); `true` para lo que necesita ojos o manos.
-- `assumptions` (qué supusiste) y `missing_context` (qué preguntarías para planificar mejor: cómo riega, qué
-  herramientas tiene, cómo empezó el lote…).
+- `assumptions` (qué supusiste) y `missing_context` (qué preguntarías para planificar mejor: cómo riega, con
+  qué cuenta, cómo empezó el lote…).
 
 ## Reglas
 - Ventanas, no fechas fijas. Nada de listas de tareas: un puñado de chequeos clave.
 - Escalá al contexto: intensidad baja y una maceta = 4 a 6 ítems; media = 6 a 10; alta = hasta 15.
-- Solo lo que la persona puede hacer con sus herramientas y su tiempo. Sin conductímetro no hay CE objetivo:
-  proponé conseguirlo si de verdad cambia el resultado, o una alternativa de campo.
+- Solo lo que la persona puede hacer con lo que sabés que tiene y su tiempo (en «La persona», en sus palabras).
+  Si un chequeo pide algo que no sabés si tiene (un medidor de pH, una malla), poné la alternativa de campo en
+  `alternative` y anotá en `missing_context` la pregunta. Sin un medidor de CE no hay CE objetivo: proponé
+  conseguirlo solo si de verdad cambia el resultado.
 - Respetá su filosofía sanitaria (sin síntesis para quien es orgánico/agroecológico).
 - No inventes fechas de siembra ni datos: si faltan, supuesto explícito y a `missing_context`."""
 

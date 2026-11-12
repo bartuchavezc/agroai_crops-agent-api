@@ -8,6 +8,7 @@ from .followups import followup_tools
 from .inventory import inventory_manager_tools, inventory_read_tools
 from .irrigation import irrigation_tools
 from .knowledge import alert_tools, memory_tools, report_tools, search_tools, weather_tools
+from .means import means_tools
 from .management import management_manager_tools, management_read_tools
 from .planning import planning_manager_tools, planning_read_tools
 from .satellite import satellite_tools
@@ -38,6 +39,7 @@ def build_tools(deps: ToolDeps, ctx: TurnContext) -> list:
         *tracking_read_tools(deps, ctx),
         *agronomy_tools(deps, ctx),
         *reply_tools(deps, ctx),
+        *means_tools(deps, ctx),
     ]
     if ctx.actor.is_manager:
         tools += farm_manager_tools(deps, ctx)

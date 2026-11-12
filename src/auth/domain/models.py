@@ -103,8 +103,8 @@ class UserProfile(Base):
     # How much the agent asks for data (baja | media | alta). None: derived from the enrollment answers; the person
     # can set it from their profile. Prediction always runs: this only sets how hard the agent pushes for checks.
     tracking_intensity = Column(String(10))
-    # What the person has to work with: {tools: [...], weekly_hours, budget, notes}. The planner only proposes what
-    # fits it (no CE target without a conductivity meter).
+    # What the person has and how they work, in their own words: {resources: [{name, note, source}], notes}. No fixed
+    # list: the person writes it and the agent adds what they mention. The planner only proposes what fits it.
     growing_context = Column(JSONB, nullable=False, default=dict, server_default="{}")
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

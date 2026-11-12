@@ -2,21 +2,16 @@
 
 Prediction always runs (the agent keeps a tracking plan per lot and simulates what it can't see); the intensity only
 sets how often it asks the person for a check — a photo, a description, a measurement. It starts from the enrollment
-answers and the person can change it from their profile at any time. `growing_context` is what the planner must fit:
-the tools at hand, the hours a week and the money the person is willing to put in."""
+answers and the person can change it from their profile at any time. `growing_context` is what the person has and how
+they work, in their own words — never a fixed list: they write it in their profile and the agent adds what they mention
+in the chat. The planner only proposes what fits it, and asks when it doesn't know."""
+from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 TrackingIntensity = Literal["baja", "media", "alta"]
 INTENSITIES: tuple[str, ...] = ("baja", "media", "alta")
-
-# Tools the planner knows how to use for a check; anything else goes in `other_tools`.
-GROWING_TOOLS = (
-    "medidor_ph", "conductimetro", "tensiometro", "sensor_humedad", "termometro", "trampas_cromaticas",
-    "malla_sombra", "cobertor", "riego_goteo", "temporizador_riego", "lupa", "balanza",
-)
-Budget = Literal["minimo", "bajo", "medio", "alto"]
 
 # Data requests (ask) per person and week, by intensity. Urgent risks never count against it.
 WEEKLY_ASKS: dict[str, int] = {"baja": 2, "media": 4, "alta": 8}
@@ -32,12 +27,54 @@ def intensity_from_form(form: Optional[dict]) -> TrackingIntensity:
     return INTENSITIES[min(base + (1 if beginner and base < 1 else 0), 2)]  # type: ignore[return-value]
 
 
+class Resource(BaseModel):
+    """Something the person has to work with, in their own words: «tester de pH barato», «botellas como goteo»,
+    «una tarde por semana». Never a catalog: what they say is what it is."""
+    name: str = Field(min_length=1, max_length=120)
+    note: Optional[str] = Field(default=None, max_length=300)
+    source: Literal["person", "agent"] = "person"  # typed in the profile, or noted by the agent from the chat
+    added_at: Optional[datetime] = None
+
+
+_LEGACY_TOOLS = {  # the first version stored keys of a fixed list: kept as the words they stood for
+    "medidor_ph": "medidor de pH", "conductimetro": "conductímetro (CE)", "tensiometro": "tensiómetro",
+    "sensor_humedad": "sensor de humedad de suelo", "termometro": "termómetro", "trampas_cromaticas":
+    "trampas cromáticas", "malla_sombra": "malla de sombra", "cobertor": "cobertor / manta térmica",
+    "riego_goteo": "riego por goteo", "temporizador_riego": "temporizador de riego", "lupa": "lupa",
+    "balanza": "balanza",
+}
+_LEGACY_BUDGET = {"minimo": "casi nada", "bajo": "bajo", "medio": "medio", "alto": "alto"}
+
+
 class GrowingContext(BaseModel):
-    tools: list[str] = Field(default_factory=list, description=f"Of {', '.join(GROWING_TOOLS)}")
-    other_tools: Optional[str] = Field(default=None, max_length=300)
-    weekly_hours: Optional[float] = Field(default=None, ge=0, le=80, description="Hours a week for the crops")
-    budget: Optional[Budget] = None
-    notes: Optional[str] = Field(default=None, max_length=1000)
+    """What the person has and how they work, as they tell it. The agent reads it, adds to it from the conversation
+    (update_growing_means) and asks when a check depends on something it doesn't know they have."""
+    resources: list[Resource] = Field(default_factory=list)
+    notes: Optional[str] = Field(default=None, max_length=2000, description="Time, budget, how they work: free text")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy(cls, data):
+        """Contexts saved with the old fixed fields become resources and notes, in words: nothing is lost."""
+        if not isinstance(data, dict) or not any(k in data for k in ("tools", "other_tools", "weekly_hours", "budget")):
+            return data
+        data = dict(data)
+        resources = list(data.get("resources") or [])
+        names = {(r.get("name") if isinstance(r, dict) else r.name).lower() for r in resources}
+        for key in data.pop("tools", None) or []:
+            name = _LEGACY_TOOLS.get(key, key)
+            if name.lower() not in names:
+                resources.append({"name": name, "source": "person"})
+        if other := data.pop("other_tools", None):
+            resources.append({"name": other[:120], "source": "person"})
+        extra = []
+        if (hours := data.pop("weekly_hours", None)) is not None:
+            extra.append(f"Le dedica unas {hours:g} horas por semana.")
+        if budget := data.pop("budget", None):
+            extra.append(f"Presupuesto para invertir: {_LEGACY_BUDGET.get(budget, budget)}.")
+        data["resources"] = resources
+        data["notes"] = " ".join([*([data["notes"]] if data.get("notes") else []), *extra]) or None
+        return data
 
 
 class TrackingProfileRead(BaseModel):
@@ -69,28 +106,40 @@ def tracking_profile_read(profile) -> TrackingProfileRead:
     )
 
 
-TOOL_LABELS = {
-    "medidor_ph": "medidor de pH", "conductimetro": "conductímetro (CE)", "tensiometro": "tensiómetro",
-    "sensor_humedad": "sensor de humedad de suelo", "termometro": "termómetro", "trampas_cromaticas":
-    "trampas cromáticas", "malla_sombra": "malla de sombra", "cobertor": "cobertor / manta térmica",
-    "riego_goteo": "riego por goteo", "temporizador_riego": "temporizador de riego", "lupa": "lupa",
-    "balanza": "balanza",
-}
-BUDGET_LABELS = {"minimo": "casi nada", "bajo": "bajo", "medio": "medio", "alto": "alto"}
-
-
 def growing_context_lines(read: TrackingProfileRead) -> list[str]:
-    """The person's means, as plain lines for a prompt."""
+    """The person's means, in their own words, as plain lines for a prompt."""
     ctx = read.growing_context
     lines = [f"Intensidad de seguimiento elegida: {read.intensity} (hasta {read.weekly_asks} pedidos de datos por "
              "semana, sin contar riesgos urgentes)."]
-    tools = [TOOL_LABELS.get(t, t) for t in ctx.tools] + ([ctx.other_tools] if ctx.other_tools else [])
-    lines.append("Herramientas que tiene: " + (", ".join(tools) if tools else "no declaró ninguna (asumí solo manos, "
-                                                "vista y un celular; no supongas instrumentos)") + ".")
-    if ctx.weekly_hours is not None:
-        lines.append(f"Tiempo que le dedica: unas {ctx.weekly_hours:g} horas por semana.")
-    if ctx.budget:
-        lines.append(f"Presupuesto para invertir: {BUDGET_LABELS[ctx.budget]}.")
+    if ctx.resources:
+        lines.append("Con qué cuenta (en sus palabras): " + "; ".join(
+            r.name + (f" ({r.note})" if r.note else "") for r in ctx.resources) + ".")
+    else:
+        lines.append("Todavía no sabés con qué cuenta: no supongas instrumentos; si un chequeo depende de uno, "
+                     "preguntá de forma natural si lo tiene.")
     if ctx.notes:
-        lines.append(f"Notas suyas: {ctx.notes}")
+        lines.append(f"Cómo trabaja, en sus palabras: {ctx.notes}")
     return lines
+
+
+def merge_resources(ctx: GrowingContext, add: list[dict], remove: list[str], source: str,
+                    notes: Optional[str] = None) -> GrowingContext:
+    """Add (or update the note of) resources and drop others, matching names without case."""
+    from src.shared.domain.base import utcnow
+
+    gone = {r.strip().lower() for r in remove if r.strip()}
+    kept = [r for r in ctx.resources if r.name.lower() not in gone]
+    by_name = {r.name.lower(): r for r in kept}
+    for item in add:
+        name = str(item.get("name", "")).strip()
+        if not name:
+            continue
+        note = (str(item["note"]).strip() or None) if item.get("note") else None
+        if name.lower() in by_name:
+            if note:
+                by_name[name.lower()].note = note
+            continue
+        resource = Resource(name=name, note=note, source=source, added_at=utcnow())
+        kept.append(resource)
+        by_name[name.lower()] = resource
+    return GrowingContext(resources=kept, notes=ctx.notes if notes is None else (notes.strip() or None))

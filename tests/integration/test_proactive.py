@@ -282,15 +282,32 @@ async def test_the_person_sets_how_closely_the_agent_follows_them(client, signup
     enrolled = (await client.get("/api/v1/auth/tracking-profile", headers=h)).json()
     assert (enrolled["intensity"], enrolled["intensity_source"]) == ("alta", "enroll")
     r = await client.put("/api/v1/auth/tracking-profile", headers=h, json={
-        "intensity": "baja", "growing_context": {"tools": ["medidor_ph"], "weekly_hours": 2, "budget": "bajo"},
+        "intensity": "baja",
+        "growing_context": {"resources": [{"name": "tester de pH barato"}], "notes": "dos horas por semana"},
     })
     assert r.status_code == 200, r.text
     assert (r.json()["intensity"], r.json()["intensity_source"], r.json()["weekly_asks"]) == ("baja", "person", 2)
-    assert r.json()["growing_context"]["tools"] == ["medidor_ph"]
+    assert [x["name"] for x in r.json()["growing_context"]["resources"]] == ["tester de pH barato"]
     bad = await client.put("/api/v1/auth/tracking-profile", headers=h, json={"intensity": "maxima"})
     assert bad.status_code == 422
     reset = (await client.put("/api/v1/auth/tracking-profile", headers=h, json={"reset_intensity": True})).json()
-    assert (reset["intensity"], reset["growing_context"]["weekly_hours"]) == ("alta", 2)
+    assert (reset["intensity"], reset["growing_context"]["notes"]) == ("alta", "dos horas por semana")
+
+
+async def test_the_agent_notes_what_the_person_has_from_the_chat(
+    client, signup, with_key, scripted_model  # noqa: F811
+):
+    user = await signup("means")
+    await with_key(user)
+    h = user["headers"]
+    scripted_model.script = [
+        ("call", "update_growing_means", {"add": [{"name": "botellas como riego por goteo"}]}),
+        ("text", "Anotado."),
+    ]
+    r = await client.post("/api/v1/chat", headers=h, json={"message": "riego con botellas enterradas"})
+    assert r.status_code == 200, r.text
+    means = (await client.get("/api/v1/auth/tracking-profile", headers=h)).json()["growing_context"]["resources"]
+    assert [(m["name"], m["source"]) for m in means] == [("botellas como riego por goteo", "agent")]
 
 
 async def test_data_requests_respect_the_weekly_budget_and_answers_are_recorded(

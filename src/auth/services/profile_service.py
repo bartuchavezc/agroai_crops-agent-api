@@ -10,7 +10,12 @@ from ..domain.schemas import UserProfileRead, UserProfileContext
 from ..adapters.profile_repository import ProfileRepositoryInterface
 from ..adapters.user_repository import UserRepositoryInterface
 from .profile_calculator import ProfileCalculator
-from .tracking_profile import TrackingProfileRead, TrackingProfileUpdate, tracking_profile_read
+from .tracking_profile import (
+    TrackingProfileRead,
+    TrackingProfileUpdate,
+    merge_resources,
+    tracking_profile_read,
+)
 
 
 class ProfileService:
@@ -131,7 +136,16 @@ class ProfileService:
         elif data.intensity is not None:
             values["tracking_intensity"] = data.intensity
         if data.growing_context is not None:
-            values["growing_context"] = data.growing_context.model_dump(exclude_none=True)
+            values["growing_context"] = data.growing_context.model_dump(mode="json", exclude_none=True)
         if values:
             await self.profile_repository.update_tracking(user_id, values)
+        return await self.tracking_profile(user_id)
+
+    async def update_growing_means(self, user_id: UUID, add: list[dict], remove: list[str],
+                                   notes: Optional[str] = None, source: str = "agent") -> TrackingProfileRead:
+        """What the agent learned in the conversation about what the person has (or no longer has)."""
+        current = await self.tracking_profile(user_id)
+        merged = merge_resources(current.growing_context, add, remove, source, notes)
+        await self.profile_repository.update_tracking(
+            user_id, {"growing_context": merged.model_dump(mode="json", exclude_none=True)})
         return await self.tracking_profile(user_id)
